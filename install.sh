@@ -12,3 +12,8 @@ yay -S --needed --noconfirm \
 sudo stow -vv -t / samba
 sudo stow -vv -t / snapraid
 
+# Enable and start services
+systemctl enable smb nmb
+systemctl start  smb nmb
+systemctl status smb nmb
+
