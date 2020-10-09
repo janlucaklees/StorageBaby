@@ -10,4 +10,5 @@ yay -S --needed --noconfirm \
 
 # install configuration
 sudo stow -vv -t / samba
+sudo stow -vv -t / snapraid
 
