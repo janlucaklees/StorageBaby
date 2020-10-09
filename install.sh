@@ -9,11 +9,13 @@ yay -S --needed --noconfirm \
   rsync
 
 # install configuration
-sudo stow -vv -t / samba
 sudo stow -vv -t / snapraid
+sudo stow -vv -t / samba
+# Linking apparently does not work for rsync
+# sudo stow -vv -t / rslsync
 
 # Enable and start services
-systemctl enable smb nmb
-systemctl start  smb nmb
-systemctl status smb nmb
+systemctl enable smb nmb rslsync
+systemctl start  smb nmb rslsync
+systemctl status smb nmb rslsync
 
