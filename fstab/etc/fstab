@@ -1,0 +1,17 @@
+# root
+/dev/disk/by-id/ata-SAMSUNG_HM250HI_S1Y8JDRSB01640-part2       /                   ext4          rw,relatime                                                                                               0 1
+# boot
+/dev/disk/by-id/ata-SAMSUNG_HM250HI_S1Y8JDRSB01640-part1       /boot               ext4          rw,relatime                                                                                               0 2
+
+# mergerfs pooling all data disks
+/mnt/data/*                                                    /mnt/pool           fuse.mergerfs defaults,allow_other,use_ino,category.create=eplfs,moveonenospc=true,minfreespace=20G,fsname=mergerfsPool 0 0
+
+# SnapRaid Parity Disks
+/dev/disk/by-id/ata-WDC_WD40EFRX-68N32N0_WD-WCC7K2EYYVV1-part1 /mnt/parity/parity1 ext4          defaults                                                                                                  0 2
+
+# SnapRaid Data Disks
+/dev/disk/by-id/ata-WDC_WD40EFRX-68N32N0_WD-WCC7K7YHET2C-part1 /mnt/data/data1     ext4          defaults                                                                                                  0 2
+/dev/disk/by-id/ata-WDC_WD40EFRX-68N32N0_WD-WCC7K5PDRVC8-part1 /mnt/data/data2     ext4          defaults                                                                                                  0 2
+
+bpf                                                            /sys/fs/bpf         bpf           rw,nosuid,nodev,noexec,mode=700                                                                           0 0
+

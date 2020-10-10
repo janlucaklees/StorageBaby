@@ -11,6 +11,7 @@ yay -S --needed --noconfirm \
 # install configuration
 sudo stow -vv -t / snapraid
 sudo stow -vv -t / samba
+sudo stow -vv -t / fstab
 # Linking apparently does not work for rsync
 # sudo stow -vv -t / rslsync
 
