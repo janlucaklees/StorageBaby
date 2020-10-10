@@ -16,7 +16,7 @@ sudo stow -vv -t / fstab
 # sudo stow -vv -t / rslsync
 
 # Enable and start services
-systemctl enable smb nmb rslsync
-systemctl start  smb nmb rslsync
-systemctl status smb nmb rslsync
+systemctl enable smb nmb rslsync plexmediaserver
+systemctl start  smb nmb rslsync plexmediaserver
+systemctl status smb nmb rslsync plexmediaserver
 
