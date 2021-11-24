@@ -6,17 +6,15 @@ yay -S --needed --noconfirm \
   mergerfs mergerfs-tools-git snapraid \
   samba elasticsearch fscrawler-bin \
   plex-media-server \
-  rsync
+  syncthing
 
 # install configuration
 sudo stow -vv -t / snapraid
 sudo stow -vv -t / samba
 sudo stow -vv -t / fstab
-# Linking apparently does not work for rsync
-# sudo stow -vv -t / rslsync
 
 # Enable and start services
-systemctl enable smb nmb rslsync plexmediaserver
-systemctl start  smb nmb rslsync plexmediaserver
-systemctl status smb nmb rslsync plexmediaserver
+systemctl enable smb nmb plexmediaserver syncthing@jlk
+systemctl start  smb nmb plexmediaserver syncthing@jlk
+systemctl status smb nmb plexmediaserver syncthing@jlk
 
