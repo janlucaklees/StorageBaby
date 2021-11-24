@@ -3,7 +3,7 @@ sudo pacman -Syu --needed --noconfirm base-devel git stow
 
 # installing all kinds of stuff
 yay -S --needed --noconfirm \
-  mergerfs snapraid \
+  mergerfs mergerfs-tools-git snapraid \
   samba elasticsearch fscrawler-bin \
   plex-media-server \
   rsync
