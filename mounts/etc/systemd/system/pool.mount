@@ -1,5 +1,6 @@
 [Unit]
 Description=Pool mount
+Requires=mnt-data-data1.mount mnt-data-data2.mount mnt-parity-parity1.mount
 
 [Mount]
 What=/mnt/data/*
@@ -8,5 +9,5 @@ Type=fuse.mergerfs
 Options=defaults,allow_other,use_ino,category.create=eplfs,moveonenospc=true,minfreespace=20G,fsname=mergerfsPool
 
 [Install]
-WantedBy=multi-user.target
+RequiredBy=local-fs.target
 
