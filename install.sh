@@ -1,7 +1,7 @@
 #
 # Installing required packages
 yay -S --needed --noconfirm \
-  mergerfs fuse mergerfs-tools-git snapraid \
+  mergerfs fuse mergerfs-tools-git snapraid smartmontools \
   samba elasticsearch fscrawler-bin \
   jellyfin aur/aspnet-runtime-5.0-bin \
   syncthing
