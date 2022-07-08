@@ -1,0 +1,12 @@
+[Unit]
+Description=Data Disk 2 mount
+
+[Mount]
+What=/dev/disk/by-id/ata-WDC_WD40EFRX-68N32N0_WD-WCC7K5PDRVC8-part1
+Where=/mnt/data/data2
+Type=ext4
+Options=defaults
+
+[Install]
+WantedBy=multi-user.target
+

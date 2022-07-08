@@ -1,0 +1,12 @@
+[Unit]
+Description=Pool mount
+
+[Mount]
+What=/mnt/data/*
+Where=/pool
+Type=fuse.mergerfs
+Options=defaults,allow_other,use_ino,category.create=eplfs,moveonenospc=true,minfreespace=20G,fsname=mergerfsPool
+
+[Install]
+WantedBy=multi-user.target
+
