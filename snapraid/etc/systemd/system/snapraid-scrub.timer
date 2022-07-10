@@ -1,0 +1,11 @@
+[Unit]
+Description=Snapraid Scrub Timer
+Requires=snapraid-scrub.service
+
+[Timer]
+Unit=snapraid-scrub.service
+OnCalendar=Mon *-*-* 02:00:00
+
+[Install]
+WantedBy=multi-user.target
+
