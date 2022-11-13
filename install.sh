@@ -3,8 +3,8 @@
 yay -S --needed --noconfirm \
   mergerfs fuse mergerfs-tools-git snapraid smartmontools \
   samba elasticsearch fscrawler-bin \
-  jellyfin aur/aspnet-runtime-5.0-bin \
-  syncthing
+  syncthing \
+  docker docker-compose
 
 #
 # Setup Snapraid configuration and tooling
@@ -30,6 +30,8 @@ sudo systemctl enable --now mnt-parity-parity1.mount
 sudo systemctl enable --now pool.mount
 
 #
-# Enable and start services
-sudo systemctl enable --now jellyfin syncthing@jlk
+# Enable and start Syncthing
+sudo systemctl enable --now syncthing@jlk
 
+# TODO: Start Docker services
+#

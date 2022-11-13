@@ -1,0 +1,26 @@
+version: '3.3'
+
+
+services:
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+
+    environment:
+      - PUID=PUID
+      - PGID=PGID
+      - TZ=TZ
+      - JELLYFIN_PublishedServerUrl=${JELLYFIN_DOMAIN}
+
+    volumes:
+      - ${JELLYFIN_CONFIG_DIR}:/config:cached
+      - ${JELLYFIN_MEDIA_ROOT}:/media:cached
+
+    ports:
+      - ${JELLYFIN_PORT}:8096
+
+    devices:
+      - /dev/dri:/dev/dri
+
+    restart: unless-stopped
+
