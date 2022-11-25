@@ -2,7 +2,7 @@
 # Installing required packages
 yay -S --needed --noconfirm \
   mergerfs fuse mergerfs-tools-git snapraid smartmontools \
-  samba elasticsearch fscrawler-bin \
+  samba elasticsearch-bin fscrawler-bin \
   syncthing \
   docker docker-compose
 
