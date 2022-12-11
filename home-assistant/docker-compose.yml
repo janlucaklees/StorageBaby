@@ -1,0 +1,20 @@
+version: '3.3'
+
+
+services:
+
+  jellyfin:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    privileged: true
+
+    environment:
+      - TZ=TZ
+
+    volumes:
+      - ${HOME_ASSISTANT_CONFIG_DIR}:/config:cached
+
+    ports:
+      - ${HOME_ASSISTANT_PORT}:8123
+
+    restart: unless-stopped
+
