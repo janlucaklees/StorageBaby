@@ -13,6 +13,10 @@ up:
 daemon:
 	$(DC) up -d
 
+.PHONY: logs
+logs:
+	$(DC) logs -f watchtower
+
 .PHONY: down
 down:
 	$(DC) down
