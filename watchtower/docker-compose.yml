@@ -5,7 +5,10 @@ services:
 
   watchtower:
     image: containrrr/watchtower
-    command: --scope ${PROJECT_NAME} --label-enable --cleanup
+    command:
+      - '--scope ${PROJECT_NAME}'
+      - '--label-enable'
+      - '--cleanup'
 
     labels:
       - 'com.centurylinklabs.watchtower.scope=${PROJECT_NAME}'
