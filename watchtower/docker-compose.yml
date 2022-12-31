@@ -7,6 +7,10 @@ services:
     image: containrrr/watchtower
     command: --scope ${WATCHTOWER_SCOPE} --label-enable
 
+    labels:
+      - 'com.centurylinklabs.watchtower.scope=${WATCHTOWER_SCOPE}'
+      - 'com.centurylinklabs.watchtower.enable=true'
+
     environment:
       - TZ=TZ
 
