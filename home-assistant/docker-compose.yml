@@ -1,6 +1,5 @@
 version: '3.3'
 
-
 services:
 
   home-assistant:
@@ -8,7 +7,7 @@ services:
     privileged: true
 
     labels:
-      - 'com.centurylinklabs.watchtower.scope=${WATCHTOWER_SCOPE}'
+      - 'com.centurylinklabs.watchtower.scope=${PROJECT_NAME}'
       - 'com.centurylinklabs.watchtower.enable=true'
 
     environment:

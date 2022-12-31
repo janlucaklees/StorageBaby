@@ -1,8 +1,13 @@
+# Import all env-variables
+include .env
+include ../.env
+export
+
 # PUID = $(shell id -u jellyfin)
 # PGID = $(shell id -g jellyfin)
 
 # The base command to start the docker setup.
-DC = PGID=$(PGID) PUID=$(PUID) docker-compose
+DC = docker-compose --project-name $(PROJECT_NAME)
 
 
 .PHONY: up

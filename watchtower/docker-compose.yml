@@ -1,14 +1,13 @@
 version: '3.3'
 
-
 services:
 
   watchtower:
     image: containrrr/watchtower
-    command: --scope ${WATCHTOWER_SCOPE} --label-enable
+    command: --scope ${PROJECT_NAME} --label-enable
 
     labels:
-      - 'com.centurylinklabs.watchtower.scope=${WATCHTOWER_SCOPE}'
+      - 'com.centurylinklabs.watchtower.scope=${PROJECT_NAME}'
       - 'com.centurylinklabs.watchtower.enable=true'
 
     environment:
