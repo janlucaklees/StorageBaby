@@ -5,7 +5,7 @@ services:
 
   watchtower:
     image: containrrr/watchtower
-    command: --scope ${PROJECT_NAME} --label-enable
+    command: --scope ${PROJECT_NAME} --label-enable --cleanup
 
     labels:
       - 'com.centurylinklabs.watchtower.scope=${PROJECT_NAME}'
@@ -18,3 +18,5 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
     network_mode: none
+
+    restart: unless-stopped
