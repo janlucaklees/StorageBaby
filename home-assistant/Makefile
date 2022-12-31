@@ -1,8 +1,8 @@
-PUID = $(shell id -u jellyfin)
-PGID = $(shell id -g jellyfin)
+# PUID = $(shell id -u jellyfin)
+# PGID = $(shell id -g jellyfin)
 
 # The base command to start the docker setup.
-DC = PGID=$(PGID) PUID=$(PUID) docker-compose
+DC = docker-compose
 
 
 .PHONY: up
