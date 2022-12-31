@@ -1,5 +1,6 @@
 version: '3.3'
 
+
 services:
 
   home-assistant:
@@ -16,7 +17,14 @@ services:
     volumes:
       - ${HOME_ASSISTANT_CONFIG_DIR}:/config:cached
 
+    networks:
+      - home-assistant
+
     ports:
       - ${HOME_ASSISTANT_PORT}:8123
 
     restart: unless-stopped
+
+
+networks:
+  home-assistant:
