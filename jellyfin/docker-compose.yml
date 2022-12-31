@@ -24,4 +24,3 @@ services:
       - /dev/dri:/dev/dri
 
     restart: unless-stopped
-

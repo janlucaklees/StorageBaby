@@ -17,4 +17,3 @@ services:
       - ${HOME_ASSISTANT_PORT}:8123
 
     restart: unless-stopped
-
