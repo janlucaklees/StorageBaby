@@ -7,6 +7,10 @@ services:
     image: ghcr.io/home-assistant/home-assistant:stable
     privileged: true
 
+    labels:
+      - 'com.centurylinklabs.watchtower.scope=${WATCHTOWER_SCOPE}'
+      - 'com.centurylinklabs.watchtower.enable=true'
+
     environment:
       - TZ=TZ
 
