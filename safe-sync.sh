@@ -1,11 +1,14 @@
 #!/bin/bash
 
-# TODO: Stop docker services
+running_docker_container=`docker ps -q`
+
 systemctl stop smb nmb syncthing@jlk
+docker stop ${running_docker_container}
 
 snapraid touch
 
 snapraid sync
 
 systemctl start smb nmb syncthing@jlk
-# TODO: Start Docker services again
+docker start ${running_docker_container}
+
