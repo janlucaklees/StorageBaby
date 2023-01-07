@@ -5,23 +5,20 @@ services:
 
   jellyfin:
     image: lscr.io/linuxserver/jellyfin:latest
+    restart: unless-stopped
 
     labels:
-      - 'com.centurylinklabs.watchtower.scope=${PROJECT_NAME}'
       - 'com.centurylinklabs.watchtower.enable=true'
 
     environment:
-      - PUID=PUID
-      - PGID=PGID
-      - TZ=TZ
-      - JELLYFIN_PublishedServerUrl=${JELLYFIN_DOMAIN}
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TZ}
+      JELLYFIN_PublishedServerUrl: ${JELLYFIN_DOMAIN}
 
     volumes:
       - ${JELLYFIN_CONFIG_DIR}:/config:cached
       - ${JELLYFIN_MEDIA_ROOT}:/media:cached
-
-    networks:
-      - jellyfin
 
     ports:
       - ${JELLYFIN_PORT}:8096
@@ -29,9 +26,3 @@ services:
     devices:
       # Mount this for hardware accelleration.
       - /dev/dri:/dev/dri
-
-    restart: unless-stopped
-
-
-networks:
-  jellyfin:

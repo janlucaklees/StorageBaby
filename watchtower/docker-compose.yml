@@ -6,20 +6,18 @@ services:
   watchtower:
     image: containrrr/watchtower
     command:
-      - '--scope ${PROJECT_NAME}'
       - '--label-enable'
       - '--cleanup'
+      - '--interval ${POLL_INTERVAL}'
+    restart: unless-stopped
 
     labels:
-      - 'com.centurylinklabs.watchtower.scope=${PROJECT_NAME}'
       - 'com.centurylinklabs.watchtower.enable=true'
 
     environment:
-      - TZ=TZ
+      TZ: ${TZ}
 
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
     network_mode: none
-
-    restart: unless-stopped

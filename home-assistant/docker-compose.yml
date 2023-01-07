@@ -6,25 +6,16 @@ services:
   home-assistant:
     image: ghcr.io/home-assistant/home-assistant:stable
     privileged: true
+    restart: unless-stopped
 
     labels:
-      - 'com.centurylinklabs.watchtower.scope=${PROJECT_NAME}'
       - 'com.centurylinklabs.watchtower.enable=true'
 
     environment:
-      - TZ=TZ
+      TZ: ${TZ}
 
     volumes:
       - ${HOME_ASSISTANT_CONFIG_DIR}:/config:cached
 
-    networks:
-      - home-assistant
-
     ports:
       - ${HOME_ASSISTANT_PORT}:8123
-
-    restart: unless-stopped
-
-
-networks:
-  home-assistant:
