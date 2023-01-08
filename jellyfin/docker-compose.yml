@@ -4,7 +4,7 @@ version: '3.3'
 services:
 
   jellyfin:
-    image: lscr.io/linuxserver/jellyfin:latest
+    image: lscr.io/linuxserver/jellyfin:${JELLYFIN_TAG}
     restart: unless-stopped
 
     labels:

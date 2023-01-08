@@ -4,7 +4,7 @@ version: '3.3'
 services:
 
   home-assistant:
-    image: ghcr.io/home-assistant/home-assistant:stable
+    image: ghcr.io/home-assistant/home-assistant:${HOME_ASSISTANT_TAG}
     privileged: true
     restart: unless-stopped
 
