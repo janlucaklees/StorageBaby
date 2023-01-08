@@ -4,7 +4,7 @@ version: '3.3'
 services:
 
   jellyfin:
-    image: lscr.io/linuxserver/jellyfin:${JELLYFIN_TAG}
+    image: lscr.io/linuxserver/jellyfin:${TAG}
     restart: unless-stopped
 
     labels:
@@ -14,14 +14,14 @@ services:
       PUID: ${PUID}
       PGID: ${PGID}
       TZ: ${TZ}
-      JELLYFIN_PublishedServerUrl: ${JELLYFIN_DOMAIN}
+      JELLYFIN_PublishedServerUrl: ${DOMAIN}
 
     volumes:
-      - ${JELLYFIN_CONFIG_DIR}:/config:cached
-      - ${JELLYFIN_MEDIA_ROOT}:/media:cached
+      - ${CONFIG_DIR}:/config:cached
+      - ${MEDIA_ROOT}:/media:cached
 
     ports:
-      - ${JELLYFIN_PORT}:8096
+      - ${PORT}:8096
 
     devices:
       # Mount this for hardware accelleration.
