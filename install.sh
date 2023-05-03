@@ -4,7 +4,8 @@ yay -S --needed --noconfirm \
   mergerfs fuse mergerfs-tools-git snapraid smartmontools \
   samba elasticsearch-bin fscrawler-bin \
   syncthing \
-  docker docker-compose
+  docker docker-compose \
+  cups cups-pdf avahi kyocera-cups kyocera-ecosys-m552x-p502x
 
 #
 # Setup Snapraid configuration and tooling
@@ -16,6 +17,10 @@ sudo systemctl enable snapraid-scrub.service snapraid-scrub.timer
 # Setup Samba configuration
 sudo stow -vv -t / samba
 sudo systemctl enable --now smb nmb
+
+#
+# Setup Printer Sharing
+sudo stow -vv -t / cups
 
 #
 # Setup drive mounts
