@@ -11,7 +11,7 @@ yay -S --needed --noconfirm \
 # Setup Snapraid configuration and tooling
 sudo stow -vv -t / snapraid
 sudo chmod +x /usr/local/bin/snapraid-scrub.sh
-sudo systemctl enable snapraid-scrub.service snapraid-scrub.timer
+sudo systemctl enable snapraid-scrub.timer
 
 #
 # Setup Samba configuration
