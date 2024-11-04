@@ -1,11 +1,6 @@
 [Unit]
 Description=Snapraid Scrub Service
-Wants=snapraid-scrub.timer
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/snapraid-scrub.sh
-
-[Install]
-WantedBy=multi-user.target
-

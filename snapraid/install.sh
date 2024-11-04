@@ -30,7 +30,6 @@ doas cp config/etc/snapraid.conf /etc
 doas cp config/usr/local/bin/snapraid-scrub.sh /usr/local/bin
 doas chmod +x /usr/local/bin/snapraid-scrub.sh
 doas cp config/etc/systemd/system/snapraid-scrub.service /etc/systemd/system
-doas systemctl enable snapraid-scrub.service
 doas cp config/etc/systemd/system/snapraid-scrub.timer /etc/systemd/system
 doas systemctl enable snapraid-scrub.timer
 
