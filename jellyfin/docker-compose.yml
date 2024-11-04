@@ -1,6 +1,3 @@
-version: '3.3'
-
-
 services:
 
   jellyfin:
@@ -22,7 +19,11 @@ services:
 
     ports:
       - ${PORT}:8096
+      # - 8920:8920
+      # - 7359:7359/udp
+      # - 1900:1900/udp
 
     devices:
       # Mount this for hardware accelleration.
       - /dev/dri:/dev/dri
+

@@ -1,4 +1,4 @@
 #!/bin/bash
 
-PUID=`id -u jellyfin`
-PGID=`id -g jellyfin`
+PUID=`id -u jlk`
+PGID=`id -g jlk`
