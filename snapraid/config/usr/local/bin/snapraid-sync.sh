@@ -14,7 +14,7 @@ BALANCE_TARGET=3
 # Log File Locations
 # TODO: Clean up logs after a while.
 LOG_FILE_DIR="/var/log/snapraid-sync"
-LOG_FILE_BASE_NAME="$(date '+%Y-%m-%d_%H-%M-%S')_snapraid_sync"
+LOG_FILE_BASE_NAME="snapraid_sync"
 LOG_FILE="${LOG_FILE_DIR}/${LOG_FILE_BASE_NAME}.log"
 LOG_FILE_DIFF="${LOG_FILE_DIR}/${LOG_FILE_BASE_NAME}_diff.log"
 LOG_FILE_BALANCE="${LOG_FILE_DIR}/${LOG_FILE_BASE_NAME}_balace.log"
