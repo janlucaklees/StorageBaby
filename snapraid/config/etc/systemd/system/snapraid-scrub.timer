@@ -1,9 +1,10 @@
 [Unit]
-Description=Snapraid Scrub Timer
+Description=Run SnapRAID Scrub Service Weekly
 
 [Timer]
 Unit=snapraid-scrub.service
 OnCalendar=Mon *-*-* 02:00:00
+Persistent=true
 
 [Install]
 WantedBy=timers.target

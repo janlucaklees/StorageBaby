@@ -1,5 +1,5 @@
 [Unit]
-Description=Snapraid Scrub Service
+Description=SnapRAID Scrub Service
 
 [Service]
 Type=oneshot

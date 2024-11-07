@@ -1,0 +1,10 @@
+[Unit]
+Description=Run SnapRAID Sync Service Daily
+
+[Timer]
+Unit=snapraid-sync.service
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
