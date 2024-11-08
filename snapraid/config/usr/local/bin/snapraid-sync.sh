@@ -177,11 +177,11 @@ function resume_docker_services() {
 }
 
 function stop_systemd_services() {
-	systemctl stop "$SYSTEMD_SERVICES" 1>/dev/null 2> >(log_with_timestamp >&2)
+	systemctl stop $SYSTEMD_SERVICES 1>/dev/null 2> >(log_with_timestamp >&2)
 }
 
 function start_systemd_services() {
-	systemctl start "$SYSTEMD_SERVICES" 1>/dev/null 2> >(log_with_timestamp >&2)
+	systemctl start $SYSTEMD_SERVICES 1>/dev/null 2> >(log_with_timestamp >&2)
 }
 
 function stop_services {
