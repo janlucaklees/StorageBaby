@@ -99,7 +99,7 @@ function main() {
 
     log "Fixing files with zero sub-second timestamps..."
     # Only logging errors to file and console.
-    snapraid touch 1>/dev/null 2> >(tee -a "$LOG_FILE" >&2)
+    snapraid touch 1>/dev/null 2> >(log_with_timestamp >&2)
     log ""
 
     log "Balancing the array..."
@@ -108,7 +108,7 @@ function main() {
 
     log "Syncing..."
     # Run the sync; log errors to file and console; filter output lines and log them to file and console.
-    snapraid sync 2> >(tee -a "$LOG_FILE" >&2) | awk '/100% completed/,/Everything OK/' | tee -a "$LOG_FILE"
+    snapraid sync 2> >(log_with_timestamp >&2) | awk '/100% completed/,/Everything OK/' | log_with_timestamp
 
     if [ "${PIPESTATUS[0]}" -ne 0 ]; then
         log "Sync failed. Aborting."
@@ -130,7 +130,7 @@ function main() {
 
     log "=== SMART Report Start ==="
     log ""
-    snapraid smart 2>&1 | tee -a "$LOG_FILE"
+    snapraid smart 2>&1 | log_with_timestamp
     log ""
     log "=== SMART Report End ==="
 
@@ -141,9 +141,19 @@ function main() {
     send_email "[Success] SnapRAID Sync Report" "SnapRAID sync completed successfully. Check $LOG_FILE for details."
 }
 
+function formatted_date() {
+    echo "$(date '+%Y-%m-%d_%H-%M-%S')"
+}
+
 function log() {
     local message="$1"
-    echo "[$(date '+%Y-%m-%d_%H-%M-%S')] $message" | tee -a "$LOG_FILE"
+    echo "[$(formatted_date)] $message" | tee -a "$LOG_FILE"
+}
+
+function log_with_timestamp() {
+    while IFS= read -r line; do
+        echo "[$(formatted_date)] $line" | tee -a "$LOG_FILE"
+    done
 }
 
 function print_status() {
@@ -152,30 +162,26 @@ function print_status() {
     log "=== ${label} Start ==="
     log ""
 
-    snapraid status | sed -n '6,11p;30,31p;33,$p' | tee -a "$LOG_FILE"
+    snapraid status | sed -n '6,11p;30,31p;33,$p' | log_with_timestamp
 
     log ""
     log "=== ${label} End ==="
 }
 
 function pause_docker_services() {
-    log "Pausing Docker Services..."
-	docker pause $(docker ps -qa) 2>&1 | tee -a "$LOG_FILE"
+	docker pause $(docker ps -qa) 1>/dev/null 2> >(log_with_timestamp >&2)
 }
 
 function resume_docker_services() {
-    log "Resuming Docker Services..."
-	docker unpause $(docker ps -qa) 2>&1 | tee -a "$LOG_FILE"
+	docker unpause $(docker ps -qa) 1>/dev/null 2> >(log_with_timestamp >&2)
 }
 
 function stop_systemd_services() {
-    log "Stopping Systemd Services..."
-	systemctl stop $SYSTEMD_SERVICES 2>&1 | tee -a "$LOG_FILE"
+	systemctl stop "$SYSTEMD_SERVICES" 1>/dev/null 2> >(log_with_timestamp >&2)
 }
 
 function start_systemd_services() {
-    log "Starting Systemd Services..."
-	systemctl start $SYSTEMD_SERVICES 2>&1 | tee -a "$LOG_FILE"
+	systemctl start "$SYSTEMD_SERVICES" 1>/dev/null 2> >(log_with_timestamp >&2)
 }
 
 function stop_services {
