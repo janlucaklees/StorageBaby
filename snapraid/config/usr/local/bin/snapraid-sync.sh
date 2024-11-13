@@ -215,6 +215,8 @@ function send_email() {
 mkdir -p "$LOG_FILE_DIR"
 
 # Make sure to restore services if this script is terminated unexpectedly.
+# TODO: send mail here as well.
+# TODO: Make sure script is properly terminated. See: https://www.cons.org/cracauer/sigint.html
 trap restore_services INT TERM
 
 main
