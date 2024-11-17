@@ -1,6 +1,0 @@
-[Unit]
-Description=SnapRAID Scrub Service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/snapraid-scrub.sh

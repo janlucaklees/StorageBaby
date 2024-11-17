@@ -4,8 +4,7 @@
 # Settings
 DEFAULT_BALANCE_TARGET_PERCENTAGE=5
 
-#
-# Code
+
 BALANCE_TARGET_PERCENTAGE="$DEFAULT_BALANCE_TARGET_PERCENTAGE"
 
 # Check whether to use default value or a given parameter

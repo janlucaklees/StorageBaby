@@ -1,6 +1,0 @@
-[Unit]
-Description=SnapRAID Sync Service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/snapraid-sync.sh
