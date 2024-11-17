@@ -1,0 +1,11 @@
+[Unit]
+Description=Data Disk 3 mount
+
+[Mount]
+What=/dev/disk/by-partuuid/d3b1a8bb-3da9-48dc-a082-2603cf186444
+Where=/mnt/data/data3
+Type=ext4
+Options=defaults
+
+[Install]
+RequiredBy=local-fs.target

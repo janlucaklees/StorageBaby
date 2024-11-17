@@ -10,6 +10,8 @@ doas cp config/etc/systemd/system/mnt-data-data1.mount /etc/systemd/system
 doas systemctl enable --now mnt-data-data1.mount
 doas cp config/etc/systemd/system/mnt-data-data2.mount /etc/systemd/system
 doas systemctl enable --now mnt-data-data2.mount
+doas cp config/etc/systemd/system/mnt-data-data3.mount /etc/systemd/system
+doas systemctl enable --now mnt-data-data3.mount
 
 # Enable and mount parity drives
 doas cp config/etc/systemd/system/mnt-parity-parity1.mount /etc/systemd/system

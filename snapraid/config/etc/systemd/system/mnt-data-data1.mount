@@ -2,11 +2,10 @@
 Description=Data Disk 1 mount
 
 [Mount]
-What=/dev/disk/by-id/ata-WDC_WD40EFRX-68N32N0_WD-WCC7K7YHET2C-part1
+What=/dev/disk/by-partuuid/a36d7f0a-aa65-4214-98e0-f3818954a494
 Where=/mnt/data/data1
 Type=ext4
 Options=defaults
 
 [Install]
 RequiredBy=local-fs.target
-
