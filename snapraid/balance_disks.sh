@@ -23,5 +23,8 @@ then
     exit 1
 fi
 
+# Ensure log directory exists
+mkdir -p /var/log/snapraid
+
 # Perform disk balancing
-mergerfs.balance -p "$BALANCE_TARGET_PERCENTAGE" /pool
+mergerfs.balance -p "$BALANCE_TARGET_PERCENTAGE" /pool &> /var/log/snapraid/balance_disks.log
