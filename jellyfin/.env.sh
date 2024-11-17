@@ -1,4 +1,4 @@
 #!/bin/bash
 
 PUID=`id -u jlk`
-PGID=`id -g wheel`
+PGID=`getent group wheel | cut -d: -f3`
