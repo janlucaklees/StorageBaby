@@ -26,6 +26,13 @@ function print_snapraid_status() {
     snapraid status | sed -n '6,11p;30,31p;33,$p'
 }
 
+function print_snapraid_smart() {
+    echo_section "SMART Report"
+    echo
+
+    snapraid smart
+}
+
 function run_hook() {
     local hook=$1
 
@@ -69,8 +76,6 @@ fi
 
 run_hook "on-after-sync"
 
-print_snapraid_status "Final Snapraid Status"
-
 echo_section "Scrubbing"
 if ! bash "${ROOT_DIR}/snapraid/scrub.sh"; then
     echo "Scrubbing failed. Aborting."
@@ -78,5 +83,9 @@ if ! bash "${ROOT_DIR}/snapraid/scrub.sh"; then
 fi
 
 run_hook "on-after-scrub"
+
+print_snapraid_status "Final Snapraid Status"
+
+print_snapraid_smart
 
 run_hook "on-finish"

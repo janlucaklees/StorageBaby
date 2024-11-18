@@ -7,8 +7,6 @@ LOG_FILE_DIR="/var/log/persistence"
 LOG_FILE_BASE_NAME="persistence"
 LOG_FILE="${LOG_FILE_DIR}/${LOG_FILE_BASE_NAME}.log"
 
-mkdir -p "${LOG_FILE_DIR}"
-
 #
 # Define functions
 function log_with_timestamp() {
@@ -46,7 +44,6 @@ echo "" > $LOG_FILE
 {
     echo "=== Starting Persistence Job ==="
     echo "Log File: $LOG_FILE"
-    echo "Start Time: $(date '+%Y-%m-%d %H:%M:%S')"
 
     # Execute the main script and log output with timestamps
     if bash "./persistence.sh"; then
@@ -59,11 +56,11 @@ echo "" > $LOG_FILE
 
     echo
     echo
-    echo "End Time: $(date '+%Y-%m-%d %H:%M:%S')"
     echo "=== Job Finished with Status: $STATUS ==="
 
 } | stdbuf -oL awk '!/\r/' | log_with_timestamp
 
+STATUS=$(sed -n 's/\[.*\] === Job Finished with Status: \(.*\) ===/\1/p' "${LOG_FILE}")
 
 send_email "[${STATUS}] SnapRAID Sync Report" "The SnapRAID job finished with status: ${STATUS}. Logs are attached."
 
