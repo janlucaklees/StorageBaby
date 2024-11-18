@@ -19,16 +19,8 @@ function send_email() {
     local subject="$1"
     local message="$2"
 
-    # Build the attachment list by checking if each file exists
-    local attachments=""
-    for file in "$LOG_FILE"; do
-        if [[ -f "$file" ]]; then
-            attachments+=" -a $file"
-        fi
-    done
-
     # Send the email with the attachments that exist
-    echo -e "$message\n\nLog Content:\n$(cat "$LOG_FILE")" | mutt -s "$subject" $attachments -- "$EMAIL"
+    echo -e "$message\n\nLog Content:\n$(cat "$LOG_FILE")" | mutt -s "$subject" -- "$EMAIL"
 }
 
 #
