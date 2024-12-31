@@ -11,7 +11,7 @@ LOG_FILE="${LOG_FILE_DIR}/${LOG_FILE_BASE_NAME}.log"
 # Define functions
 function log_with_timestamp() {
     while IFS= read -r line; do
-        echo "[$(date '+%Y-%m-%d_%H-%M-%S')] $line" | tee -a "$LOG_FILE"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $line" | tee -a "$LOG_FILE"
     done
 }
 
