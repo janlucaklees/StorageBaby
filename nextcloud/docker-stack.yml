@@ -1,0 +1,140 @@
+version: "3.8"
+
+services:
+    database:
+        image: "postgres:17-alpine"
+
+        healthcheck:
+            test:
+                [
+                    "CMD",
+                    "pg_isready",
+                    "-U",
+                    "${DATABASE_USER}",
+                    "-d",
+                    "${DATABASE_NAME}",
+                ]
+
+        deploy:
+            replicas: 1
+            restart_policy:
+                condition: any
+            update_config:
+                failure_action: pause
+                order: stop-first
+
+        environment:
+            TZ: "${TZ}"
+            POSTGRES_DB_FILE: "/run/secrets/nextcloud_database_name"
+            POSTGRES_USER_FILE: "/run/secrets/nextcloud_database_user"
+            POSTGRES_PASSWORD_FILE: "/run/secrets/nextcloud_database_password"
+
+        secrets:
+            - nextcloud_database_name
+            - nextcloud_database_user
+            - nextcloud_database_password
+
+        volumes:
+            - /pool/apps/nextcloud/volumes/database:/var/lib/postgresql/data
+
+    cache:
+        image: "redis:alpine"
+
+        healthcheck:
+            test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+
+        deploy:
+            replicas: 1
+            restart_policy:
+                condition: any
+
+        environment:
+            TZ: "${TZ}"
+
+    nginx:
+        image: "nginx:alpine"
+
+        deploy:
+            replicas: 1
+            restart_policy:
+                condition: any
+            labels:
+                traefik.enable: "true"
+                traefik.docker.network: "traefik_network"
+                traefik.http.routers.nextcloud.entrypoints: "web"
+                traefik.http.routers.nextcloud.rule: "Host(`nextcloud.janlucaklees.local`)"
+                # traefik.http.routers.nextcloud.tls.certresolver: "letsencrypt"
+                traefik.http.services.nextcloud.loadbalancer.server.port: "80"
+
+        configs:
+            - source: nextcloud_nginx_conf
+              target: /etc/nginx/nginx.conf
+
+        volumes:
+            - /pool/apps/nextcloud/volumes/nextcloud:/var/www/html:ro
+
+        networks:
+            - default
+            - traefik_network
+
+    nextcloud:
+        image: "nextcloud:30-fpm-alpine"
+
+        deploy:
+            replicas: 1
+            restart_policy:
+                condition: any
+
+        environment:
+            TZ: "${TZ}"
+            POSTGRES_HOST: "database"
+            POSTGRES_DB_FILE: "/run/secrets/nextcloud_database_name"
+            POSTGRES_USER_FILE: "/run/secrets/nextcloud_database_user"
+            POSTGRES_PASSWORD_FILE: "/run/secrets/nextcloud_database_password"
+
+            REDIS_HOST: "cache"
+
+            TRUSTED_PROXIES: "${TRAEFIK_CIDR}"
+            NEXTCLOUD_TRUSTED_DOMAINS: "nextcloud.janlucaklees.local"
+            OVERWRITEPROTOCOL: "https"
+            OVERWRITECLIURL: "https://nextcloud.janlucaklees.local"
+            OVERWRITEHOST: "nextcloud.janlucaklees.local"
+
+        configs:
+            - source: nextcloud_fpm_conf
+              target: /usr/local/etc/php-fpm.d/www.conf
+            - source: nextcloud_opcache_conf
+              target: /usr/local/etc/php/conf.d/opcache.ini
+
+        secrets:
+            - nextcloud_database_name
+            - nextcloud_database_user
+            - nextcloud_database_password
+
+        volumes:
+            - /pool/apps/nextcloud/volumes/nextcloud:/var/www/html
+
+        depends_on:
+            - database
+            - cache
+            - nginx
+
+configs:
+    nextcloud_nginx_conf:
+        external: true
+    nextcloud_fpm_conf:
+        external: true
+    nextcloud_opcache_conf:
+        external: true
+
+secrets:
+    nextcloud_database_name:
+        external: true
+    nextcloud_database_user:
+        external: true
+    nextcloud_database_password:
+        external: true
+
+networks:
+    traefik_network:
+        external: true
