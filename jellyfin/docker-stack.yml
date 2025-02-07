@@ -2,15 +2,8 @@ services:
     jellyfin:
         image: linuxserver/jellyfin:latest
 
-        # healthcheck:
-        #     test:
-        #         [
-        #             "CMD",
-        #             "wget",
-        #             "--spider",
-        #             "-q",
-        #             "http://localhost:8096/health",
-        #         ]
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
 
         deploy:
             replicas: 1
