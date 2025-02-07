@@ -9,10 +9,22 @@ configs:
 secrets:
 	docker secret create traefik_ui_basicauth traefik_ui_basicauth.secret
 
-.PHONY: deploy
-deploy:
-	docker stack deploy --detach -c docker-stack.yml traefik
+.PHONY: start
+start:
+	docker compose up -d
 
 .PHONY: ps
 ps:
-	docker stack ps traefik
+	docker compose ps
+
+.PHONY: stop
+stop:
+	docker compose stop
+
+.PHONY: remove
+remove:
+	docker compose down
+
+.PHONY: clean
+clean:
+	docker compose down --volumes

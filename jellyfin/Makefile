@@ -1,17 +1,25 @@
-.PHONY: context
-context:
-	docker context use default
-
 .PHONY: configs
 configs:
 
 .PHONY: secrets
 secrets:
 
-.PHONY: deploy
-deploy:
-	docker stack deploy --detach -c docker-stack.yml jellyfin
+.PHONY: start
+start:
+	docker compose up -d
 
 .PHONY: ps
 ps:
-	docker stack ps jellyfin
+	docker compose ps
+
+.PHONY: stop
+stop:
+	docker compose stop
+
+.PHONY: remove
+remove:
+	docker compose down
+
+.PHONY: clean
+clean:
+	docker compose down --volumes

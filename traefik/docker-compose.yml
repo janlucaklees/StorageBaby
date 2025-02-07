@@ -8,28 +8,18 @@ services:
             test:
                 ["CMD", "wget", "--spider", "-q", "http://localhost:8080/ping"]
 
-        deploy:
-            mode: global
-            restart_policy:
-                condition: any
-            placement:
-                constraints:
-                    - node.role == manager
-            update_config:
-                failure_action: rollback
-                order: start-first
-            labels:
-                traefik.enable: "true"
-                traefik.docker.network: "traefik_network"
+        labels:
+            traefik.enable: "true"
+            traefik.docker.network: "traefik_network"
 
-                # Configure the web UI
-                traefik.http.routers.traefik-ui.entrypoints: "web"
-                traefik.http.routers.traefik-ui.rule: "Host(`traefik.janlucaklees.local`)"
-                traefik.http.routers.traefik-ui.service: "api@internal"
-                # traefik.http.routers.traefik-ui.tls.certresolver: "letsencrypt"
-                # traefik.http.routers.traefik-ui.middlewares: "traefik-ui-auth"
-                traefik.http.services.traefik-ui.loadbalancer.server.port: "8080"
-                # traefik.http.middlewares.traefik-ui-auth.basicauth.usersfile: "/run/secrets/traefik_ui_basicauth"
+            # Configure the web UI
+            traefik.http.routers.traefik-ui.entrypoints: "web"
+            traefik.http.routers.traefik-ui.rule: "Host(`traefik.janlucaklees.local`)"
+            traefik.http.routers.traefik-ui.service: "api@internal"
+            # traefik.http.routers.traefik-ui.tls.certresolver: "letsencrypt"
+            # traefik.http.routers.traefik-ui.middlewares: "traefik-ui-auth"
+            traefik.http.services.traefik-ui.loadbalancer.server.port: "8080"
+            # traefik.http.middlewares.traefik-ui-auth.basicauth.usersfile: "/run/secrets/traefik_ui_basicauth"
 
         command:
             - "--api"
@@ -38,8 +28,6 @@ services:
 
             - "--providers.docker=true"
             - "--providers.docker.exposedbydefault=false"
-            - "--providers.docker.swarmMode=true"
-            - "--providers.docker.endpoint=unix:///var/run/docker.sock"
             - "--providers.docker.network=traefik_network"
 
             - "--entrypoints.web.address=:80"
@@ -54,8 +42,8 @@ services:
         environment:
             TZ: "${TZ}"
 
-        secrets:
-            - traefik_ui_basicauth
+        # secrets:
+        #     - traefik_ui_basicauth
 
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -69,9 +57,9 @@ services:
             - "80:80"
             - "443:443"
 
-secrets:
-    traefik_ui_basicauth:
-        external: true
+# secrets:
+#     traefik_ui_basicauth:
+#         external: true
 
 volumes:
     letsencrypt:
