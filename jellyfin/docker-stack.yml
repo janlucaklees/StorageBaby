@@ -1,0 +1,43 @@
+services:
+    jellyfin:
+        image: linuxserver/jellyfin:latest
+
+        # healthcheck:
+        #     test:
+        #         [
+        #             "CMD",
+        #             "wget",
+        #             "--spider",
+        #             "-q",
+        #             "http://localhost:8096/health",
+        #         ]
+
+        deploy:
+            replicas: 1
+            restart_policy:
+                condition: any
+            labels:
+                traefik.enable: "true"
+                traefik.docker.network: "traefik_network"
+                traefik.http.routers.jellyfin.entrypoints: "web"
+                traefik.http.routers.jellyfin.rule: "Host(`jellyfin.janlucaklees.local`)"
+                traefik.http.services.jellyfin.loadbalancer.server.port: "8096"
+
+        environment:
+            TZ: ${TZ}
+
+            PUID: 1000
+            PGID: 998
+
+            JELLYFIN_PublishedServerUrl: jellyfin.janlucaklees.local
+
+        volumes:
+            - /pool/apps/jellyfin/volumes/jellyfin_config:/config
+            - /pool/shared/media:/media:cached
+
+        networks:
+            - traefik_network
+
+networks:
+    traefik_network:
+        external: true
