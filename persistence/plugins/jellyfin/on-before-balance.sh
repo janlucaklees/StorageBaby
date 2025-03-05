@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Shut down service gracefully, to ensure uncorrupted backup and no errors suring the sync.
-docker stop jellyfin-jellyfin-1
+docker stop jellyfin
 
 # Backup Jellyfin data. Database is included.
 rsync \
@@ -9,5 +9,5 @@ rsync \
     --delete \
     --human-readable \
     --stats \
-    /home/jlk/StorageBaby/jellyfin/mounts \
-    /pool/backups/apps/jellyfin/home/jlk/StorageBaby/jellyfin/
+    /pool/apps/jellyfin/volumes/jellyfin_config/. \
+    /pool/backups/apps/jellyfin/jellyfin_config/.
