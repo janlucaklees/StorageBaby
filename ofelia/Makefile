@@ -8,10 +8,6 @@ start:
 ps:
 	docker compose ps
 
-.PHONY: logs
-logs:
-	docker compose logs -f
-
 .PHONY: stop
 stop:
 	docker compose stop

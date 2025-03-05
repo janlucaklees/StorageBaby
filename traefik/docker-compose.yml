@@ -1,8 +1,9 @@
-version: "3.8"
-
 services:
     traefik:
         image: "traefik:2"
+        container_name: traefik
+
+        restart: unless-stopped
 
         healthcheck:
             test:
@@ -14,12 +15,14 @@ services:
 
             # Configure the web UI
             traefik.http.routers.traefik-ui.entrypoints: "web"
-            traefik.http.routers.traefik-ui.rule: "Host(`traefik.janlucaklees.local`)"
+            traefik.http.routers.traefik-ui.rule: "Host(`traefik.klees`)"
             traefik.http.routers.traefik-ui.service: "api@internal"
             # traefik.http.routers.traefik-ui.tls.certresolver: "letsencrypt"
             # traefik.http.routers.traefik-ui.middlewares: "traefik-ui-auth"
             traefik.http.services.traefik-ui.loadbalancer.server.port: "8080"
             # traefik.http.middlewares.traefik-ui-auth.basicauth.usersfile: "/run/secrets/traefik_ui_basicauth"
+
+            com.centurylinklabs.watchtower.enable: "true"
 
         command:
             - "--api"

@@ -1,6 +1,9 @@
 services:
     jellyfin:
         image: linuxserver/jellyfin:latest
+        container_name: jellyfin
+
+        restart: unless-stopped
 
         healthcheck:
             test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
@@ -9,7 +12,7 @@ services:
             traefik.enable: "true"
             traefik.docker.network: "traefik_network"
             traefik.http.routers.jellyfin.entrypoints: "web"
-            traefik.http.routers.jellyfin.rule: "Host(`jellyfin.janlucaklees.local`)"
+            traefik.http.routers.jellyfin.rule: "Host(`jellyfin.klees`)"
             traefik.http.services.jellyfin.loadbalancer.server.port: "8096"
 
         environment:
@@ -18,7 +21,7 @@ services:
             PUID: 1000
             PGID: 998
 
-            JELLYFIN_PublishedServerUrl: jellyfin.janlucaklees.local
+            JELLYFIN_PublishedServerUrl: jellyfin.klees
 
         volumes:
             - /pool/apps/jellyfin/volumes/jellyfin_config:/config

@@ -1,24 +1,22 @@
-version: '3.3'
-
-
 services:
+    watchtower:
+        image: containrrr/watchtower:latest
+        container_name: watchtower
 
-  watchtower:
-    image: containrrr/watchtower:${TAG}
-    restart: unless-stopped
+        restart: unless-stopped
 
-    command:
-      - '--label-enable'
-      - '--cleanup'
-      - '--schedule=${SCHEDULE}'
+        command:
+            - "--label-enable"
+            - "--cleanup"
+            - "--schedule=0 0 2 * * *"
 
-    labels:
-      - 'com.centurylinklabs.watchtower.enable=true'
+        labels:
+            com.centurylinklabs.watchtower.enable: "true"
 
-    environment:
-      TZ: ${TZ}
+        environment:
+            TZ: ${TZ}
 
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
 
-    network_mode: none
+        network_mode: none
