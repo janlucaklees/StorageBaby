@@ -3,8 +3,8 @@
 #
 # Settings
 EMAIL='email@janlucaklees.de'
-LOG_FILE_DIR="/var/log/persistence"
-LOG_FILE_BASE_NAME="persistence"
+LOG_FILE_DIR="/var/log/storage-maintenance"
+LOG_FILE_BASE_NAME="storage-maintenance"
 LOG_FILE="${LOG_FILE_DIR}/${LOG_FILE_BASE_NAME}.log"
 
 #
@@ -32,13 +32,13 @@ mkdir -p "$LOG_FILE_DIR"
 # Clear the log file
 echo "" > $LOG_FILE
 
-# Run the persistence script
+# Run the storage-maintenance script
 {
-    echo "=== Starting Persistence Job ==="
+    echo "=== Starting Storage Maintenance Job ==="
     echo "Log File: $LOG_FILE"
 
     # Execute the main script and log output with timestamps
-    if bash "./persistence.sh"; then
+    if bash "/home/jlk/StorageBaby/snapraid/storage-maintenance/storage-maintenance.sh"; then
         STATUS="SUCCESS"
         echo "SnapRAID Job completed successfully."
     else

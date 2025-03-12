@@ -4,7 +4,7 @@
 # Set some variables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # TODO: Make this react to changes in file-location.
-ROOT_DIR=/home/jlk/StorageBaby
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 #
 # Define functions
@@ -61,7 +61,7 @@ print_snapraid_status "Initial Snapraid Status"
 run_hook "on-before-balance"
 
 echo_section "Balancing disks"
-if ! bash "${ROOT_DIR}/snapraid/balance_disks.sh"; then
+if ! bash "${SCRIPT_DIR}/balance_disks.sh"; then
     echo "Balancing disks failed. Aborting."
     exit 1
 fi
@@ -69,7 +69,7 @@ fi
 run_hook "on-before-sync"
 
 echo_section "Syncing"
-if ! bash "${ROOT_DIR}/snapraid/sync.sh"; then
+if ! bash "${SCRIPT_DIR}/sync.sh"; then
     echo "Syncing failed. Aborting."
     exit 1
 fi
@@ -77,7 +77,7 @@ fi
 run_hook "on-after-sync"
 
 echo_section "Scrubbing"
-if ! bash "${ROOT_DIR}/snapraid/scrub.sh"; then
+if ! bash "${SCRIPT_DIR}/scrub.sh"; then
     echo "Scrubbing failed. Aborting."
     exit 1
 fi

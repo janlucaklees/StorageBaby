@@ -29,18 +29,12 @@ doas systemctl enable --now pool.mount
 doas cp config/etc/snapraid.conf /etc
 
 # Install my Snapraid Scrub-Service
-doas cp config/usr/local/bin/snapraid-scrub.sh /usr/local/bin
-doas chmod +x /usr/local/bin/snapraid-scrub.sh
-doas cp config/etc/systemd/system/snapraid-scrub.service /etc/systemd/system
-doas cp config/etc/systemd/system/snapraid-scrub.timer /etc/systemd/system
-doas systemctl enable snapraid-scrub.timer
-
-# Install my Snapraid Sync-Service
-doas cp config/usr/local/bin/snapraid-sync.sh /usr/local/bin
-doas chmod +x /usr/local/bin/snapraid-sync.sh
-doas cp config/etc/systemd/system/snapraid-sync.service /etc/systemd/system
-doas cp config/etc/systemd/system/snapraid-sync.timer /etc/systemd/system
-doas systemctl enable snapraid-sync.timer
+doas mkdir /opt/scripts
+doas cp config/opt/scripts/storage-maintenance-unattended.sh /opt/scripts
+doas chmod +x /opt/scripts/storage-maintenance-unattended.sh
+doas cp config/etc/systemd/system/storage-maintenance.service /etc/systemd/system
+doas cp config/etc/systemd/system/storage-maintenance.timer /etc/systemd/system
+doas systemctl enable storage-maintenance.timer
 
 #
 # Setup Mutt

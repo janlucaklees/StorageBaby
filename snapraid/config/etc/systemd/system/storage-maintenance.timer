@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Storage Maintenance
+
+[Timer]
+Unit=storage-maintenance.service
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
