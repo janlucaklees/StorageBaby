@@ -6,10 +6,12 @@ docker stop paperless-broker-1 paperless-tika-1 paperless-db-1 paperless-gotenbe
 
 # Backup Paperless data.
 # TODO: Backup the database as an SQL file.
+mkdir -p /pool/backups/apps/paperless/var/lib/docker/volumes
 rsync \
     --archive \
     --delete \
     --human-readable \
+    --info=progress2 \
     --stats \
     /var/lib/docker/volumes/paperless_data \
     /var/lib/docker/volumes/paperless_media \

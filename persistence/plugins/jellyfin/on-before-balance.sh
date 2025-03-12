@@ -4,10 +4,12 @@
 docker stop jellyfin
 
 # Backup Jellyfin data. Database is included.
+mkdir -p /pool/backups/apps/jellyfin/jellyfin_config
 rsync \
     --archive \
     --delete \
     --human-readable \
+    --info=progress2 \
     --stats \
     /pool/apps/jellyfin/volumes/jellyfin_config/. \
     /pool/backups/apps/jellyfin/jellyfin_config/.
