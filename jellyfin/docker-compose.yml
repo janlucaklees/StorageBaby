@@ -24,7 +24,7 @@ services:
             JELLYFIN_PublishedServerUrl: jellyfin.klees
 
         volumes:
-            - /pool/apps/jellyfin/volumes/jellyfin_config:/config
+            - /pool/apps/jellyfin/volumes/jellyfin_config:/config:cached
             - /pool/shared/media:/media:cached
 
         devices:
