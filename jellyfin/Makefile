@@ -1,3 +1,5 @@
+export TZ=Europe/Berlin
+
 .PHONY: configs
 configs:
 
