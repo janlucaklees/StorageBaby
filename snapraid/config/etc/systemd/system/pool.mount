@@ -6,7 +6,7 @@ Requires=mnt-data-data1.mount mnt-data-data2.mount mnt-data-data3.mount mnt-pari
 What=/mnt/data/*
 Where=/pool
 Type=fuse.mergerfs
-Options=defaults,allow_other,use_ino,category.create=eplfs,moveonenospc=true,minfreespace=20G,fsname=mergerfsPool,cache.writeback=true,cache.symlinks=true,cache.readdir=true,async_read=false,threads=1
+Options=defaults,allow_other,use_ino,category.create=eplfs,moveonenospc=true,minfreespace=20G,fsname=mergerfsPool,cache.writeback=false,cache.symlinks=false,cache.readdir=false,async_read=true,threads=4
 
 [Install]
 RequiredBy=local-fs.target
