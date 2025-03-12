@@ -10,6 +10,9 @@ mkdir -p /pool/backups/apps/paperless/var/lib/docker/volumes
 rsync \
     --archive \
     --delete \
+    --keep-dirlinks \
+    --hard-links \
+    --numeric-ids \
     --human-readable \
     --info=progress2 \
     --stats \

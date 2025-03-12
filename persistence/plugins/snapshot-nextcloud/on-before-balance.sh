@@ -8,6 +8,9 @@ set -xe
 #     --archive \
 #     --delete \
 #     --compress \
+#     --numeric-ids \
+#     --no-whole-file \
+#     --inplace \
 #     --human-readable \
 #     --info=progress2 \
 #     --stats \
@@ -20,6 +23,9 @@ mkdir -p /pool/apps/nextcloud/volumes/nextcloud
 rsync \
     --archive \
     --delete \
+    --keep-dirlinks \
+    --hard-links \
+    --numeric-ids \
     --human-readable \
     --info=progress2 \
     --stats \

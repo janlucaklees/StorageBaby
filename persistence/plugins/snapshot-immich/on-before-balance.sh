@@ -7,6 +7,9 @@ set -xe
 # rsync \
 #     --archive \
 #     --delete \
+#     --numeric-ids \
+#     --no-whole-file \
+#     --inplace \
 #     --compress \
 #     --human-readable \
 #     --info=progress2 \
@@ -20,6 +23,9 @@ mkdir -p /pool/apps/immich/snapshot
 rsync \
     --archive \
     --delete \
+    --keep-dirlinks \
+    --hard-links \
+    --numeric-ids \
     --human-readable \
     --info=progress2 \
     --stats \

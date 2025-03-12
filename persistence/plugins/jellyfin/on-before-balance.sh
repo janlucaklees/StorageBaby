@@ -8,6 +8,9 @@ mkdir -p /pool/backups/apps/jellyfin/jellyfin_config
 rsync \
     --archive \
     --delete \
+    --keep-dirlinks \
+    --hard-links \
+    --numeric-ids \
     --human-readable \
     --info=progress2 \
     --stats \
