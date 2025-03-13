@@ -2,20 +2,19 @@
 
 set -xe
 
-# TODO: Implement regular snapshots on the server
 # Backup Immich database
-# rsync \
-#     --archive \
-#     --delete \
-#     --numeric-ids \
-#     --no-whole-file \
-#     --inplace \
-#     --compress \
-#     --human-readable \
-#     --info=progress2 \
-#     --stats \
-#     root@ttraefik.janlucaklees.de:/home/jlk/CloudBaby/immich/snapshot.sql \
-#     /pool/backups/devices/CloudBaby/immich
+ssh cloud.janlucaklees.de "cd /home/jlk/CloudBaby/immich && make database_snapshot"
+rsync \
+    --archive \
+    --delete \
+    --numeric-ids \
+    --no-whole-file \
+    --inplace \
+    --human-readable \
+    --info=progress2 \
+    --stats \
+    root@cloud.janlucaklees.de:/home/jlk/CloudBaby/immich/snapshot.sql \
+    /pool/backups/devices/CloudBaby/immich
 
 # TODO: Move this backup to another location
 # Backup Immich Files
@@ -29,5 +28,5 @@ rsync \
     --human-readable \
     --info=progress2 \
     --stats \
-    root@ttraefik.janlucaklees.de:/var/lib/docker/volumes/immich_upload/_data/. \
+    root@cloud.janlucaklees.de:/var/lib/docker/volumes/immich_upload/_data/. \
     /pool/apps/immich/snapshot/.
