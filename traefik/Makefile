@@ -23,3 +23,7 @@ remove:
 .PHONY: clean
 clean:
 	docker compose down --volumes
+
+.PHONY: cert
+cert:
+	docker compose run --rm -it certbot

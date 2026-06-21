@@ -1,0 +1,6 @@
+tls:
+    stores:
+        default:
+            defaultCertificate:
+                certFile: /etc/letsencrypt/live/home.janlucaklees.de/fullchain.pem
+                keyFile: /etc/letsencrypt/live/home.janlucaklees.de/privkey.pem
