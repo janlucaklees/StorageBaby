@@ -2,3 +2,5 @@ mounts/
 .env
 .stfolder
 *.secret
+
+traefik/certs/
