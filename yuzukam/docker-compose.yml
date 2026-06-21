@@ -1,0 +1,31 @@
+services:
+    yuzukam:
+        image: ghcr.io/janlucaklees/yuzukam:latest
+        container_name: yuzukam
+
+        restart: unless-stopped
+
+        labels:
+            traefik.enable: "true"
+            traefik.docker.network: "traefik_network"
+
+            traefik.http.routers.yuzukam.rule: "Host(`yuzukam.home.janlucaklees.de`)"
+            traefik.http.routers.yuzukam.entrypoints: "web"
+
+            traefik.http.routers.yuzukam-secure.rule: "Host(`yuzukam.home.janlucaklees.de`)"
+            traefik.http.routers.yuzukam-secure.entrypoints: "websecure"
+            traefik.http.routers.yuzukam-secure.tls: true
+
+            traefik.http.services.yuzukam.loadbalancer.server.port: "3000"
+
+            com.centurylinklabs.watchtower.enable: "true"
+
+        environment:
+            TZ: ${TZ}
+
+        networks:
+            - traefik_network
+
+networks:
+    traefik_network:
+        external: true
