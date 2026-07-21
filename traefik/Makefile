@@ -16,14 +16,10 @@ logs:
 stop:
 	docker compose stop
 
-.PHONY: remove
+.PHONY: down
 remove:
 	docker compose down
 
-.PHONY: clean
-clean:
+.PHONY: clear
+clear:
 	docker compose down --volumes
-
-.PHONY: cert
-cert:
-	docker compose run --rm -it certbot

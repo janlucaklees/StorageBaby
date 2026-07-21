@@ -9,10 +9,10 @@ services:
             traefik.enable: "true"
             traefik.docker.network: "traefik_network"
 
-            traefik.http.routers.yuzukam.rule: "Host(`yuzukam.home.janlucaklees.de`)"
+            traefik.http.routers.yuzukam.rule: "Host(`yuzukam.home.klees.io`)"
             traefik.http.routers.yuzukam.entrypoints: "web"
 
-            traefik.http.routers.yuzukam-secure.rule: "Host(`yuzukam.home.janlucaklees.de`)"
+            traefik.http.routers.yuzukam-secure.rule: "Host(`yuzukam.home.klees.io`)"
             traefik.http.routers.yuzukam-secure.entrypoints: "websecure"
             traefik.http.routers.yuzukam-secure.tls: true
 

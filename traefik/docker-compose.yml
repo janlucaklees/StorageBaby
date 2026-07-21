@@ -1,6 +1,6 @@
 services:
     traefik:
-        image: "traefik:3"
+        image: "traefik:latest"
         container_name: traefik
 
         restart: unless-stopped
@@ -15,12 +15,15 @@ services:
 
             # Configure the web UI
             traefik.http.routers.traefik-ui.entrypoints: "web"
-            traefik.http.routers.traefik-ui.rule: "Host(`traefik.home.janlucaklees.de`)"
+            traefik.http.routers.traefik-ui.rule: "Host(`traefik.home.klees.io`)"
             traefik.http.routers.traefik-ui.service: "api@internal"
             # HTTPS router (the one that actually serves the dashboard)
             traefik.http.routers.traefik-ui-secure.entrypoints: "websecure"
-            traefik.http.routers.traefik-ui-secure.rule: "Host(`traefik.home.janlucaklees.de`)"
+            traefik.http.routers.traefik-ui-secure.rule: "Host(`traefik.home.klees.io`)"
             traefik.http.routers.traefik-ui-secure.tls: true
+            traefik.http.routers.traefik-ui-secure.tls.certresolver: "porkbun"
+            traefik.http.routers.traefik-ui-secure.tls.domains[0].main: "home.klees.io"
+            traefik.http.routers.traefik-ui-secure.tls.domains[0].sans: "*.home.klees.io"
             traefik.http.routers.traefik-ui-secure.service: "api@internal"
 
             com.centurylinklabs.watchtower.enable: "true"
@@ -33,7 +36,6 @@ services:
             - "--providers.docker=true"
             - "--providers.docker.exposedbydefault=false"
             - "--providers.docker.network=traefik_network"
-            - "--providers.file.filename=/etc/traefik/config.yml"
 
             - "--entrypoints.web.address=:80"
             - "--entrypoints.websecure.address=:443"
@@ -41,13 +43,23 @@ services:
             - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
             - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
 
+            - "--certificatesresolvers.porkbun.acme.email=email@janlucaklees.de"
+            - "--certificatesresolvers.porkbun.acme.storage=/letsencrypt/acme.json"
+            - "--certificatesresolvers.porkbun.acme.dnschallenge.provider=porkbun"
+            - "--certificatesresolvers.porkbun.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53"
+
         environment:
             TZ: "${TZ}"
+            PORKBUN_API_KEY_FILE: /run/secrets/porkbun_api_key
+            PORKBUN_SECRET_API_KEY_FILE: /run/secrets/porkbun_secret_api_key
+
+        secrets:
+            - porkbun_api_key
+            - porkbun_secret_api_key
 
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock:ro
-            - ./config.yml:/etc/traefik/config.yml
-            - letsencrypt:/etc/letsencrypt:ro
+            - letsencrypt:/letsencrypt
 
         networks:
             - traefik_network
@@ -56,26 +68,11 @@ services:
             - "80:80"
             - "443:443"
 
-    certbot:
-        image: certbot/certbot:latest
-        container_name: certbot
-
-        command:
-            [
-                "certonly",
-                "--manual",
-                "--preferred-challenges",
-                "dns",
-                "-d",
-                "home.janlucaklees.de,*.home.janlucaklees.de",
-                "-m",
-                "email@janlucaklees.de",
-                "--agree-tos",
-                "--no-eff-email",
-            ]
-
-        volumes:
-            - letsencrypt:/etc/letsencrypt
+secrets:
+    porkbun_api_key:
+        file: ./secrets/porkbun_api_key.secret
+    porkbun_secret_api_key:
+        file: ./secrets/porkbun_secret_api_key.secret
 
 volumes:
     letsencrypt:
