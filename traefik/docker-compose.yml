@@ -13,10 +13,6 @@ services:
             traefik.enable: "true"
             traefik.docker.network: "traefik_network"
 
-            # Configure the web UI
-            traefik.http.routers.traefik-ui.entrypoints: "web"
-            traefik.http.routers.traefik-ui.rule: "Host(`traefik.home.klees.io`)"
-            traefik.http.routers.traefik-ui.service: "api@internal"
             # HTTPS router (the one that actually serves the dashboard)
             traefik.http.routers.traefik-ui-secure.entrypoints: "websecure"
             traefik.http.routers.traefik-ui-secure.rule: "Host(`traefik.home.klees.io`)"
