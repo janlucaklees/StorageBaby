@@ -21,7 +21,6 @@ doas systemctl enable --now mnt-parity-parity1.mount
 doas cp config/etc/systemd/system/pool.mount /etc/systemd/system
 doas systemctl enable --now pool.mount
 
-
 #
 # Setup Snapraid configuration and tooling
 

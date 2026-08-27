@@ -7,9 +7,9 @@ service_compose="${service_root}/docker-compose.yml"
 service_dynamic_env="${service_root}/.env.sh"
 
 # Make sure there actually is some configuration for the given service name.
-if [ ! -f  "${service_compose}" ]; then
-    echo "No service group '${service_name}' found."
-    exit 1
+if [ ! -f "${service_compose}" ]; then
+  echo "No service group '${service_name}' found."
+  exit 1
 fi
 
 # Load global environment variables
@@ -18,10 +18,10 @@ set -o allexport
 set +o allexport
 
 # Load dynamic, service specific environment variables
-if [ -f  "${service_dynamic_env}" ]; then
-    set -o allexport
-    . ${service_dynamic_env}
-    set +o allexport
+if [ -f "${service_dynamic_env}" ]; then
+  set -o allexport
+  . ${service_dynamic_env}
+  set +o allexport
 fi
 
 # Assemble the docker-compose command

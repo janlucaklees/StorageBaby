@@ -1,0 +1,9 @@
+{
+  "name": "storagebaby-devtools",
+  "private": true,
+  "description": "Formatting/git-hook tooling for the StorageBaby repo, run inside Docker so nothing is installed on the host.",
+  "devDependencies": {
+    "prettier": "^3.3.0",
+    "prettier-plugin-sh": "^0.14.0"
+  }
+}

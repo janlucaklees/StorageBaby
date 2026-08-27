@@ -1,0 +1,6 @@
+pre-commit:
+  commands:
+    prettier:
+      glob: "*"
+      stage_fixed: true
+      run: docker run --rm -v "$(git rev-parse --show-toplevel)":/repo -w /repo storagebaby-devtools prettier --ignore-unknown --write {staged_files}

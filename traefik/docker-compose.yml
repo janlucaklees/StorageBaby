@@ -1,79 +1,78 @@
 services:
-    traefik:
-        image: "traefik:latest"
-        container_name: traefik
+  traefik:
+    image: "traefik:latest"
+    container_name: traefik
 
-        restart: unless-stopped
+    restart: unless-stopped
 
-        healthcheck:
-            test:
-                ["CMD", "wget", "--spider", "-q", "http://localhost:8080/ping"]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/ping"]
 
-        labels:
-            traefik.enable: "true"
-            traefik.docker.network: "traefik_network"
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik_network"
 
-            # HTTPS router (the one that actually serves the dashboard)
-            traefik.http.routers.traefik-ui-secure.entrypoints: "websecure"
-            traefik.http.routers.traefik-ui-secure.rule: "Host(`traefik.home.klees.io`)"
-            traefik.http.routers.traefik-ui-secure.tls: true
-            traefik.http.routers.traefik-ui-secure.tls.certresolver: "porkbun"
-            traefik.http.routers.traefik-ui-secure.tls.domains[0].main: "home.klees.io"
-            traefik.http.routers.traefik-ui-secure.tls.domains[0].sans: "*.home.klees.io"
-            traefik.http.routers.traefik-ui-secure.service: "api@internal"
+      # HTTPS router (the one that actually serves the dashboard)
+      traefik.http.routers.traefik-ui-secure.entrypoints: "websecure"
+      traefik.http.routers.traefik-ui-secure.rule: "Host(`traefik.home.klees.io`)"
+      traefik.http.routers.traefik-ui-secure.tls: true
+      traefik.http.routers.traefik-ui-secure.tls.certresolver: "porkbun"
+      traefik.http.routers.traefik-ui-secure.tls.domains[0].main: "home.klees.io"
+      traefik.http.routers.traefik-ui-secure.tls.domains[0].sans: "*.home.klees.io"
+      traefik.http.routers.traefik-ui-secure.service: "api@internal"
 
-            com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.enable: "true"
 
-        command:
-            - "--api"
-            - "--ping=true"
-            - "--log.level=DEBUG"
+    command:
+      - "--api"
+      - "--ping=true"
+      - "--log.level=DEBUG"
 
-            - "--providers.docker=true"
-            - "--providers.docker.exposedbydefault=false"
-            - "--providers.docker.network=traefik_network"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=traefik_network"
 
-            - "--entrypoints.web.address=:80"
-            - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
 
-            - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-            - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
 
-            - "--certificatesresolvers.porkbun.acme.email=email@janlucaklees.de"
-            - "--certificatesresolvers.porkbun.acme.storage=/letsencrypt/acme.json"
-            - "--certificatesresolvers.porkbun.acme.dnschallenge.provider=porkbun"
-            - "--certificatesresolvers.porkbun.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53"
+      - "--certificatesresolvers.porkbun.acme.email=email@janlucaklees.de"
+      - "--certificatesresolvers.porkbun.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.porkbun.acme.dnschallenge.provider=porkbun"
+      - "--certificatesresolvers.porkbun.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53"
 
-        environment:
-            TZ: "${TZ}"
-            PORKBUN_API_KEY_FILE: /run/secrets/porkbun_api_key
-            PORKBUN_SECRET_API_KEY_FILE: /run/secrets/porkbun_secret_api_key
+    environment:
+      TZ: "${TZ}"
+      PORKBUN_API_KEY_FILE: /run/secrets/porkbun_api_key
+      PORKBUN_SECRET_API_KEY_FILE: /run/secrets/porkbun_secret_api_key
 
-        secrets:
-            - porkbun_api_key
-            - porkbun_secret_api_key
+    secrets:
+      - porkbun_api_key
+      - porkbun_secret_api_key
 
-        volumes:
-            - /var/run/docker.sock:/var/run/docker.sock:ro
-            - letsencrypt:/letsencrypt
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
 
-        networks:
-            - traefik_network
+    networks:
+      - traefik_network
 
-        ports:
-            - "80:80"
-            - "443:443"
+    ports:
+      - "80:80"
+      - "443:443"
 
 secrets:
-    porkbun_api_key:
-        file: ./secrets/porkbun_api_key.secret
-    porkbun_secret_api_key:
-        file: ./secrets/porkbun_secret_api_key.secret
+  porkbun_api_key:
+    file: ./secrets/porkbun_api_key.secret
+  porkbun_secret_api_key:
+    file: ./secrets/porkbun_secret_api_key.secret
 
 volumes:
-    letsencrypt:
-        driver: local
+  letsencrypt:
+    driver: local
 
 networks:
-    traefik_network:
-        name: traefik_network
+  traefik_network:
+    name: traefik_network

@@ -1,0 +1,3 @@
+{
+  "plugins": ["/opt/devtools/node_modules/prettier-plugin-sh/lib/index.cjs"]
+}
