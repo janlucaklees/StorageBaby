@@ -1,3 +1,5 @@
+MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
 export TZ=Europe/Berlin
 export DOMAIN=nextcloud.home.klees.io
 export COLLABORA_DOMAIN=collabora.home.klees.io
@@ -10,10 +12,10 @@ export DATABASE_NAME=nextcloud
 export DATABASE_USER=oc_jlk
 
 # This is a crutch as Collabora does not support docker secrets.
-export COLLABORA_USERNAME:=$(shell cat /home/jlk/CloudBaby/nextcloud/collabora_username.secret)
-export COLLABORA_PASSWORD:=$(shell cat /home/jlk/CloudBaby/nextcloud/collabora_password.secret)
+export COLLABORA_USERNAME:=$(shell cat $(MAKEFILE_DIR)collabora_username.secret)
+export COLLABORA_PASSWORD:=$(shell cat $(MAKEFILE_DIR)collabora_password.secret)
 
-DATABSE_SNAPSHOT_PATH=/home/jlk/CloudBaby/nextcloud/snapshot.sql
+DATABSE_SNAPSHOT_PATH=$(MAKEFILE_DIR)snapshot.sql
 
 .PHONY: start
 start:

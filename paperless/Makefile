@@ -1,3 +1,5 @@
+MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
 export TZ=Europe/Berlin
 export DOMAIN=paperless.home.klees.io
 
@@ -8,7 +10,7 @@ export VERSION=2.20.15
 export DATABASE_NAME=paperless
 export DATABASE_USER=paperless
 
-DATABSE_SNAPSHOT_PATH=/home/jlk/CloudBaby/paperless/snapshot.sql
+DATABSE_SNAPSHOT_PATH=$(MAKEFILE_DIR)snapshot.sql
 
 .PHONY: start
 start:
