@@ -1,15 +1,13 @@
-IMAGE := storagebaby-devtools
+include .env
 
-.PHONY: build fmt fmt-check install-hooks
+.PHONY: pull
+pull:
+	rsync -aHAXvh --exclude-from='.rsyncignore' $(SERVER):$(REMOTE_PATH) ./
 
-build:
-	docker build -t $(IMAGE) devtools/
+.PHONY: push
+push:
+	rsync -aHAXvh --exclude-from='.rsyncignore' ./ $(SERVER):$(REMOTE_PATH)
 
-fmt: build
-	docker run --rm -v $(CURDIR):/repo -w /repo $(IMAGE) prettier --ignore-unknown --write .
-
-fmt-check: build
-	docker run --rm -v $(CURDIR):/repo -w /repo $(IMAGE) prettier --ignore-unknown --check .
-
-install-hooks:
-	lefthook install
+.PHONY: format
+format:
+	docker run --rm -v ./:/repo -w /repo storagebaby-devtools prettier --ignore-unknown --write .

@@ -1,0 +1,9 @@
+.git/
+.claude/
+.env
+*.secret
+mounts/
+.stfolder
+**/volumes/
+paperless/consume/
+paperless/export/
