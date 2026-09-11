@@ -28,7 +28,7 @@ doas systemctl enable --now pool.mount
 doas cp config/etc/snapraid.conf /etc
 
 # Install my Snapraid Scrub-Service
-doas mkdir /opt/scripts
+doas mkdir -p /opt/scripts
 doas cp config/opt/scripts/storage-maintenance-unattended.sh /opt/scripts
 doas chmod +x /opt/scripts/storage-maintenance-unattended.sh
 doas cp config/etc/systemd/system/storage-maintenance.service /etc/systemd/system
