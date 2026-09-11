@@ -12,9 +12,6 @@ services:
       traefik.enable: "true"
       traefik.docker.network: "traefik_network"
 
-      traefik.http.routers.jellyfin.rule: "Host(`jellyfin.home.klees.io`)"
-      traefik.http.routers.jellyfin.entrypoints: "web"
-
       traefik.http.routers.jellyfin-secure.rule: "Host(`jellyfin.home.klees.io`)"
       traefik.http.routers.jellyfin-secure.entrypoints: "websecure"
       traefik.http.routers.jellyfin-secure.tls: true
