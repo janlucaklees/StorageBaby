@@ -1,11 +1,11 @@
 #
 # Installing required packages
 yay -S --needed --noconfirm \
-  mergerfs fuse mergerfs-tools-git snapraid smartmontools \
-  samba elasticsearch-bin fscrawler-bin \
-  syncthing \
-  docker docker-compose \
-  cups cups-pdf avahi kyocera-cups kyocera-ecosys-m552x-p502x
+	mergerfs fuse mergerfs-tools-git snapraid smartmontools \
+	samba elasticsearch-bin fscrawler-bin \
+	syncthing \
+	docker docker-compose \
+	cups cups-pdf avahi kyocera-cups kyocera-ecosys-m552x-p502x
 
 #
 # Setup Snapraid configuration and tooling

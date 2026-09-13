@@ -10,17 +10,17 @@ LOG_FILE="${LOG_FILE_DIR}/${LOG_FILE_BASE_NAME}.log"
 #
 # Define functions
 function log_with_timestamp() {
-  while IFS= read -r line; do
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $line" | tee -a "$LOG_FILE"
-  done
+	while IFS= read -r line; do
+		echo "[$(date '+%Y-%m-%d %H:%M:%S')] $line" | tee -a "$LOG_FILE"
+	done
 }
 
 function send_email() {
-  local subject="$1"
-  local message="$2"
+	local subject="$1"
+	local message="$2"
 
-  # Send the email with the attachments that exist
-  echo -e "$message\n\nLog Content:\n$(cat "$LOG_FILE")" | mutt -s "$subject" -- "$EMAIL"
+	# Send the email with the attachments that exist
+	echo -e "$message\n\nLog Content:\n$(cat "$LOG_FILE")" | mutt -s "$subject" -- "$EMAIL"
 }
 
 #
@@ -34,21 +34,21 @@ echo "" > $LOG_FILE
 
 # Run the storage-maintenance script
 {
-  echo "=== Starting Storage Maintenance Job ==="
-  echo "Log File: $LOG_FILE"
+	echo "=== Starting Storage Maintenance Job ==="
+	echo "Log File: $LOG_FILE"
 
-  # Execute the main script and log output with timestamps
-  if bash "/home/jlk/StorageBaby/snapraid/storage-maintenance/storage-maintenance.sh"; then
-    STATUS="SUCCESS"
-    echo "SnapRAID Job completed successfully."
-  else
-    STATUS="FAILURE"
-    echo "SnapRAID Job failed."
-  fi
+	# Execute the main script and log output with timestamps
+	if bash "/home/jlk/StorageBaby/snapraid/storage-maintenance/storage-maintenance.sh"; then
+		STATUS="SUCCESS"
+		echo "SnapRAID Job completed successfully."
+	else
+		STATUS="FAILURE"
+		echo "SnapRAID Job failed."
+	fi
 
-  echo
-  echo
-  echo "=== Job Finished with Status: $STATUS ==="
+	echo
+	echo
+	echo "=== Job Finished with Status: $STATUS ==="
 
 } | stdbuf -oL awk '!/\r/' | log_with_timestamp
 

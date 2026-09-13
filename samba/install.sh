@@ -1,7 +1,7 @@
 #
 # Installing required packages
 yay -S --needed --noconfirm \
-  samba elasticsearch-bin fscrawler-bin
+	samba elasticsearch-bin fscrawler-bin
 
 #
 # Setup Samba configuration

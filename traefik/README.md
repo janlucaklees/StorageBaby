@@ -24,10 +24,10 @@ Each file contains just the key value (no newline). lego's Porkbun provider read
 On the service's secure router, just set `tls: true` — no certresolver needed. Traefik serves the wildcard cert automatically:
 
 ```yaml
-traefik.http.routers.myapp-secure.entrypoints: "websecure"
-traefik.http.routers.myapp-secure.rule: "Host(`myapp.home.klees.io`)"
-traefik.http.routers.myapp-secure.tls: "true"
-traefik.http.routers.myapp-secure.service: "myapp"
+traefik.http.routers.myapp-secure.entrypoints: 'websecure'
+traefik.http.routers.myapp-secure.rule: 'Host(`myapp.home.klees.io`)'
+traefik.http.routers.myapp-secure.tls: 'true'
+traefik.http.routers.myapp-secure.service: 'myapp'
 ```
 
 ## Gotchas
