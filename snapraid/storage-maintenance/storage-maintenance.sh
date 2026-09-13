@@ -43,8 +43,14 @@ function run_hook() {
 			echo
 			echo "Running ${script} hook..."
 			if ! bash "$script"; then
-				echo "Executing ${script} failed. Aborting."
-				exit 1
+				if [[ "$hook" == "on-failure" ]]; then
+					# Best-effort: one broken recovery script must not stop
+					# the others (e.g. samba should still restart even if
+					# jellyfin's restart script fails).
+					echo "Executing ${script} failed. Continuing with remaining on-failure hooks."
+				else
+					fail "Executing ${script} failed."
+				fi
 			fi
 		done
 	else
@@ -52,8 +58,30 @@ function run_hook() {
 	fi
 }
 
+FAILURE_HANDLED=0
+
+function fail() {
+	local message=$1
+
+	# Guard against running on-failure twice (e.g. a signal arriving while
+	# fail() is already running the hook).
+	if [[ "$FAILURE_HANDLED" -eq 1 ]]; then
+		exit 1
+	fi
+	FAILURE_HANDLED=1
+
+	echo "${message} Aborting."
+	run_hook "on-failure"
+	exit 1
+}
+
 #
 # Code
+
+# Run the on-failure hook if the script is killed (e.g. systemd stop/timeout
+# during the run), so services stopped by on-before-balance aren't left down.
+trap 'fail "Received signal, terminating."' INT TERM
+
 run_hook "on-start"
 
 print_snapraid_status "Initial Snapraid Status"
@@ -62,24 +90,21 @@ run_hook "on-before-balance"
 
 echo_section "Balancing disks"
 if ! bash "${SCRIPT_DIR}/balance_disks.sh"; then
-	echo "Balancing disks failed. Aborting."
-	exit 1
+	fail "Balancing disks failed."
 fi
 
 run_hook "on-before-sync"
 
 echo_section "Syncing"
 if ! bash "${SCRIPT_DIR}/sync.sh"; then
-	echo "Syncing failed. Aborting."
-	exit 1
+	fail "Syncing failed."
 fi
 
 run_hook "on-after-sync"
 
 echo_section "Scrubbing"
 if ! bash "${SCRIPT_DIR}/scrub.sh"; then
-	echo "Scrubbing failed. Aborting."
-	exit 1
+	fail "Scrubbing failed."
 fi
 
 run_hook "on-after-scrub"

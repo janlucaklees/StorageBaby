@@ -73,10 +73,12 @@ The core orchestrator is `snapraid/storage-maintenance/storage-maintenance.sh`, 
 7. `on-after-scrub` hook
 8. Final status + SMART report + `on-finish` hook
 
+If any step or hook script fails, the orchestrator runs the `on-failure` hook before aborting. Unlike other hooks, `on-failure` is best-effort: a failing plugin script there doesn't stop the remaining plugins' `on-failure` scripts from running, so e.g. samba still gets restarted even if jellyfin's restart script breaks. `on-failure` also fires if the script is killed by SIGINT/SIGTERM (e.g. a systemd stop or timeout mid-run), so services stopped by `on-before-balance` don't get left down.
+
 **Plugin system:** Drop a script at `snapraid/storage-maintenance/plugins/<plugin-name>/<hook>.sh` to participate in any hook. Existing plugins:
 
-- `jellyfin/` — stops Jellyfin before balance, starts it again after scrub
-- `samba/` — stops smb/nmb before balance, starts after scrub
+- `jellyfin/` — stops Jellyfin before balance, starts it again after scrub or on failure
+- `samba/` — stops smb/nmb before balance, starts again after scrub or on failure
 - `snapshot-nextcloud/` — SSHes to `cloud.janlucaklees.de`, takes a DB snapshot, rsyncs it locally
 - `snapshot-immich/`, `snapshot-paperless/` — similar remote snapshot/rsync patterns
 
