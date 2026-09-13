@@ -12,14 +12,25 @@ ps:
 logs:
 	docker compose logs -f
 
+.PHONY: restart
+restart:
+	docker compose restart
+
+.PHONY: pull
+pull:
+	docker compose pull
+
 .PHONY: stop
 stop:
 	docker compose stop
 
-.PHONY: down
+.PHONY: remove
 remove:
 	docker compose down
 
-.PHONY: clear
-clear:
-	docker compose down --volumes
+.PHONY: upgrade
+upgrade:
+	$(MAKE) pull
+	$(MAKE) remove
+	$(MAKE) start
+	docker image prune
