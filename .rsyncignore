@@ -16,5 +16,6 @@ lefthook.yml
 /devtools
 /docs
 mounts/
+odysseus/src/
 paperless/consume/
 paperless/export/

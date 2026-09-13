@@ -1,0 +1,128 @@
+services:
+  odysseus:
+    build:
+      context: './src'
+    image: 'odysseus:${ODYSSEUS_VERSION}'
+    container_name: 'odysseus_odysseus'
+
+    restart: 'unless-stopped'
+
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+
+    environment:
+      TZ: '${TZ}'
+
+      # LLM backend: configured via the UI (Settings), not env vars.
+      LLM_HOST: 'localhost'
+      LLM_HOSTS: ''
+      OLLAMA_BASE_URL: ''
+      LM_STUDIO_URL: ''
+      RESEARCH_LLM_ENDPOINT: ''
+
+      SEARXNG_INSTANCE: 'http://searxng:8080'
+      CHROMADB_HOST: 'chromadb'
+      CHROMADB_PORT: '8000'
+
+      DATABASE_URL: 'sqlite:///./data/app.db'
+
+      AUTH_ENABLED: 'true'
+      LOCALHOST_BYPASS: 'false'
+      SECURE_COOKIES: 'true'
+      ALLOWED_ORIGINS: 'https://${DOMAIN}'
+
+      NTFY_BASE_URL: 'http://ntfy:80'
+
+    labels:
+      traefik.enable: 'true'
+      traefik.docker.network: 'traefik_network'
+
+      traefik.http.routers.odysseus-secure.rule: 'Host(`${DOMAIN}`)'
+      traefik.http.routers.odysseus-secure.entrypoints: 'websecure'
+      traefik.http.routers.odysseus-secure.tls: true
+
+      traefik.http.services.odysseus.loadbalancer.server.port: '7000'
+
+    volumes:
+      # SQLite DB lives under data/ - needs SSD, not the snapraid pool.
+      - './volumes/data:/app/data:cached'
+      - '/pool/apps/odysseus/volumes/ssh:/app/.ssh:cached'
+      - '/pool/apps/odysseus/volumes/huggingface:/app/.cache/huggingface:cached'
+      - '/pool/apps/odysseus/volumes/local:/app/.local:cached'
+      - '/pool/apps/odysseus/volumes/logs:/app/logs:cached'
+
+    depends_on:
+      searxng:
+        condition: 'service_healthy'
+      chromadb:
+        condition: 'service_started'
+
+    networks:
+      - 'default'
+      - 'traefik_network'
+
+  chromadb:
+    image: 'docker.io/chromadb/chroma:latest'
+    container_name: 'odysseus_chromadb'
+
+    restart: 'unless-stopped'
+
+    environment:
+      TZ: '${TZ}'
+      ANONYMIZED_TELEMETRY: 'FALSE'
+
+    volumes:
+      - './volumes/chromadb:/chroma/chroma'
+
+  searxng:
+    image: 'docker.io/searxng/searxng:2026.5.31-7159b8aed'
+    container_name: 'odysseus_searxng'
+
+    restart: 'unless-stopped'
+
+    environment:
+      TZ: '${TZ}'
+      SEARXNG_BASE_URL: 'http://searxng:8080/'
+      SEARXNG_SECRET: ''
+
+    cap_drop:
+      - 'ALL'
+    cap_add:
+      - 'CHOWN'
+      - 'SETGID'
+      - 'SETUID'
+      - 'DAC_OVERRIDE'
+
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8080/'', timeout=5).read(1)"'
+        ]
+      interval: 5s
+      timeout: 6s
+      retries: 20
+      start_period: 10s
+
+    volumes:
+      - '/pool/apps/odysseus/volumes/searxng:/etc/searxng'
+      - './src/config/searxng/settings.yml:/tmp/searxng-settings.yml.template:ro'
+      - './src/scripts/migrate_searxng_settings.py:/tmp/migrate-searxng-settings.py:ro'
+
+  ntfy:
+    image: 'docker.io/binwiederhier/ntfy'
+    container_name: 'odysseus_ntfy'
+    command: ['serve']
+
+    restart: 'unless-stopped'
+
+    environment:
+      TZ: '${TZ}'
+      NTFY_BASE_URL: 'http://ntfy:80'
+
+    volumes:
+      - '/pool/apps/odysseus/volumes/ntfy:/var/cache/ntfy'
+
+networks:
+  traefik_network:
+    external: true
