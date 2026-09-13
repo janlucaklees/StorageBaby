@@ -130,6 +130,9 @@ services:
 
       traefik.http.routers.paperless.rule: "Host(`${DOMAIN}`)"
       traefik.http.routers.paperless.entrypoints: "websecure"
+      traefik.http.routers.paperless.tls: true
+
+      traefik.http.services.paperless.loadbalancer.server.port: "8000"
 
     secrets:
       - "paperless_database_password"
