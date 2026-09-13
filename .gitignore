@@ -1,4 +1,7 @@
 mounts/
 .env
 .stfolder
+.claude
+*.dump
+*.sql
 *.secret
