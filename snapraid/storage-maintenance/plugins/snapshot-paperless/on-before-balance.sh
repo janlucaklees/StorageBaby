@@ -2,7 +2,7 @@
 
 set -xe
 
-# Backup NextCloud database
+# Backup Paperless database
 mkdir -p /pool/backups/devices/CloudBaby/paperless
 ssh cloud.janlucaklees.de "cd /home/jlk/CloudBaby/paperless && make database_snapshot"
 rsync \
@@ -17,7 +17,7 @@ rsync \
 	root@cloud.janlucaklees.de:/home/jlk/CloudBaby/paperless/snapshot.sql \
 	/pool/backups/devices/CloudBaby/paperless
 
-# Backup NextCloud Files
+# Backup Paperless Files
 mkdir -p /pool/backups/devices/CloudBaby/paperless/volumes
 rsync \
 	--archive \

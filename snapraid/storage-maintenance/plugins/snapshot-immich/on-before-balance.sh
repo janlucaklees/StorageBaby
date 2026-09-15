@@ -3,6 +3,7 @@
 set -xe
 
 # Backup Immich database
+mkdir -p /pool/backups/devices/CloudBaby/immich
 ssh cloud.janlucaklees.de "cd /home/jlk/CloudBaby/immich && make database_snapshot"
 rsync \
 	--archive \
@@ -16,9 +17,8 @@ rsync \
 	root@cloud.janlucaklees.de:/home/jlk/CloudBaby/immich/snapshot.sql \
 	/pool/backups/devices/CloudBaby/immich
 
-# TODO: Move this backup to another location
 # Backup Immich Files
-mkdir -p /pool/apps/immich/snapshot
+mkdir -p /pool/backups/devices/CloudBaby/immich/volumes
 rsync \
 	--archive \
 	--delete \
@@ -28,5 +28,5 @@ rsync \
 	--human-readable \
 	--info=progress2 \
 	--stats \
-	root@cloud.janlucaklees.de:/var/lib/docker/volumes/immich_upload/_data/. \
-	/pool/apps/immich/snapshot/.
+	root@cloud.janlucaklees.de:/var/lib/docker/volumes/immich_upload \
+	/pool/backups/devices/CloudBaby/immich/volumes

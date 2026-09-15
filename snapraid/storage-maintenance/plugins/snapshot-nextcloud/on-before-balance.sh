@@ -3,6 +3,7 @@
 set -xe
 
 # Backup NextCloud database
+mkdir -p /pool/backups/devices/CloudBaby/nextcloud
 ssh cloud.janlucaklees.de "cd /home/jlk/CloudBaby/nextcloud && make database_snapshot"
 rsync \
 	--archive \
@@ -16,9 +17,8 @@ rsync \
 	root@cloud.janlucaklees.de:/home/jlk/CloudBaby/nextcloud/snapshot.sql \
 	/pool/backups/devices/CloudBaby/nextcloud
 
-# TODO: Move this backup to another location
 # Backup NextCloud Files
-mkdir -p /pool/apps/nextcloud/volumes/nextcloud
+mkdir -p /pool/backups/devices/CloudBaby/nextcloud/volumes
 rsync \
 	--archive \
 	--delete \
@@ -28,5 +28,5 @@ rsync \
 	--human-readable \
 	--info=progress2 \
 	--stats \
-	root@cloud.janlucaklees.de:/var/lib/docker/volumes/nextcloud_nextcloud/_data/. \
-	/pool/apps/nextcloud/volumes/nextcloud/.
+	root@cloud.janlucaklees.de:/var/lib/docker/volumes/nextcloud_nextcloud \
+	/pool/backups/devices/CloudBaby/nextcloud/volumes
