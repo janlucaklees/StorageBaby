@@ -1,0 +1,9 @@
+domain: home.klees.io
+acme: true
+acme_email: email@janlucaklees.de
+tz: Europe/Berlin
+storage_roots:
+  pool: /pool/apps
+  fast: /var/lib/storagebaby/fast
+volume_overrides: {}
+deploy_timer: true

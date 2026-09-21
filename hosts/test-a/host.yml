@@ -1,0 +1,9 @@
+domain: test.local
+acme: false
+acme_email: test@test.local
+tz: Europe/Berlin
+storage_roots:
+  pool: /srv/pool
+  fast: /srv/fast
+volume_overrides: {}
+deploy_timer: false

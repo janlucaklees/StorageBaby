@@ -1,0 +1,10 @@
+name: traefik
+port: 8080
+domain: traefik
+route:
+  internal: api@internal
+  wildcard_cert: true
+volumes:
+  letsencrypt: { class: fast }
+secrets: [porkbun_api_key, porkbun_secret_api_key]
+backup: none
