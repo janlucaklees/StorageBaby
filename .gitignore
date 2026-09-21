@@ -5,3 +5,6 @@ mounts/
 *.dump
 *.sql
 *.secret
+__pycache__/
+.pytest_cache/
+hosts/test-*/secrets/

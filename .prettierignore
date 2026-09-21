@@ -5,3 +5,5 @@ traefik/secrets/*.secret
 paperless/consume/
 paperless/export/
 .git/
+*.sops.yaml
+hosts/test-*/secrets/
