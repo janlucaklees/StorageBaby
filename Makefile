@@ -1,13 +1,30 @@
-include .env
+-include .env
 
 DEVTOOLS_IMAGE := storagebaby-devtools
+MOLECULE_CACHE := storagebaby-molecule-cache
+AGE_DIR := $(HOME)/.config/sops/age
 SCENARIO ?= test-ci
+
+# Base: repo mount only. Everything that neither drives Docker nor reads the
+# operator's age key runs with this.
 DEVTOOLS_RUN := docker run --rm -t \
 	-v $(CURDIR):/repo -w /repo \
-	-v /var/run/docker.sock:/var/run/docker.sock \
-	-v storagebaby-molecule-cache:/root/.cache/molecule \
-	-v $(HOME)/.config/sops/age:/root/.config/sops/age \
 	-e HOME=/root \
+	$(DEVTOOLS_IMAGE)
+
+# Adds the Docker socket and the Molecule cache volume.
+DEVTOOLS_RUN_DOCKER := docker run --rm -t \
+	-v $(CURDIR):/repo -w /repo \
+	-e HOME=/root \
+	-v /var/run/docker.sock:/var/run/docker.sock \
+	-v $(MOLECULE_CACHE):/root/.cache/molecule \
+	$(DEVTOOLS_IMAGE)
+
+# Adds the operator's age key directory.
+DEVTOOLS_RUN_AGE := docker run --rm -t \
+	-v $(CURDIR):/repo -w /repo \
+	-e HOME=/root \
+	-v $(AGE_DIR):/root/.config/sops/age \
 	$(DEVTOOLS_IMAGE)
 
 .PHONY: pull
@@ -24,7 +41,8 @@ devtools:
 
 .PHONY: devtools-shell
 devtools-shell:
-	$(subst --rm -t,--rm -it,$(DEVTOOLS_RUN)) bash
+	mkdir -p $(AGE_DIR)
+	$(subst --rm -t,--rm -it,$(DEVTOOLS_RUN_AGE)) bash
 
 .PHONY: format
 format:
@@ -43,20 +61,21 @@ test-static:
 
 .PHONY: test-integration
 test-integration:
-	$(DEVTOOLS_RUN) sh -c 'cd tests/integration && molecule test -s $(SCENARIO)'
+	$(DEVTOOLS_RUN_DOCKER) sh -c 'cd tests/integration && molecule test -s $(SCENARIO)'
 
 .PHONY: molecule
 molecule:
-	$(DEVTOOLS_RUN) sh -c 'cd tests/integration && molecule $(CMD) -s $(SCENARIO)'
+	$(DEVTOOLS_RUN_DOCKER) sh -c 'cd tests/integration && molecule $(CMD) -s $(SCENARIO)'
 
 .PHONY: test-clean
 test-clean:
-	$(DEVTOOLS_RUN) sh -c 'cd tests/integration && molecule destroy -s $(SCENARIO)'
-	docker volume prune -f
+	$(DEVTOOLS_RUN_DOCKER) sh -c 'cd tests/integration && molecule destroy -s $(SCENARIO)'
+	docker volume rm -f $(MOLECULE_CACHE)
 
 .PHONY: sops
 sops:
-	$(subst --rm -t,--rm -it,$(DEVTOOLS_RUN)) sops $(FILE)
+	mkdir -p $(AGE_DIR)
+	$(subst --rm -t,--rm -it,$(DEVTOOLS_RUN_AGE)) sops $(FILE)
 
 .PHONY: install-hooks
 install-hooks:
