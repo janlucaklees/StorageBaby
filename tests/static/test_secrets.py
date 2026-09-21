@@ -1,26 +1,22 @@
 import re
-import subprocess
 
 import pytest
 
-from conftest import REPO, load_yaml, placements
+from conftest import HOSTS, REPO, load_yaml, placements
 
-SOPS_CONFIG_NAME = ".sops.yaml"
-SOPS_CONFIG = load_yaml(REPO / SOPS_CONFIG_NAME)
+SOPS_CONFIG = load_yaml(REPO / ".sops.yaml")
 
 
-def tracked_sops_files() -> list[str]:
-    # -c safe.directory: the devtools container runs as root over a repo owned
-    # by the operator, which git otherwise refuses to read.
-    out = subprocess.run(
-        ["git", "-C", str(REPO), "-c", f"safe.directory={REPO}", "ls-files", "*.sops.yaml"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    # The pathspec also matches .sops.yaml itself, which is the plaintext
-    # recipient config, not an encrypted file.
-    return sorted(line for line in out.stdout.splitlines() if line and line != SOPS_CONFIG_NAME)
+def sops_files() -> list[str]:
+    # Walking hosts/ keeps the plaintext .sops.yaml at the repo root out of the
+    # set, and needs no git, so this works in a worktree and in CI alike.
+    out = []
+    for path in sorted(HOSTS.rglob("*.sops.yaml")):
+        rel = path.relative_to(REPO).as_posix()
+        if re.match(r"^hosts/test-[^/]+/secrets/", rel):
+            continue  # gitignored, test-key-encrypted overrides written by the integration scenario
+        out.append(rel)
+    return out
 
 
 def expected_recipients(relpath: str) -> set[str]:
@@ -30,7 +26,7 @@ def expected_recipients(relpath: str) -> set[str]:
     raise AssertionError(f"{relpath} matches no creation rule in .sops.yaml")
 
 
-@pytest.mark.parametrize("relpath", tracked_sops_files())
+@pytest.mark.parametrize("relpath", sops_files())
 def test_recipients_match_sops_config(relpath):
     doc = load_yaml(REPO / relpath)
     actual = {entry["recipient"] for entry in doc["sops"]["age"]}
