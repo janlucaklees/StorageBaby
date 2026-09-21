@@ -1,0 +1,11 @@
+keys:
+  - &operator age1wwuwdvq20fq35aku93qgw9fj2uxeu7kxlgwg4zrrr9zx4s8vuuvsjn5t3g
+  # Host keys are added here by the operator after bootstrap.sh prints them,
+  # followed by `make sops FILE=<file> ` → `sops updatekeys` on affected files.
+creation_rules:
+  - path_regex: ^hosts/storagebaby/.*\.sops\.yaml$
+    key_groups:
+      - age: [*operator]
+  - path_regex: ^hosts/shared/.*\.sops\.yaml$
+    key_groups:
+      - age: [*operator]
