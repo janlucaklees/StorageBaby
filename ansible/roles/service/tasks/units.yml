@@ -87,12 +87,37 @@
   changed_when: false
   failed_when: false
 
-- name: Start inactive units
+# A Quadlet .build is a Type=oneshot, and this Podman writes it without
+# RemainAfterExit -- so a build that has run and succeeded reads `inactive`, not
+# `active`. Starting everything that is merely not active would re-run it on every
+# converge: reported changed, idempotence broken, and a pointless image rebuild every
+# night from the deploy timer. A build unit therefore counts as up once it has run to
+# a successful exit; every other kind still has to really be active.
+# Result=success on its own is not enough -- it is also what systemd reports for a
+# unit that has never run at all, which is exactly the case that must still be
+# started. ExecMainStartTimestampMonotonic is 0 until the unit's process has run, so
+# the pair means "it ran, and it worked".
+- name: Check what the build units last returned
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ show {{ item }} -p Result -p ExecMainStartTimestampMonotonic
+  loop: "{{ service_units | select('search', '-build\\.service$') | list }}"
+  register: _build_result
+  changed_when: false
+  failed_when: false
+
+- name: Note which builds have already run and succeeded
+  ansible.builtin.set_fact:
+    settled_builds: >-
+      {{ _build_result.results
+         | selectattr('stdout', 'search', '(?m)^Result=success$')
+         | rejectattr('stdout', 'search', '(?m)^ExecMainStartTimestampMonotonic=0$')
+         | map(attribute='item') | list }}
+
+- name: Start units that are not up
   ansible.builtin.command: systemctl --user -M {{ svc_user }}@ start {{ item.item }}
   loop: '{{ _active.results }}'
   loop_control:
     label: '{{ item.item }}'
-  when: item.stdout.strip() != 'active'
+  when: item.stdout.strip() != 'active' and item.item not in settled_builds
   changed_when: true
 
 - name: Check auto-update timer

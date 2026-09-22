@@ -51,12 +51,17 @@ unit without a health command or without its own name fails the suite.
 container — and a changed `.build` also restarts every container of the service, because
 their image has just been rebuilt.
 
-One caveat for the first `.build` that lands: `Start inactive units` starts anything whose
-`is-active` is not `active`. Quadlet writes build units as `Type=oneshot` with
-`RemainAfterExit=yes`, so a finished build reads as active — but on a Podman that drops the
-`RemainAfterExit`, a successful build would read `inactive` and be rebuilt on every
-converge, which reports changed and breaks idempotence. Fix it there by treating a build
-unit's `Result=success` as up rather than by making the test tolerant.
+The caveat that first `.build` was expected to hit, and did: `Start units that are not up`
+starts anything whose `is-active` is not `active`, and the Podman on the test VM writes
+build units as `Type=oneshot` **without** `RemainAfterExit`, so a build that ran and
+succeeded reads `inactive`. Taken at face value that rebuilds the image on every converge —
+reported changed, idempotence gone, a pointless rebuild every night from the deploy timer.
+
+So a `-build.service` is up when it has run to a successful exit, which the role reads as
+`Result=success` **and** a non-zero `ExecMainStartTimestampMonotonic`. The timestamp is not
+decoration: `Result=success` is also what systemd reports for a unit that has never run,
+which is precisely the case that still has to be started. Everything else still has to be
+really `active`.
 
 ## What the role does to the host
 
