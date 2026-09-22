@@ -25,9 +25,21 @@ Copy the script to the fresh Arch install and run it as root:
 `stable` is created by CI on the first green push to master, so push and let CI
 run before bootstrapping the first host.
 
-Add the printed deploy key to the repository, add the printed age recipient to
-`.sops.yaml` under the host's rule, run `make sops FILE=...` → `sops updatekeys`
-on the affected secrets, commit, push. The host pulls `stable` every 5 minutes.
+Protect `stable` on GitHub: no direct pushes, no force pushes, no deletion — it
+is moved by CI alone. GitHub Actions must still be allowed to push to it: the
+`promote` job fast-forwards `stable` with the workflow token, so if "restrict
+who can push" is enabled, add the Actions actor to the allow list or promotion
+stops there.
+
+The host's hostname must equal its folder name under `hosts/` — the deploy unit
+converges `--limit <hostname>` and fails loudly if no such folder exists.
+
+Add the printed deploy key to the repository, then add the printed age recipient
+to `.sops.yaml` in two places: the host's own rule, and the `hosts/shared/**`
+rule — every host runs the shared services and has to decrypt their secrets.
+Then run `sops updatekeys` on every affected `*.sops.yaml` —
+`make sops FILE=...` opens one for editing — then commit and push. The host
+pulls `stable` every 5 minutes.
 
 Until the host's age recipient is in `.sops.yaml` and `sops updatekeys` has run
 on the secret files it needs, its first converge fails at secret decryption.
@@ -36,7 +48,17 @@ That is expected: the host cannot read anything it was not encrypted to.
 ## Operating a service
 
 Every service runs as its own lingering user `svc-<name>`, so its units belong
-to that user's systemd manager, not the system one. Run these as root:
+to that user's systemd manager, not the system one. The Makefile wraps that —
+run these on the host as root (they are the only targets that do not go through
+the devtools image):
+
+    make ps SERVICE=traefik
+    make start SERVICE=traefik
+    make stop SERVICE=traefik
+    make restart SERVICE=traefik
+    make logs SERVICE=traefik
+
+They are thin wrappers, so the raw forms still work:
 
     systemctl --user -M svc-traefik@ status traefik.service
     systemctl --user -M svc-traefik@ restart traefik.service

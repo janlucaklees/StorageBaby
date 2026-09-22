@@ -42,6 +42,15 @@ make sops FILE=hosts/shared/services/traefik/secrets.sops.yaml
 On a host, service units belong to the service user's systemd manager (run as root):
 
 ```bash
+make ps SERVICE=traefik      # systemctl --user -M svc-traefik@ status traefik.service
+make restart SERVICE=traefik # also: start, stop
+make logs SERVICE=traefik    # journalctl _SYSTEMD_USER_UNIT=traefik.service -f
+```
+
+These five targets are the only ones meant to run on a host rather than in the
+devtools image. The raw forms they wrap:
+
+```bash
 systemctl --user -M svc-traefik@ status traefik.service
 systemctl --user -M svc-traefik@ restart traefik.service
 journalctl _SYSTEMD_USER_UNIT=traefik.service -f # journalctl has no --user -M form
@@ -69,7 +78,7 @@ Physical disks
 
 mergerfs pool
   /pool                           ← union FS over /mnt/data/* (create policy: eplfs)
-  /pool/apps/<service>/volumes/   ← persistent Docker volumes
+  /pool/apps/<service>/<volume>   ← service volumes (pool class), resolved by the service role
   /pool/shared/media              ← media library (Jellyfin + Samba)
   /pool/shared/scans, /pool/jlk/backups, etc.
 
@@ -129,7 +138,7 @@ See `snapraid/README.md` for the full procedure: partition → ext4 → systemd 
 
 ## Deployment
 
-`bootstrap.sh` runs once as root on a fresh host: installs git/ansible/sops/age/podman, generates `/etc/storagebaby/age.key` and an ed25519 deploy key, prints both public keys, installs `storagebaby-deploy.service` and `.timer`. The operator adds the deploy key to the repository as a read-only deploy key, adds the age recipient to `.sops.yaml` under that host's rule, runs `sops updatekeys` over the affected secret files (`make sops FILE=...` for editing), and pushes.
+`bootstrap.sh` runs once as root on a fresh host: installs git/ansible/sops/age/podman, generates `/etc/storagebaby/age.key` and an ed25519 deploy key, prints both public keys, installs `storagebaby-deploy.service` and `.timer`. The operator adds the deploy key to the repository as a read-only deploy key, adds the age recipient to `.sops.yaml` twice — under that host's own rule and under the `hosts/shared/**` rule, because every host runs the shared services — runs `sops updatekeys` over every affected `*.sops.yaml` (`make sops FILE=...` for editing), and pushes.
 
 From then on the host deploys itself: the timer runs `ansible-pull` as root every 5 minutes (2 min after boot), checking out the `stable` branch into `/var/lib/storagebaby/repo` and running `ansible/playbook.yml --limit <hostname>`, only when the checkout changed.
 
