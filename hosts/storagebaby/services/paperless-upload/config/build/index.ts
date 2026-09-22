@@ -10,7 +10,9 @@ import { join } from 'node:path'
 // PAPERLESS_URL comes from the unit (service.yml's config.paperless_url); the
 // fallback only ever applies to a hand-run container.
 const PAPERLESS_URL = Bun.env.PAPERLESS_URL ?? 'https://paperless.example.com'
-const WATCH_DIR = '/data/in'
+// The bind root: the scans share itself, which is where the scanner drops PDFs.
+// PROCESSED_DIR is a subdirectory of it, so the scan below has to skip directories.
+const WATCH_DIR = '/data'
 const PROCESSED_DIR = '/data/processed'
 const TOKEN_FILE = '/run/secrets/paperless_token'
 const STABILITY_MS = 2000 // file size must hold steady this long before upload
@@ -24,10 +26,12 @@ const inflight = new Set<string>()
 
 async function stable(path: string): Promise<boolean> {
 	try {
-		const a = (await stat(path)).size
-		if (a === 0) return false
+		const s = await stat(path)
+		// The watch root is the share itself, so `processed/` -- and any other folder
+		// the operator keeps there -- shows up in the scan. Only regular files upload.
+		if (!s.isFile() || s.size === 0) return false
 		await Bun.sleep(STABILITY_MS)
-		return (await stat(path)).size === a
+		return (await stat(path)).size === s.size
 	} catch {
 		return false // vanished mid-check
 	}
@@ -55,7 +59,6 @@ async function upload(path: string, name: string): Promise<boolean> {
 }
 
 async function dispose(path: string, name: string) {
-	await mkdir(PROCESSED_DIR, { recursive: true })
 	let target = join(PROCESSED_DIR, name)
 	try {
 		await stat(target)
@@ -99,9 +102,11 @@ function trigger() {
 	timer = setTimeout(scan, DEBOUNCE_MS)
 }
 
-// This is also what the unit's `HealthCmd=test -d /data/in` checks: the directory
-// exists only once the uploader has started and could write into the bind.
-await mkdir(WATCH_DIR, { recursive: true })
+// Created up front, not on the first upload: this is also what the unit's
+// `HealthCmd=test -d /data/processed` checks, so it exists exactly when the uploader
+// has started and could write into the bind. If it is ever removed underneath us the
+// health check kills the container and this line puts it back.
+await mkdir(PROCESSED_DIR, { recursive: true })
 log(`watching ${WATCH_DIR} -> ${endpoint}`)
 await scan() // one-shot reconcile of files already present at startup
 watch(WATCH_DIR, () => trigger())

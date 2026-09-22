@@ -12,7 +12,7 @@ Secret=paperless_token
 {% for name, b in binds.items() %}
 Volume={{ b.host }}:{{ b.container }}:{{ b.mode | default('rw') }}
 {% endfor %}
-HealthCmd=test -d /data/in
+HealthCmd=test -d /data/processed
 HealthOnFailure=kill
 
 [Service]

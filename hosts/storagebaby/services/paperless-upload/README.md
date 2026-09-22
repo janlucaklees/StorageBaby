@@ -45,10 +45,11 @@ changed, which restarts **all** of the service's units in order — build first,
 the container. Restarting a `.build` re-runs the oneshot build, `COPY index.ts .` is
 invalidated, and the restarted container picks the new image up by tag. Verified on
 the test VM by changing one comment in `index.ts` and converging: the build's
-`ExecMainStartTimestampMonotonic` moved (259843525 → 681641175), the image id changed
-(`sha256:1e592e6d…` → `sha256:000186b7…`) and `paperless-upload.service` re-entered
-active afterwards (258456900 → 683803629), with the new comment readable in
-`/app/index.ts` inside the running container.
+`ExecMainStartTimestampMonotonic` moved (210536694 → 445555219), `paperless-upload.service`
+re-entered active afterwards (213119534 → 447751360), the image id changed, and the new
+comment was readable in `/app/index.ts` inside the running container. The converge after
+that reported `changed=0` and moved neither timestamp — it rebuilds **once** per change,
+not once per converge.
 
 A change to a quadlet template alone takes the ordinary path (`quadlet_render`
 changed → that unit restarted).
@@ -65,23 +66,26 @@ binds:
   scans: { host: /pool/shared/scans, container: /data, mode: rw, group: scans }
 ```
 
-**This is a layout change from the old `docker-compose.yaml`**, which mounted
-`/pool/shared/scans` at `/data/in` — the whole tree was the inbox and processed files
-went to a `processed/` directory the container created _inside_ it. Here the tree is
-mounted one level up at `/data`, so:
+**The drop location does not change.** `/pool/shared/scans` is a Samba share and the
+scanner writes PDFs straight into its root — so that root is still the inbox, exactly
+as under the old `docker-compose.yaml`:
 
-- incoming scans: `/pool/shared/scans/in`
+- drop scans here: `/pool/shared/scans` (the share root, unchanged)
 - uploaded, archived: `/pool/shared/scans/processed`
 
-Whatever puts scans on the NAS (the scanner's Samba share) has to write into `in/`
-from now on. Confirm that with the operator before the first real deploy on
-storagebaby, and move anything already sitting in `/pool/shared/scans` into `in/`.
+The only difference from the compose stack is the container-side path. It mounted the
+share at `/data/in`; the unit mounts it at `/data`, so the script watches `/data` and
+archives into `/data/processed`. Nothing an operator or a scanner sees moves.
 
-`rw`, because the uploader moves a file out of `in/` once Paperless has accepted it.
-The role creates `/pool/shared/scans` as `root:scans 2775` **only if it does not
-exist**; on storagebaby it already does, and its permissions stay the operator's.
-`in/` itself is created by the script at startup (`mkdir -p`), `processed/` on the
-first successful upload.
+Because the watch root is the share itself, `processed/` is inside what gets scanned.
+Two things keep it out of the upload path: `processFile` ignores any name that does not
+end in `.pdf`, and `stable()` ignores anything that is not a regular file — so a
+directory survives both a plain name and a name like `2024-invoices.pdf/`.
+
+`rw`, because the uploader moves a file out of the share root once Paperless has
+accepted it. The role creates `/pool/shared/scans` as `root:scans 2775` **only if it
+does not exist**; on storagebaby it already does, and its permissions stay the
+operator's. `processed/` is created by the script at startup (`mkdir -p`).
 
 ### It writes as the service user
 
@@ -120,9 +124,9 @@ So files the uploader writes under the bind belong to `svc-paperless-upload`, no
 subuid:
 
 ```
-$ stat -c %U:%G:%a /pool/shared/scans/in /pool/shared/scans/in/<probe>
-svc-paperless-upload:scans:2755
-svc-paperless-upload:scans:644
+$ stat -c %n:%U:%G:%a /pool/shared/scans /pool/shared/scans/processed
+/pool/shared/scans:root:scans:2775                        # the role's, untouched
+/pool/shared/scans/processed:svc-paperless-upload:scans:2755   # the script's
 ```
 
 which is what keeps `processed/` readable to Samba and the rest of the host.
@@ -145,16 +149,19 @@ generated throwaway value from the Molecule `prepare` play.
 > the first real deploy.
 
 **Uploads fail until Paperless itself exists** — that is Phase 3. Until then the
-container is healthy and idle, and every PDF dropped in `in/` is retried on the next
-arrival (`scan()` re-reads the whole directory each time), so nothing is lost.
+container is healthy and idle, PDFs pile up in the share root, and every one of them is
+retried on the next arrival (`scan()` re-reads the whole share each time), so nothing
+is lost and nothing has to be re-dropped by hand once Paperless is up.
 
 ## Health check
 
-`HealthCmd=test -d /data/in`. `in/` exists only after `index.ts` has read the token
-and run its startup `mkdir -p`, so the check answers the two questions that can
-actually go wrong here: did the script get past startup, and is the bind mounted and
-writable. A crash-looping container (missing token, unreadable bind) never creates it.
-There is no endpoint to probe — the service listens on nothing.
+`HealthCmd=test -d /data/processed`. `processed/` exists only after `index.ts` has read
+the token and run its startup `mkdir -p`, so the check answers the two questions that
+can actually go wrong here: did the script get past startup, and is the bind mounted
+and writable. A crash-looping container (missing token, unreadable bind) never creates
+it. The watch root itself would be a useless probe — `/data` exists whether or not the
+mount or the script works. There is no endpoint to probe: the service listens on
+nothing.
 
 `HealthOnFailure=kill` + `Restart=always`: a wedged uploader is restarted.
 
