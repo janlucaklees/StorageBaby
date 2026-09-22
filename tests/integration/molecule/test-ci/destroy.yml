@@ -1,0 +1,47 @@
+- name: Destroy libvirt VMs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    libvirt_uri: qemu:///system
+    images_dir: /var/lib/libvirt/images/storagebaby
+  tasks:
+    - name: List domains
+      community.libvirt.virt:
+        uri: '{{ libvirt_uri }}'
+        command: list_vms
+      register: _vms
+
+    - name: Stop domains
+      community.libvirt.virt:
+        uri: '{{ libvirt_uri }}'
+        name: '{{ item.name }}'
+        state: destroyed
+      loop: '{{ molecule_yml.platforms }}'
+      loop_control:
+        label: '{{ item.name }}'
+      when: item.name in _vms.list_vms
+
+    - name: Undefine domains
+      community.libvirt.virt:
+        uri: '{{ libvirt_uri }}'
+        name: '{{ item.name }}'
+        command: undefine
+      loop: '{{ molecule_yml.platforms }}'
+      loop_control:
+        label: '{{ item.name }}'
+      when: item.name in _vms.list_vms
+
+    - name: Remove overlay and seed
+      ansible.builtin.file:
+        path: '{{ images_dir }}/{{ item.0.name }}{{ item.1 }}'
+        state: absent
+      loop: "{{ molecule_yml.platforms | product(['.qcow2', '-seed.iso']) | list }}"
+      loop_control:
+        label: '{{ item.0.name }}{{ item.1 }}'
+
+    - name: Clear instance config
+      ansible.builtin.copy:
+        content: '[]'
+        dest: '{{ molecule_instance_config }}'
+        mode: '0600'

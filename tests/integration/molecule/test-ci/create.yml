@@ -1,0 +1,136 @@
+- name: Create libvirt VMs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    libvirt_uri: qemu:///system
+    images_dir: /var/lib/libvirt/images/storagebaby
+    base_image_url: https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2
+    base_image: '{{ images_dir }}/arch-cloudimg.qcow2'
+    ssh_key: '{{ molecule_ephemeral_directory }}/id_ed25519'
+  tasks:
+    - name: Images directory
+      ansible.builtin.file:
+        path: '{{ images_dir }}'
+        state: directory
+        mode: '0755'
+
+    - name: Cached Arch cloud image (downloaded once)
+      ansible.builtin.get_url:
+        url: '{{ base_image_url }}'
+        dest: '{{ base_image }}'
+        mode: '0644'
+        force: false
+
+    - name: Per-scenario SSH key
+      ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -f {{ ssh_key }}
+      args:
+        creates: '{{ ssh_key }}'
+
+    - name: Read public key
+      ansible.builtin.set_fact:
+        ssh_pubkey: "{{ lookup('file', ssh_key ~ '.pub') }}"
+
+    - name: Overlay disks
+      ansible.builtin.command: qemu-img create -f qcow2 -b {{ base_image }} -F qcow2 {{ images_dir }}/{{ item.name }}.qcow2 {{ item.disk }}
+      args:
+        creates: '{{ images_dir }}/{{ item.name }}.qcow2'
+      loop: '{{ molecule_yml.platforms }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Seed directories
+      ansible.builtin.file:
+        path: '{{ molecule_ephemeral_directory }}/seed-{{ item.name }}'
+        state: directory
+        mode: '0755'
+      loop: '{{ molecule_yml.platforms }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Seed meta-data
+      ansible.builtin.template:
+        src: ../templates/meta-data.j2
+        dest: '{{ molecule_ephemeral_directory }}/seed-{{ item.name }}/meta-data'
+        mode: '0644'
+      loop: '{{ molecule_yml.platforms }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Seed user-data
+      ansible.builtin.template:
+        src: ../templates/user-data.j2
+        dest: '{{ molecule_ephemeral_directory }}/seed-{{ item.name }}/user-data'
+        mode: '0644'
+      loop: '{{ molecule_yml.platforms }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Seed ISOs
+      ansible.builtin.command: >-
+        mkisofs -output {{ images_dir }}/{{ item.name }}-seed.iso -volid cidata -joliet -rock
+        {{ molecule_ephemeral_directory }}/seed-{{ item.name }}/user-data
+        {{ molecule_ephemeral_directory }}/seed-{{ item.name }}/meta-data
+      args:
+        creates: '{{ images_dir }}/{{ item.name }}-seed.iso'
+      loop: '{{ molecule_yml.platforms }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Define domains
+      community.libvirt.virt:
+        uri: '{{ libvirt_uri }}'
+        command: define
+        xml: "{{ lookup('template', '../templates/domain.xml.j2') }}"
+      loop: '{{ molecule_yml.platforms }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Start domains
+      community.libvirt.virt:
+        uri: '{{ libvirt_uri }}'
+        name: '{{ item.name }}'
+        state: running
+      loop: '{{ molecule_yml.platforms }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Wait for a DHCP lease
+      ansible.builtin.command: virsh -c {{ libvirt_uri }} domifaddr {{ item.name }} --source lease
+      register: _ifaddr
+      retries: 60
+      delay: 3
+      until: _ifaddr.stdout is search('ipv4')
+      changed_when: false
+      loop: '{{ molecule_yml.platforms }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Extract addresses
+      ansible.builtin.set_fact:
+        instance_conf: >-
+          {{ (instance_conf | default([])) + [{
+               'instance': item.item.name,
+               'address': (item.stdout | regex_search('ipv4\s+(\d+\.\d+\.\d+\.\d+)', '\1') | first),
+               'user': 'root',
+               'port': 22,
+               'identity_file': ssh_key }] }}
+      loop: '{{ _ifaddr.results }}'
+      loop_control:
+        label: '{{ item.item.name }}'
+
+    - name: Wait for SSH
+      ansible.builtin.wait_for:
+        host: '{{ item.address }}'
+        port: 22
+        search_regex: OpenSSH
+        timeout: 300
+      loop: '{{ instance_conf }}'
+      loop_control:
+        label: '{{ item.instance }}'
+
+    - name: Write instance config
+      ansible.builtin.copy:
+        content: '{{ instance_conf | to_json }}'
+        dest: '{{ molecule_instance_config }}'
+        mode: '0600'

@@ -3,9 +3,10 @@ FROM docker.io/library/archlinux:base
 RUN pacman -Syu --noconfirm --needed \
 	python python-pip nodejs npm git openssh \
 	podman sops age \
+	libvirt libvirt-python python-lxml qemu-img cdrtools \
 	&& pacman -Scc --noconfirm
 
-RUN python -m venv /opt/venv
+RUN python -m venv --system-site-packages /opt/venv
 ENV PATH="/opt/venv/bin:/opt/devtools/node_modules/.bin:${PATH}"
 
 WORKDIR /opt/devtools

@@ -1,0 +1,36 @@
+driver:
+  name: default
+  options:
+    managed: true
+platforms:
+  - name: test-a
+    hostname: test-a
+    memory_mib: 4096
+    vcpus: 2
+    disk: 20G
+provisioner:
+  name: ansible
+  env:
+    ANSIBLE_ROLES_PATH: /repo/ansible/roles
+  inventory:
+    group_vars:
+      all:
+        storagebaby_repo_root: /repo
+        ansible_user: root
+        ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+  playbooks:
+    create: create.yml
+    destroy: destroy.yml
+    prepare: prepare.yml
+    converge: converge.yml
+verifier:
+  name: testinfra
+scenario:
+  test_sequence:
+    - destroy
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy

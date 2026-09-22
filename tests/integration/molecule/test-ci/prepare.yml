@@ -1,0 +1,28 @@
+- name: Bootstrap the test host like a real one
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+      failed_when: false
+
+    - name: Copy bootstrap.sh
+      ansible.builtin.copy:
+        src: /repo/bootstrap.sh
+        dest: /usr/local/sbin/storagebaby-bootstrap
+        mode: '0755'
+
+    - name: Run bootstrap in local mode
+      ansible.builtin.command: /usr/local/sbin/storagebaby-bootstrap --local --repo /srv/storagebaby.git
+      changed_when: true
+
+    - name: Read the host's age public key
+      ansible.builtin.slurp:
+        src: /etc/storagebaby/age.pub
+      register: _age_pub
+
+    - name: Record it
+      ansible.builtin.set_fact:
+        storagebaby_age_pub: '{{ (_age_pub.content | b64decode).strip() }}'
+        cacheable: true
