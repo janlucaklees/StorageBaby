@@ -66,4 +66,4 @@ Kopia connection is declared, not clicked: secrets `server_password`, `repositor
 
 ## 7. Open item
 
-Ownership and mode of `/pool/shared/media` and `/pool/shared/scans` on storagebaby decide the one-time permission command the operator runs before Jellyfin and the uploader can read them. Default proposal: `chgrp -R media /pool/shared/media && chmod -R g+rX /pool/shared/media`, same with `scans` and `g+rwX`. Not executed by the role.
+Ownership and mode of `/pool/shared/media` and `/pool/shared/scans` on storagebaby decide the one-time permission command the operator runs before Jellyfin and the uploader can read them. Default after the Task 5 finding: `chmod -R o+rX /pool/shared/media` for Jellyfin (linuxserver images drop supplementary groups); for `scans` the uploader keeps its groups, so `chgrp -R scans /pool/shared/scans && chmod -R g+rwX /pool/shared/scans` applies. Not executed by the role.
