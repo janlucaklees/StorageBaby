@@ -1,0 +1,86 @@
+# The role is included once per placed service in the same play, so a register from
+# the previous service is still set when this one is read. Reset both change markers
+# up front, otherwise one service's changed secret restarts another service's units.
+- name: Reset per-service change markers
+  ansible.builtin.set_fact:
+    config_copy: { changed: false }
+    secret_sync: { changed: false }
+
+- name: Service user
+  ansible.builtin.user:
+    name: '{{ svc_user }}'
+    system: true
+    shell: /usr/bin/nologin
+    create_home: true
+
+- name: Look up uid
+  ansible.builtin.getent:
+    database: passwd
+    key: '{{ svc_user }}'
+
+- name: Record uid and unit dir
+  ansible.builtin.set_fact:
+    svc_uid: '{{ getent_passwd[svc_user][1] }}'
+    unit_dir: '/etc/containers/systemd/users/{{ getent_passwd[svc_user][1] }}'
+
+- name: Check subordinate ids
+  ansible.builtin.shell: grep -q '^{{ svc_user }}:' /etc/subuid && grep -q '^{{ svc_user }}:' /etc/subgid
+  register: _subids
+  changed_when: false
+  failed_when: false
+
+- name: Allocate subordinate ids
+  ansible.builtin.command: usermod --add-subids {{ svc_user }}
+  when: _subids.rc != 0
+
+- name: Enable linger
+  ansible.builtin.command: loginctl enable-linger {{ svc_user }}
+  args:
+    creates: /var/lib/systemd/linger/{{ svc_user }}
+
+- name: Wait for the user manager
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ is-system-running --wait
+  register: _mgr
+  retries: 15
+  delay: 2
+  until: _mgr.rc == 0 or 'degraded' in _mgr.stdout
+  changed_when: false
+
+- name: Volume directories
+  ansible.builtin.file:
+    path: '{{ item.value }}'
+    state: directory
+    owner: '{{ svc_user }}'
+    group: '{{ svc_user }}'
+    mode: '0750'
+  loop: '{{ volumes | dict2items }}'
+  loop_control:
+    label: '{{ item.key }} -> {{ item.value }}'
+
+# root-owned, not svc_user-owned: config is git-driven and deployed by root, the
+# service only reads it. It also has to be, for traefik: host_base owns the very
+# same path as the root of dynamic.d, and the two would flip ownership every run.
+- name: Config directory
+  ansible.builtin.file:
+    path: '{{ config_dir }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Config files
+  ansible.builtin.copy:
+    src: '{{ service_dir }}/config/'
+    dest: '{{ config_dir }}/'
+    owner: '{{ svc_user }}'
+    group: '{{ svc_user }}'
+    mode: 'u=rwX,go=rX'
+  register: config_copy
+  when: (service_dir ~ '/config') is directory
+
+- name: Secrets
+  ansible.builtin.include_tasks: secrets.yml
+  when: service.secrets | length > 0
+
+- name: Units
+  ansible.builtin.include_tasks: units.yml

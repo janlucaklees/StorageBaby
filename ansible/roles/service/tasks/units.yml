@@ -1,0 +1,90 @@
+# Initialised here rather than reset at the end: the role runs once per placed
+# service in the same play, so facts survive into the next service's run.
+- name: Start with an empty unit list for this service
+  ansible.builtin.set_fact:
+    service_units: []
+    changed_units: []
+
+- name: Unit directory
+  ansible.builtin.file:
+    path: '{{ unit_dir }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Render quadlet units
+  ansible.builtin.template:
+    src: '{{ item }}'
+    dest: "{{ unit_dir }}/{{ item | basename | regex_replace('\\.j2$', '') }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ lookup('fileglob', service_dir ~ '/quadlet/*.j2', wantlist=True) }}"
+  loop_control:
+    label: '{{ item | basename }}'
+  register: quadlet_render
+
+- name: Render traefik route
+  ansible.builtin.template:
+    src: traefik-route.yml.j2
+    dest: '/etc/storagebaby/traefik/dynamic.d/{{ service.name }}.yml'
+    owner: root
+    group: root
+    mode: '0644'
+  when: service.domain is defined
+
+- name: Map rendered files to systemd unit names
+  ansible.builtin.set_fact:
+    service_units: '{{ service_units + [unit_name] }}'
+    changed_units: '{{ changed_units + ([unit_name] if item.changed else []) }}'
+  vars:
+    _base: '{{ item.dest | basename }}'
+    _stem: '{{ (_base | splitext)[0] }}'
+    _ext: '{{ (_base | splitext)[1] }}'
+    unit_name: "{{ _stem ~ {'.container': '.service', '.pod': '-pod.service', '.build': '-build.service'}[_ext] }}"
+  loop: '{{ quadlet_render.results }}'
+  loop_control:
+    label: '{{ item.dest | basename }}'
+  when: (item.dest | basename | splitext)[1] in ['.container', '.pod', '.build']
+
+- name: Restart everything if config or a secret changed
+  ansible.builtin.set_fact:
+    changed_units: '{{ service_units }}'
+  when: config_copy.changed or secret_sync.changed
+
+- name: Reload the user manager
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ daemon-reload
+  when: quadlet_render.changed
+  changed_when: true
+
+- name: Restart changed units
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ restart {{ item }}
+  loop: '{{ changed_units | unique }}'
+  changed_when: true
+
+- name: Check unit states
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ is-active {{ item }}
+  loop: '{{ service_units }}'
+  register: _active
+  changed_when: false
+  failed_when: false
+
+- name: Start inactive units
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ start {{ item.item }}
+  loop: '{{ _active.results }}'
+  loop_control:
+    label: '{{ item.item }}'
+  when: item.stdout.strip() != 'active'
+  changed_when: true
+
+- name: Check auto-update timer
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ is-enabled podman-auto-update.timer
+  register: _au
+  changed_when: false
+  failed_when: false
+
+- name: Enable auto-update timer
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ enable --now podman-auto-update.timer
+  when: _au.stdout.strip() != 'enabled'
+  changed_when: true

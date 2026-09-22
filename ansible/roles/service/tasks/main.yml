@@ -1,3 +1,35 @@
-- name: Service role placeholder (Task 7 replaces this)
-  ansible.builtin.debug:
-    msg: 'would converge {{ service.name }} from {{ service_dir }}'
+- name: Derive service facts
+  ansible.builtin.set_fact:
+    svc_user: 'svc-{{ service.name }}'
+    config_dir: '/etc/storagebaby/{{ service.name }}'
+    fqdn: "{{ (service.domain ~ '.' ~ domain) if service.domain is defined else '' }}"
+    volumes: {}
+
+- name: Resolve volume paths
+  ansible.builtin.set_fact:
+    volumes: >-
+      {{ volumes | combine({ item.key:
+           (volume_overrides[service.name ~ '/' ~ item.key]
+            | default(storage_roots[item.value.class] ~ '/' ~ service.name ~ '/' ~ item.key)) }) }}
+  loop: '{{ service.volumes | default({}) | dict2items }}'
+  loop_control:
+    label: '{{ item.key }}'
+
+# The `exists` test runs on the controller, which is where both candidates live in
+# every mode: the checkout for ansible-pull, /repo for a Molecule run.
+- name: Resolve the secrets file (host override first)
+  ansible.builtin.set_fact:
+    secrets_file: >-
+      {{ [storagebaby_repo_root ~ '/hosts/' ~ inventory_hostname ~ '/secrets/' ~ service.name ~ '.sops.yaml',
+          service_dir ~ '/secrets.sops.yaml']
+         | select('exists') | list | first | default('') }}
+
+# `| bool`: ansible-core 2.19 rejects a non-boolean conditional, and `-e render_only=true`
+# on the command line arrives as the string 'true'.
+- name: Render only
+  ansible.builtin.include_tasks: render.yml
+  when: render_only | bool
+
+- name: Converge host
+  ansible.builtin.include_tasks: host.yml
+  when: not (render_only | bool)

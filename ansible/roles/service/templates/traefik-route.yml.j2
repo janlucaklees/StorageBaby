@@ -1,0 +1,22 @@
+http:
+  routers:
+    {{ service.name }}:
+      rule: "Host(`{{ fqdn }}`)"
+      entryPoints: [websecure]
+      service: {{ service.route.internal | default(service.name) }}
+{% if acme and (service.route.wildcard_cert | default(false)) %}
+      tls:
+        certResolver: porkbun
+        domains:
+          - main: "{{ domain }}"
+            sans: ["*.{{ domain }}"]
+{% else %}
+      tls: {}
+{% endif %}
+{% if service.route.internal is not defined %}
+  services:
+    {{ service.name }}:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:{{ service.port }}"
+{% endif %}

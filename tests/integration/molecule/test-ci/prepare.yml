@@ -25,3 +25,66 @@
     - name: Record it
       ansible.builtin.set_fact:
         storagebaby_age_pub: '{{ (_age_pub.content | b64decode).strip() }}'
+
+- name: Generate throwaway secrets for every placed service, encrypted to the host key
+  hosts: all
+  gather_facts: false
+  vars:
+    storagebaby_repo_root: /repo
+    _hosts_root: '{{ storagebaby_repo_root }}/hosts'
+  tasks:
+    - name: Discover shared services (fileglob cannot expand a wildcard directory; use find)
+      ansible.builtin.find:
+        paths: '{{ _hosts_root }}/shared/services'
+        patterns: service.yml
+        recurse: true
+        depth: 2
+        follow: true
+      register: _shared
+      delegate_to: localhost
+      become: false
+
+    - name: Discover this host's services
+      ansible.builtin.find:
+        paths: '{{ _hosts_root }}/{{ inventory_hostname }}/services'
+        patterns: service.yml
+        recurse: true
+        depth: 2
+        follow: true
+      register: _own
+      delegate_to: localhost
+      become: false
+
+    - name: Placed services, shared first
+      ansible.builtin.set_fact:
+        _placed: "{{ (_shared.files | map(attribute='path') | sort) + (_own.files | map(attribute='path') | sort) }}"
+
+    - name: Secrets override dir on the controller
+      ansible.builtin.file:
+        path: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets'
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+
+    - name: Write and encrypt one secrets file per service
+      ansible.builtin.shell: |
+        set -euo pipefail
+        rm -f "$TMP"
+        {% for key in (lookup('file', item) | from_yaml).secrets %}
+        printf '%s: "%s"\n' '{{ key }}' "$(head -c 24 /dev/urandom | base64 | tr -d '/+=')" >> "$TMP"
+        {% endfor %}
+        sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "{{ _hosts_root }}/{{ inventory_hostname }}/secrets/{{ item | dirname | basename }}.sops.yaml"
+      args:
+        executable: /bin/bash
+        # sops looks for .sops.yaml from the working directory upwards. From the repo it
+        # finds one whose creation rules deliberately do not cover these throwaway test
+        # secrets and aborts; from /tmp it finds none and just uses --age.
+        chdir: /tmp
+      environment:
+        TMP: '/tmp/{{ inventory_hostname }}-{{ item | dirname | basename }}-secrets.yaml'
+      loop: '{{ _placed }}'
+      loop_control:
+        label: '{{ item | dirname | basename }}'
+      when: (lookup('file', item) | from_yaml).secrets | length > 0
+      delegate_to: localhost
+      changed_when: true

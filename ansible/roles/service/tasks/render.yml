@@ -1,0 +1,24 @@
+- name: Render output dirs
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    mode: '0755'
+  loop:
+    - '{{ render_output }}/{{ service.name }}'
+    - '{{ render_output }}/traefik-dynamic.d'
+
+- name: Render quadlet units
+  ansible.builtin.template:
+    src: '{{ item }}'
+    dest: "{{ render_output }}/{{ service.name }}/{{ item | basename | regex_replace('\\.j2$', '') }}"
+    mode: '0644'
+  loop: "{{ lookup('fileglob', service_dir ~ '/quadlet/*.j2', wantlist=True) }}"
+  loop_control:
+    label: '{{ item | basename }}'
+
+- name: Render traefik route
+  ansible.builtin.template:
+    src: traefik-route.yml.j2
+    dest: '{{ render_output }}/traefik-dynamic.d/{{ service.name }}.yml'
+    mode: '0644'
+  when: service.domain is defined

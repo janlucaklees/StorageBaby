@@ -28,10 +28,11 @@ def test_ansible_collections_present():
 
 
 def test_playbook_syntax():
-    subprocess.run(
+    proc = subprocess.run(
         ["ansible-playbook", "--syntax-check", "-i", "storagebaby,", "ansible/playbook.yml"],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         cwd=str(Path(__file__).resolve().parents[2]),
     )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
