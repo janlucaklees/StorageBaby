@@ -5,6 +5,12 @@ on:
     branches: [master, podman-platform]
   pull_request:
 
+# Never two runs of the same ref at once: they would fight over the runner's
+# libvirt state. Queue instead of cancelling, so `stable` is not left behind.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   static:
     runs-on: ubuntu-latest
@@ -17,12 +23,23 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     needs: static
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      # Test hosts are KVM VMs driven through the runner's libvirt socket, which the
-      # devtools container mounts. GitHub-hosted Ubuntu runners expose /dev/kvm.
+      # Test hosts are KVM VMs driven through the runner's libvirt socket, which
+      # the devtools container mounts. GitHub-hosted Ubuntu runners expose /dev/kvm.
       - name: Install libvirt and KVM
-        run: sudo apt-get update && sudo apt-get install -y qemu-kvm libvirt-daemon-system dnsmasq-base && sudo systemctl start libvirtd && (sudo virsh net-start default || true) && sudo chmod 666 /dev/kvm /var/run/libvirt/libvirt-sock
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-kvm libvirt-daemon-system dnsmasq-base
+          # The runner also runs Docker, whose nftables rules drop the VM network's
+          # traffic unless libvirt uses the iptables backend.
+          echo 'firewall_backend = "iptables"' | sudo tee -a /etc/libvirt/network.conf
+          sudo systemctl start libvirtd
+          for i in $(seq 1 30); do [ -S /var/run/libvirt/libvirt-sock ] && break; sleep 1; done
+          sudo virsh net-start default || true
+          sudo chmod 666 /dev/kvm
       - run: make devtools
       - run: make test-integration
 

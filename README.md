@@ -18,9 +18,12 @@ backup policy), `quadlet/*.j2` (Podman Quadlet units), optional `config/`, and
 
 ## New host
 
-As root on a fresh Arch install:
+Copy the script to the fresh Arch install and run it as root:
 
-    curl -fsSL https://raw.githubusercontent.com/janlucaklees/StorageBaby/stable/bootstrap.sh | bash -s -- --repo git@github.com:janlucaklees/StorageBaby.git
+    scp bootstrap.sh root@<host>:/root/ && ssh root@<host> 'bash /root/bootstrap.sh --repo git@github.com:janlucaklees/StorageBaby.git'
+
+`stable` is created by CI on the first green push to master, so push and let CI
+run before bootstrapping the first host.
 
 Add the printed deploy key to the repository, add the printed age recipient to
 `.sops.yaml` under the host's rule, run `make sops FILE=...` → `sops updatekeys`

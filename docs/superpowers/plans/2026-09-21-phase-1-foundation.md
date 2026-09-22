@@ -511,7 +511,7 @@ creation_rules:
 
 - [ ] **Step 5: Encrypt the real Traefik secrets**
 
-The values live in the main clone at `/home/jlk/Projects/StorageBaby/traefik/secrets/porkbun_api_key.secret` and `porkbun_secret_api_key.secret` (gitignored, 8 bytes each, no newline). Build the plaintext in the scratchpad and encrypt with a filename override so the `shared` rule applies:
+The values live in the main clone at `/home/jlk/Projects/StorageBaby/traefik/secrets/porkbun_api_key.secret` and `porkbun_secret_api_key.secret` (gitignored). Build the plaintext in the scratchpad and encrypt with a filename override so the `shared` rule applies:
 
 ```bash
 S=/tmp/claude-1000/-home-jlk-Projects-StorageBaby/53e86ace-967b-46ce-a95e-7dcd0d9650b2/scratchpad
