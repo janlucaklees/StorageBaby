@@ -6,19 +6,7 @@ what is specific to Traefik.
 """
 
 
-def run_as(host, user: str, cmd: str):
-    # From /tmp: runuser keeps root's cwd, and rootless podman re-execs inside the
-    # user namespace, where the service user cannot chdir back into root's 0700 home.
-    #
-    # DBUS_SESSION_BUS_ADDRESS is what makes this a *client of the running service*
-    # rather than a stray process: without it podman finds no user session, falls back
-    # to --cgroup-manager=cgroupfs, and every command that has to place a process in
-    # the container's cgroup (exec, and healthcheck run, which is an exec) dies with
-    # "write to .../cgroup.procs: Permission denied" -- that cgroup is delegated to the
-    # user manager, and only systemd may write it.
-    uid = host.check_output(f"id -u {user}")
-    env = f"XDG_RUNTIME_DIR=/run/user/{uid} DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus"
-    return host.run(f"cd /tmp && runuser -u {user} -- env {env} {cmd}")
+from conftest import run_as
 
 
 def test_unit_active(host):
@@ -48,4 +36,6 @@ def test_http_redirects_to_https(host):
 
 
 def test_no_root_containers(host):
-    assert host.run("podman ps -q").stdout.strip() == ""
+    r = host.run("podman ps -q")
+    assert r.rc == 0, r.stderr
+    assert r.stdout.strip() == ""

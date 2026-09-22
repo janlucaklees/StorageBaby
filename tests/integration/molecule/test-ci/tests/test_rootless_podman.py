@@ -1,9 +1,4 @@
-def run_as(host, user, cmd):
-    # cd out of root's home first: runuser keeps the caller's cwd, and rootless
-    # podman re-execs itself inside the user namespace, where svc-traefik cannot
-    # chdir back into /root (0700) -- "cannot chdir to /root: Permission denied".
-    uid = host.user(user).uid
-    return host.run(f"cd /tmp && runuser -u {user} -- env XDG_RUNTIME_DIR=/run/user/{uid} {cmd}")
+from conftest import run_as
 
 
 def test_service_user_can_run_rootless_container(host):

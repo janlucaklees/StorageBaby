@@ -2,6 +2,7 @@ ansible-core
 molecule
 pytest
 pytest-testinfra
+pytest-order
 ansible-lint
 yamllint
 pyyaml

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from conftest import run_as
 
 HOSTS = Path("/repo/hosts")
 
@@ -41,13 +42,6 @@ def placed(host, owner: str) -> dict:
     if owner not in ("shared", hostname):
         pytest.skip(f"not placed on {hostname}")
     return _load(HOSTS / hostname / "host.yml")
-
-
-def run_as(host, user: str, cmd: str):
-    # From /tmp: runuser keeps root's cwd, and rootless podman re-execs inside the
-    # user namespace, where the service user cannot chdir back into root's 0700 home.
-    uid = host.check_output(f"id -u {user}")
-    return host.run(f"cd /tmp && runuser -u {user} -- env XDG_RUNTIME_DIR=/run/user/{uid} {cmd}")
 
 
 @service_case

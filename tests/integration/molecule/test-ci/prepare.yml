@@ -89,3 +89,59 @@
       when: (lookup('file', item) | from_yaml).secrets | length > 0
       delegate_to: localhost
       changed_when: true
+
+# Stands in for GitHub: the deploy unit that bootstrap installed already points at
+# /srv/storagebaby.git, so seeding a bare repo there is all it takes to make
+# `ansible-pull` on the host pull exactly this working tree.
+- name: Seed a local git remote from the working tree
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Archive the working tree on the controller (no .git, no caches)
+      ansible.builtin.command:
+        cmd: >-
+          tar -C /repo --exclude=.git --exclude=__pycache__ --exclude=.pytest_cache
+          --exclude=node_modules --exclude=.superpowers --exclude=.claude
+          -czf /tmp/{{ inventory_hostname }}-src.tgz .
+      delegate_to: localhost
+      changed_when: true
+
+    - name: Create /srv/src
+      ansible.builtin.file:
+        path: /srv/src
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Copy the archive
+      ansible.builtin.copy:
+        src: /tmp/{{ inventory_hostname }}-src.tgz
+        dest: /tmp/src.tgz
+        mode: '0644'
+
+    # --no-same-owner: the archive carries the operator's uid from the bind-mounted
+    # /repo, and restoring it on /srv/src itself makes git refuse the repo with
+    # "detected dubious ownership" -- root would own .git, someone else the worktree.
+    - name: Extract
+      ansible.builtin.command: tar -C /srv/src --no-same-owner -xzf /tmp/src.tgz
+      changed_when: true
+
+    # `add -f` for the secrets: the previous play generated them into the working
+    # tree, but .gitignore excludes hosts/test-*/secrets/ so real ones never get
+    # committed. Without the force the checkout would fall back to the shared
+    # secrets file, which is encrypted to the production key the VM does not have.
+    - name: Init repo and bare remote
+      ansible.builtin.shell: |
+        set -e
+        cd /srv/src
+        git init -q -b stable
+        git -c user.name=t -c user.email=t@t add -A
+        if [ -d hosts/{{ inventory_hostname }}/secrets ]; then
+          git -c user.name=t -c user.email=t@t add -f hosts/{{ inventory_hostname }}/secrets
+        fi
+        git -c user.name=t -c user.email=t@t commit -qm 'seed'
+        git clone -q --bare /srv/src /srv/storagebaby.git
+        git remote add origin /srv/storagebaby.git
+      args:
+        creates: /srv/storagebaby.git
