@@ -1,3 +1,5 @@
+# Molecule prints "CRITICAL 'molecule/default/molecule.yml' glob failed" at startup: it looks for a
+# `default` scenario to decide on shared state, and this repo only has `test-ci`. The line is harmless.
 driver:
   name: default
   options:

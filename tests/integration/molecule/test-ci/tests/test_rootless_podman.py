@@ -21,5 +21,10 @@ def test_probe_user_manager_reachable_from_root(host):
 
 def test_rootless_container_can_bind_port_80(host):
     assert host.run("sysctl -n net.ipv4.ip_unprivileged_port_start").stdout.strip() == "80"
-    r = run_as(host, "svc-probe", "podman run --rm --network host docker.io/library/alpine:3 sh -c 'nc -l -p 80 -s 127.0.0.1 -w 1 </dev/null >/dev/null & sleep 0.5; kill %1 2>/dev/null; echo ok'")
+    # Success means nc was still listening when timeout killed it after 2s. Alpine's busybox
+    # timeout reports that as 143 (128+SIGTERM); GNU timeout would say 124 -- accept either, so
+    # the probe does not silently depend on which one the image ships. A failed bind makes nc
+    # exit immediately (rc 1, "nc: bind: Address not available"), so the test fails.
+    probe = "timeout 2 nc -l -p 80 -s 127.0.0.1 </dev/null >/dev/null; rc=$?; [ $rc -eq 124 ] || [ $rc -eq 143 ]"
+    r = run_as(host, "svc-probe", f"podman run --rm --network host docker.io/library/alpine:3 sh -c '{probe}'")
     assert r.rc == 0, r.stderr

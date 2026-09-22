@@ -25,4 +25,3 @@
     - name: Record it
       ansible.builtin.set_fact:
         storagebaby_age_pub: '{{ (_age_pub.content | b64decode).strip() }}'
-        cacheable: true
