@@ -1,0 +1,7 @@
+# Fully qualified on purpose: a rootless build has no containers-registries.conf, so
+# a short name resolves to nothing and the build dies before STEP 1.
+FROM docker.io/oven/bun:1-slim
+WORKDIR /app
+COPY index.ts .
+USER bun
+ENTRYPOINT ["bun", "run", "index.ts"]

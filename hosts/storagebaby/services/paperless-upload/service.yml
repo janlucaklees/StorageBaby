@@ -1,0 +1,8 @@
+name: paperless-upload
+volumes: {}
+binds:
+  scans: { host: /pool/shared/scans, container: /data, mode: rw, group: scans }
+config:
+  paperless_url: https://paperless.home.klees.io
+secrets: [paperless_token]
+backup: none

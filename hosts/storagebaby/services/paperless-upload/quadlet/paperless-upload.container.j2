@@ -1,0 +1,23 @@
+[Unit]
+Description=Paperless uploader (watches the scans folder)
+
+[Container]
+Image=paperless-upload.build
+ContainerName=paperless-upload
+UserNS=keep-id:uid=1000,gid=1000
+GroupAdd=keep-groups
+Environment=TZ={{ tz }}
+Environment=PAPERLESS_URL={{ service.config.paperless_url }}
+Secret=paperless_token
+{% for name, b in binds.items() %}
+Volume={{ b.host }}:{{ b.container }}:{{ b.mode | default('rw') }}
+{% endfor %}
+HealthCmd=test -d /data/in
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

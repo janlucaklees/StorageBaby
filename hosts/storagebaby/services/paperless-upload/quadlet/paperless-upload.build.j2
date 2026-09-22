@@ -1,0 +1,7 @@
+[Unit]
+Description=Build the paperless-upload image
+
+[Build]
+ImageTag=localhost/paperless-upload:latest
+File={{ config_dir }}/build/Containerfile
+SetWorkingDirectory=file
