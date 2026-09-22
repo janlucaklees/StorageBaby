@@ -121,7 +121,7 @@ Phase 2 adds the optional keys `binds`, `devices`, `groups`, `config` and the ho
 The service role, for each placed service:
 
 - creates `svc-<name>` (system user, subuid/subgid via `usermod --add-subids`, linger)
-- resolves each volume to `<storage_roots[class]>/<name>/<volume>` unless overridden, creates it, chowns it to the service user
+- resolves each volume to `<storage_roots[class]>/<name>/<volume>` unless overridden, and creates it owned by the service user only when it is absent; existing directories are never re-permissioned, because images such as Stirling, Postgres and Immich manage the ownership and mode of their data trees themselves
 - syncs secrets into `podman secret` for that user (section 6)
 - copies `config/` to `/etc/storagebaby/<name>/`, owned by the service user, read-only
 - renders `quadlet/*.j2` into `/etc/containers/systemd/users/<uid>/`
