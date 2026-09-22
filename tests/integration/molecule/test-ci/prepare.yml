@@ -97,12 +97,26 @@
   hosts: all
   gather_facts: false
   tasks:
-    - name: Archive the working tree on the controller (no .git, no caches)
-      ansible.builtin.command:
-        cmd: >-
-          tar -C /repo --exclude=.git --exclude=__pycache__ --exclude=.pytest_cache
-          --exclude=node_modules --exclude=.superpowers --exclude=.claude
-          -czf /tmp/{{ inventory_hostname }}-src.tgz .
+    # The archive has to mirror what a real `stable` checkout holds, not the working
+    # tree: the operator's .env and the *.secret files of the old docker-compose
+    # services are gitignored, and shipping them to a test VM would put real
+    # credentials on a throwaway host. --exclude-vcs-ignores makes GNU tar read every
+    # directory's .gitignore, so the archive follows the same rules git does --
+    # including for the generated test secrets, which is why they are appended back in
+    # a second pass. (`git ls-files` is not an option here: this is a worktree, and
+    # git inside the devtools container cannot resolve its .git pointer.)
+    - name: Archive the working tree on the controller the way git would see it
+      ansible.builtin.shell: |
+        set -e
+        tar -C /repo --exclude-vcs-ignores \
+          --exclude=.git --exclude=.env --exclude='*.secret' \
+          --exclude=__pycache__ --exclude=.pytest_cache --exclude=node_modules \
+          --exclude=.superpowers --exclude=.claude \
+          -cf "$TAR" .
+        tar -C /repo -rf "$TAR" hosts/{{ inventory_hostname }}/secrets
+        gzip -f "$TAR"
+      environment:
+        TAR: '/tmp/{{ inventory_hostname }}-src.tar'
       delegate_to: localhost
       changed_when: true
 
@@ -116,7 +130,7 @@
 
     - name: Copy the archive
       ansible.builtin.copy:
-        src: /tmp/{{ inventory_hostname }}-src.tgz
+        src: /tmp/{{ inventory_hostname }}-src.tar.gz
         dest: /tmp/src.tgz
         mode: '0644'
 

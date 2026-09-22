@@ -63,7 +63,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/storagebaby/deploy.conf
-Environment=GIT_SSH_COMMAND=ssh -i /etc/storagebaby/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new
+Environment="GIT_SSH_COMMAND=ssh -i /etc/storagebaby/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 ExecStart=/usr/bin/ansible-pull --url ${REPO_URL} --checkout ${BRANCH} --directory /var/lib/storagebaby/repo --inventory ansible/inventory/hosts.yml --limit %H --only-if-changed $EXTRA_ARGS ansible/playbook.yml
 EOF
 
