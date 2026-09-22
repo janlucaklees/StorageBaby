@@ -1,0 +1,59 @@
+- name: Install platform packages
+  community.general.pacman:
+    name: [podman, passt, sops, age, ansible, git, openssh]
+    state: present
+
+- name: Allow unprivileged binding from port 80 (rootless Traefik on host network)
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_unprivileged_port_start
+    value: '80'
+    sysctl_set: true
+    state: present
+    reload: true
+
+- name: Require the host age key from bootstrap
+  ansible.builtin.stat:
+    path: /etc/storagebaby/age.key
+  register: _age_key
+  failed_when: not _age_key.stat.exists
+
+# 0711 keeps /etc/storagebaby unlistable (it holds the age key and the deploy key)
+# while still letting a rootless service traverse into the traefik dynamic dir.
+# It is set here rather than fixed up afterwards so a second run reports no change.
+- name: Platform root, traversable but not listable
+  ansible.builtin.file:
+    path: /etc/storagebaby
+    state: directory
+    owner: root
+    group: root
+    mode: '0711'
+
+- name: Platform directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /etc/storagebaby/traefik
+    - /etc/storagebaby/traefik/dynamic.d
+    - /etc/containers/systemd/users
+    - /var/lib/storagebaby
+
+- name: Deploy units
+  ansible.builtin.copy:
+    src: '{{ item }}'
+    dest: '/etc/systemd/system/{{ item }}'
+    mode: '0644'
+  loop: [storagebaby-deploy.service, storagebaby-deploy.timer]
+  notify: systemd daemon-reload
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Deploy timer state
+  ansible.builtin.systemd:
+    name: storagebaby-deploy.timer
+    enabled: '{{ deploy_timer }}'
+    state: "{{ 'started' if deploy_timer else 'stopped' }}"

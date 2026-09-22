@@ -1,0 +1,3 @@
+- name: Service role placeholder (Task 7 replaces this)
+  ansible.builtin.debug:
+    msg: 'would converge {{ service.name }} from {{ service_dir }}'

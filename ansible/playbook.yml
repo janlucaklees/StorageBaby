@@ -1,0 +1,55 @@
+- name: Converge a StorageBaby host
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    storagebaby_repo_root: '{{ playbook_dir }}/..'
+    render_only: false
+    render_output: ''
+  pre_tasks:
+    - name: Load host configuration
+      ansible.builtin.include_vars:
+        file: '{{ storagebaby_repo_root }}/hosts/{{ inventory_hostname }}/host.yml'
+
+    # `find` runs on the controller, which is where the repo lives: the devtools
+    # container for a Molecule run, the host itself for ansible-pull. The fileglob
+    # lookup cannot do this -- it globs only the basename, never a wildcard in a
+    # directory component, so `*/service.yml` silently matches nothing.
+    - name: Discover shared service specs
+      ansible.builtin.find:
+        paths: '{{ storagebaby_repo_root }}/hosts/shared/services'
+        patterns: service.yml
+        recurse: true
+        depth: 2
+      delegate_to: localhost
+      become: false
+      register: _shared_specs
+
+    - name: Discover this host's service specs
+      ansible.builtin.find:
+        paths: '{{ storagebaby_repo_root }}/hosts/{{ inventory_hostname }}/services'
+        patterns: service.yml
+        recurse: true
+        depth: 2
+      delegate_to: localhost
+      become: false
+      register: _host_specs
+
+    - name: Collect placed services (shared first, then this host's)
+      ansible.builtin.set_fact:
+        placed_services: >-
+          {{ (_shared_specs.files | map(attribute='path') | sort)
+             + (_host_specs.files | map(attribute='path') | sort) }}
+  roles:
+    - role: host_base
+      when: not render_only
+  tasks:
+    - name: Apply the service role per placed service
+      ansible.builtin.include_role:
+        name: service
+      vars:
+        service: "{{ lookup('file', item) | from_yaml }}"
+        service_dir: '{{ item | dirname }}'
+      loop: '{{ placed_services }}'
+      loop_control:
+        label: '{{ item | dirname | basename }}'
