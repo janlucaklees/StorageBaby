@@ -114,17 +114,32 @@ def test_route_rendered(host, owner, spec_path):
     assert f"Host(`{spec['domain']}.{hostvars['domain']}`)" in f.content_string
 
 
+def subuid_range(host, user: str) -> tuple[int, int]:
+    """`(first, count)` from /etc/subuid: the host uids this user's containers map into."""
+    line = host.run(f"grep '^{user}:' /etc/subuid").stdout.strip()
+    assert line, f"{user} has no /etc/subuid allocation"
+    first, count = line.split(":")[1:3]
+    return int(first), int(count)
+
+
 @service_case
 def test_volume_dirs_belong_to_the_service(host, owner, spec_path):
     hostvars = placed(host, owner)
     spec = load_spec(spec_path)
     user = f"svc-{spec['name']}"
+    svc_uid = host.user(user).uid
+    first, count = subuid_range(host, user)
     for volume, cfg in (spec["volumes"] or {}).items():
         override = hostvars.get("volume_overrides", {}).get(f"{spec['name']}/{volume}")
         path = override or f"{hostvars['storage_roots'][cfg['class']]}/{spec['name']}/{volume}"
         d = host.file(path)
         assert d.is_directory, path
-        assert d.user == user, path
+        # The role creates the directory svc-owned and then leaves it alone, so an image
+        # that chowns its own data tree is expected to show up here: a chown to a non-root
+        # uid inside the container lands on a host uid inside the service user's subuid
+        # range. Either is the service and nothing else -- another service's user, its
+        # subuids or root would all still fail.
+        assert d.uid == svc_uid or first <= d.uid < first + count, f"{path}: owned by uid {d.uid}"
 
 
 @service_case

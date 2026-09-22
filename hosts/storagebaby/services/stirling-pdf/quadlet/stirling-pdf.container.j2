@@ -1,0 +1,29 @@
+[Unit]
+Description=Stirling PDF
+
+[Container]
+Image=docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest
+ContainerName=stirling-pdf
+AutoUpdate=registry
+PublishPort=127.0.0.1:{{ service.port }}:8080
+Environment=TZ={{ tz }}
+Environment=SECURITY_ENABLELOGIN=true
+Volume={{ volumes.configs }}:/configs
+Volume={{ volumes.logs }}:/logs
+Volume={{ volumes.pipeline }}:/pipeline
+Volume={{ volumes.tessdata }}:/usr/share/tessdata
+# Not `/`: with SECURITY_ENABLELOGIN=true that answers 401, which `curl -f` reports
+# as a failure, so the container would never be healthy. `/api/v1/info/status` is the
+# app's own status endpoint, public in both modes, and answers 200.
+HealthCmd=curl -sf http://127.0.0.1:8080/api/v1/info/status || exit 1
+# The JVM needs the better part of a minute before it serves anything, and
+# HealthOnFailure=kill would otherwise put a cold start into a restart loop.
+HealthStartPeriod=120s
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

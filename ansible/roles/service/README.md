@@ -60,9 +60,17 @@ unit's `Result=success` as up rather than by making the test tolerant.
 
 ## What the role does to the host
 
-Creates `svc-<name>` (lingering, subuid/subgid allocated), the volume directories (0750,
+Creates `svc-<name>` (lingering, subuid/subgid allocated), any missing volume directory (0750,
 owned by the service user), every group named by `groups` or by a bind (system groups) with
-`svc-<name>` a member, and any missing bind directory (2775, root:<group>). An existing bind
-directory is left exactly as it is — its permissions belong to the operator, not to the role.
+`svc-<name>` a member, and any missing bind directory (2775, root:<group>).
+
+Both kinds of directory are created, never re-permissioned. An existing bind directory's
+permissions belong to the operator, not to the role. An existing volume directory belongs to
+the image: entrypoints routinely `chown`/`chmod` their data tree on every start — usually to a
+non-root uid inside the container, which on the host is a subuid of `svc-<name>`, not
+`svc-<name>` itself. Enforcing 0750 svc-owned on each converge would report changed forever
+_and_ take the running service's access away; with `HealthOnFailure=kill` that is a restart
+loop, run nightly by the deploy timer. So the role hands over a directory that starts out the
+service's own and then leaves it alone.
 A membership change stops and starts the user manager so the new groups take effect, which
 stops the service's containers; the unit tasks at the end of the same run start them again.

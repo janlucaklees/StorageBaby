@@ -83,16 +83,33 @@
   failed_when: _mgr.rc not in [0, 1]
   changed_when: false
 
-- name: Volume directories
-  ansible.builtin.file:
+# Create-only, exactly like the bind directories below: the role hands a service a
+# volume directory that starts out its own (0750, svc-owned) and then never touches
+# its ownership or mode again. An image owns its data tree after first start --
+# stirling-pdf, postgres, immich and paperless all chown and chmod their mounts from
+# their entrypoints, usually to a non-root uid inside the container, which surfaces on
+# the host as a subuid of the service user. Re-permissioning that on every converge
+# would not just report changed forever: it takes the running service's access away,
+# and with HealthOnFailure=kill that is a restart loop, nightly, from the deploy timer.
+- name: Check which volume directories exist
+  ansible.builtin.stat:
     path: '{{ item.value }}'
+  loop: '{{ volumes | dict2items }}'
+  loop_control:
+    label: '{{ item.key }} -> {{ item.value }}'
+  register: _volume_stat
+
+- name: Create missing volume directories
+  ansible.builtin.file:
+    path: '{{ item.item.value }}'
     state: directory
     owner: '{{ svc_user }}'
     group: '{{ svc_user }}'
     mode: '0750'
-  loop: '{{ volumes | dict2items }}'
+  loop: '{{ _volume_stat.results }}'
   loop_control:
-    label: '{{ item.key }} -> {{ item.value }}'
+    label: '{{ item.item.key }} -> {{ item.item.value }}'
+  when: not item.stat.exists
 
 # Bind paths are host trees the service uses but does not own, so an existing one is
 # never re-permissioned: the operator (Phase 4's samba role on storagebaby) decides

@@ -1,0 +1,10 @@
+name: stirling-pdf
+port: 8180
+domain: stirling
+volumes:
+  configs: { class: pool }
+  logs: { class: pool }
+  pipeline: { class: pool }
+  tessdata: { class: pool }
+secrets: []
+backup: none
