@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [master, podman-platform]
+  pull_request:
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make devtools
+      - run: make fmt-check
+      - run: make test-static
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v4
+      # Test hosts are KVM VMs driven through the runner's libvirt socket, which the
+      # devtools container mounts. GitHub-hosted Ubuntu runners expose /dev/kvm.
+      - name: Install libvirt and KVM
+        run: sudo apt-get update && sudo apt-get install -y qemu-kvm libvirt-daemon-system dnsmasq-base && sudo systemctl start libvirtd && (sudo virsh net-start default || true) && sudo chmod 666 /dev/kvm /var/run/libvirt/libvirt-sock
+      - run: make devtools
+      - run: make test-integration
+
+  promote:
+    runs-on: ubuntu-latest
+    needs: integration
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Hosts track `stable`, so only a commit that passed both jobs can land there.
+      - name: Fast-forward stable to the tested commit
+        run: git push origin HEAD:refs/heads/stable

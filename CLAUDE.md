@@ -4,34 +4,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Configuration and scripts for a home NAS/media server ("StorageBaby") running Arch Linux. It covers the full stack: physical disk management, parity/redundancy, file sharing, and Docker-based media services.
+Git-driven configuration for a home NAS/media server ("StorageBaby") running Arch Linux. It covers the full stack: physical disk management, parity/redundancy, file sharing, and media services as rootless Podman containers. A host is set up once with `bootstrap.sh` and converges itself from this repository after that; nothing is changed on a host by hand. Design: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design.md`.
 
-## Managing Docker services
+The old per-service `docker-compose.yml` directories (`jellyfin/`, `nextcloud/`, `paperless/`, …) are the not-yet-migrated remainder. New work goes under `hosts/`.
 
-Each service lives in its own directory with a `docker-compose.yml`. Two ways to operate them:
+## Managing services
 
-**Via `manage.sh`** (preferred for one-off commands — auto-loads `.env`):
+Placement is the folder:
 
-```bash
-./manage.sh <service> <docker-compose-subcommand>
-# e.g.: ./manage.sh jellyfin up -d
-#        ./manage.sh traefik logs -f
+- `hosts/<host>/host.yml` — everything host-specific (domain, ACME, storage roots, volume overrides, deploy timer).
+- `hosts/<host>/services/<name>/` — a service that runs on that host only.
+- `hosts/shared/services/<name>/` — a service that runs on every host (traefik).
+- `hosts/<host>/secrets/<service>.sops.yaml` — optional per-host override of a service's secrets.
+
+A service folder is a contract, not a script:
+
+```
+service.yml        name, port (loopback), domain, volumes with a storage class, secrets, backup policy
+quadlet/*.j2       Podman Quadlet units, rendered per host (vars: volumes.<name>, config_dir, port, fqdn, tz)
+config/            copied to /etc/storagebaby/<name>/, read-only for the service user
+secrets.sops.yaml  sops+age encrypted key/value pairs
 ```
 
-**Via Makefile** (each service dir has one with common targets: `start`, `stop`, `ps`, `logs`, `remove`, `clean`):
+The generic `service` role in `ansible/roles/service/` turns that into a running service: system user `svc-<name>` with subids and linger, volume directories under the host's storage roots, `podman secret`s synced from sops, quadlets rendered into `/etc/containers/systemd/users/<uid>/`, a Traefik route file, then restarts only what changed.
+
+Work on the repo through the Makefile — everything runs in the `devtools` image, nothing is installed on the workstation:
 
 ```bash
-cd traefik && make start
+make devtools              # build the tooling image (once)
+make test-static           # contract, secrets, render checks
+make test-integration      # Molecule scenario test-ci in a KVM VM (needs libvirt + KVM)
+make molecule CMD=converge # a single Molecule step in that scenario
+make molecule-login        # SSH into the running test VM
+make sops FILE=hosts/shared/services/traefik/secrets.sops.yaml
 ```
 
-The global `.env` (copy from `.env.example`) provides `TZ`. Some services also accept a service-level `.env.sh` for dynamic env vars.
+On a host, service units belong to the service user's systemd manager (run as root):
+
+```bash
+systemctl --user -M svc-traefik@ status traefik.service
+systemctl --user -M svc-traefik@ restart traefik.service
+journalctl _SYSTEMD_USER_UNIT=traefik.service -f # journalctl has no --user -M form
+```
 
 ## Formatting
 
 Prettier (+ `prettier-plugin-sh` for shell scripts) runs inside a small Docker image built from `devtools/` — nothing formatter-related is installed on the host besides `lefthook` itself.
 
 ```bash
-make fmt           # reformat the whole repo
+make devtools      # build/rebuild that image
+make format        # reformat the whole repo
 make fmt-check     # check only, no writes
 make install-hooks # one-time per clone: wires lefthook's pre-commit hook
 ```
@@ -91,15 +113,15 @@ bash snapraid/storage-maintenance/scrub.sh                 # scrub only
 bash snapraid/storage-maintenance/balance_disks.sh [0-100] # balance only
 ```
 
-## Docker networking
+## Networking
 
-All web-facing services join the external `traefik_network` Docker network. Traefik is the sole entry point — services expose themselves via labels (`traefik.enable: "true"`, router/service labels). Watchtower auto-updates containers that have `com.centurylinklabs.watchtower.enable: "true"`.
+Traefik runs rootless as `svc-traefik` with `Network=host` and is the only process on 80/443 (unprivileged-port sysctl lowered to 80). Every other service binds `127.0.0.1:<port>` — the port declared in its `service.yml`, unique per host and checked by a test.
 
-TLS is handled by Traefik reading certs from the shared `letsencrypt` volume. Certbot (in the traefik stack) issues a wildcard cert for `*.home.klees.io` via DNS challenge:
+Traefik's only provider is the file provider: the `service` role renders one route file per placed service into `/etc/storagebaby/traefik/dynamic.d/<name>.yml`, pointing at `http://127.0.0.1:<port>`. No labels, no Docker socket, no shared container network — rootless containers of different users cannot reach each other's loopback, so cross-service traffic goes through Traefik and the public FQDN.
 
-```bash
-cd traefik && make cert
-```
+TLS: with `acme: true` in `host.yml`, Traefik itself issues the wildcard cert for the host's domain via the Porkbun DNS challenge, state in the `letsencrypt` volume. `acme: false` (test hosts) serves Traefik's default certificate. Details in `hosts/shared/services/traefik/README.md`.
+
+Updates are Podman's: floating tag plus `AutoUpdate=registry` and the user's `podman-auto-update.timer`, or a pinned tag bumped in git.
 
 ## Adding a new disk
 
@@ -107,4 +129,10 @@ See `snapraid/README.md` for the full procedure: partition → ext4 → systemd 
 
 ## Deployment
 
-Config files are deployed using GNU Stow (`stow -vv -t / <dir>`) or direct copies with `doas`/`sudo`. See each service's `install.sh` for the exact steps. Packages are managed with `yay` (Arch AUR).
+`bootstrap.sh` runs once as root on a fresh host: installs git/ansible/sops/age/podman, generates `/etc/storagebaby/age.key` and an ed25519 deploy key, prints both public keys, installs `storagebaby-deploy.service` and `.timer`. The operator adds the deploy key to the repository as a read-only deploy key, adds the age recipient to `.sops.yaml` under that host's rule, runs `sops updatekeys` over the affected secret files (`make sops FILE=...` for editing), and pushes.
+
+From then on the host deploys itself: the timer runs `ansible-pull` as root every 5 minutes (2 min after boot), checking out the `stable` branch into `/var/lib/storagebaby/repo` and running `ansible/playbook.yml --limit <hostname>`, only when the checkout changed.
+
+`stable` is moved by CI, never by hand: `.github/workflows/ci.yml` runs the static checks and the `test-ci` Molecule scenario, and fast-forwards `stable` to the tested commit on a green master push. Until a host's age recipient is in `.sops.yaml`, its first converge fails at secret decryption — expected.
+
+Secrets are sops+age at rest and `podman secret`s at runtime. A host can only decrypt what it runs: `hosts/<h>/**` is encrypted to the operator's key plus that host's key, `hosts/shared/**` to the operator's key plus every host key. CI never holds a key; it only verifies each file's recipient list against `.sops.yaml`.
