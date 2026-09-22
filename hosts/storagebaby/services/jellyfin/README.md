@@ -43,12 +43,30 @@ this needs (`mesa`, `vulkan-mesa-layers`, `vulkan-radeon`, `vulkan-tools`,
 `vdpauinfo`, `libva-utils`) is in storagebaby's `packages`, installed by the
 `host_base` role — it used to be `jellyfin/install.sh`.
 
-`groups: [render, video]` puts `svc-jellyfin` in the two groups that own the
-`/dev/dri` nodes. Read the next section before assuming that is sufficient: the
-app process loses those groups too, so hardware transcoding on storagebaby needs
-the device nodes to be reachable without them (a udev rule giving `/dev/dri/*`
-mode `0666`, or `PGID` set to the `render` gid). **Unverified** — the test VM has
-no GPU, so nothing in this repo proves it either way yet.
+Passing the device in is not the same as being able to open it. The app process
+loses its supplementary groups for the reason the next section spells out, so
+`groups: [render, video]` is **not** what gets Jellyfin to the GPU — `svc-jellyfin`
+is in both groups on the host, and the transcoder still would not have them.
+
+What does get it there: on a `gpu: true` host, `host_base` installs
+
+```
+/etc/udev/rules.d/70-storagebaby-render.rules
+KERNEL=="renderD*", SUBSYSTEM=="drm", MODE="0666"
+```
+
+and reloads udev when that file changes. The render node is world-accessible, which
+is the usual way to hand VAAPI to a rootless container, and it is all a transcode
+needs — `card*` keeps its group. The rule, the reload and `AddDevice=` are all
+gated on `gpu`, so a host without a GPU (the test VM) gets none of them.
+
+`groups: [render, video]` stays in `service.yml` anyway: it is correct at the host
+level, costs nothing, and is the mechanism that _does_ work for an image that keeps
+its groups instead of dropping them.
+
+**Still unverified on real hardware** — the test VM has no GPU, so nothing in this
+repo proves that Jellyfin actually transcodes on storagebaby. Check it after
+cutover.
 
 ## The media bind, and why group access does not survive
 
