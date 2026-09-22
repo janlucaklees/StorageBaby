@@ -7,8 +7,8 @@ driver:
 platforms:
   - name: test-a
     hostname: test-a
-    memory_mib: 4096
-    vcpus: 2
+    memory_mib: 8192
+    vcpus: 4
     disk: 20G
 provisioner:
   name: ansible

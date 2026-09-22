@@ -1,7 +1,7 @@
 import pytest
 
 
-@pytest.mark.parametrize("pkg", ["podman", "passt", "sops", "age", "ansible", "git"])
+@pytest.mark.parametrize("pkg", ["podman", "passt", "sops", "age", "ansible", "git", "make"])
 def test_packages(host, pkg):
     assert host.package(pkg).is_installed
 

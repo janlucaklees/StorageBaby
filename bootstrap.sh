@@ -36,7 +36,7 @@ done
 	exit 2
 }
 
-pacman -Syu --noconfirm --needed git ansible sops age podman passt openssh
+pacman -Syu --noconfirm --needed git ansible sops age podman passt openssh make
 
 install -d -m 0700 /etc/storagebaby
 if [ ! -f /etc/storagebaby/age.key ]; then

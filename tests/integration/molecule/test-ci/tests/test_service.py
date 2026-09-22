@@ -16,7 +16,7 @@ from conftest import run_as
 HOSTS = Path("/repo/hosts")
 
 
-def _load(path: Path) -> dict:
+def load_spec(path: Path) -> dict:
     with path.open() as fh:
         return yaml.safe_load(fh)
 
@@ -41,13 +41,46 @@ def placed(host, owner: str) -> dict:
     hostname = host.check_output("uname -n")
     if owner not in ("shared", hostname):
         pytest.skip(f"not placed on {hostname}")
-    return _load(HOSTS / hostname / "host.yml")
+    return load_spec(HOSTS / hostname / "host.yml")
+
+
+def quadlets(spec_path: Path, kind: str) -> list[Path]:
+    """Every `quadlet/*.<kind>.j2` of a service, e.g. kind='container'."""
+    return sorted((spec_path.parent / "quadlet").glob(f"*.{kind}.j2"))
+
+
+def unit_stem(template: Path) -> str:
+    """`traefik.container.j2` -> `traefik`, the stem Quadlet builds the unit name from."""
+    return template.name.removesuffix(".j2").rsplit(".", 1)[0]
+
+
+def container_name(template: Path) -> str:
+    """The container's name: `ContainerName=` if the template sets one, else the stem.
+
+    Reading the raw template is enough -- no unit here templates that line. Quadlet's
+    own default would be `systemd-<stem>`, so a unit that does not name itself fails
+    the health check below, which is the point: every container in this repo is named
+    after its service, and `make logs/ps SERVICE=<name>` relies on it.
+    """
+    for line in template.read_text().splitlines():
+        if line.startswith("ContainerName="):
+            return line.split("=", 1)[1].strip()
+    return unit_stem(template)
+
+
+def _quadlet_case(kind: str):
+    cases = [(owner, p, t) for owner, p in SPECS for t in quadlets(p, kind)]
+    return pytest.mark.parametrize(
+        "owner,spec_path,template",
+        cases,
+        ids=[f"{owner}/{t.name}" for owner, _, t in cases],
+    )
 
 
 @service_case
 def test_service_user_lingers(host, owner, spec_path):
     placed(host, owner)
-    user = f"svc-{_load(spec_path)['name']}"
+    user = f"svc-{load_spec(spec_path)['name']}"
     assert host.user(user).exists
     assert host.run(f"loginctl show-user {user} -p Linger").stdout.strip() == "Linger=yes"
 
@@ -55,7 +88,7 @@ def test_service_user_lingers(host, owner, spec_path):
 @service_case
 def test_declared_secrets_are_the_podman_secrets(host, owner, spec_path):
     placed(host, owner)
-    spec = _load(spec_path)
+    spec = load_spec(spec_path)
     user = f"svc-{spec['name']}"
     r = run_as(host, user, "podman secret ls --format '{{.Name}}'")
     assert r.rc == 0, r.stderr
@@ -65,7 +98,7 @@ def test_declared_secrets_are_the_podman_secrets(host, owner, spec_path):
 @service_case
 def test_route_rendered(host, owner, spec_path):
     hostvars = placed(host, owner)
-    spec = _load(spec_path)
+    spec = load_spec(spec_path)
     if "domain" not in spec:
         pytest.skip("no domain, no route")
     f = host.file(f"/etc/storagebaby/traefik/dynamic.d/{spec['name']}.yml")
@@ -76,7 +109,7 @@ def test_route_rendered(host, owner, spec_path):
 @service_case
 def test_volume_dirs_belong_to_the_service(host, owner, spec_path):
     hostvars = placed(host, owner)
-    spec = _load(spec_path)
+    spec = load_spec(spec_path)
     user = f"svc-{spec['name']}"
     for volume, cfg in (spec["volumes"] or {}).items():
         override = hostvars.get("volume_overrides", {}).get(f"{spec['name']}/{volume}")
@@ -89,6 +122,49 @@ def test_volume_dirs_belong_to_the_service(host, owner, spec_path):
 @service_case
 def test_auto_update_timer_enabled(host, owner, spec_path):
     placed(host, owner)
-    user = f"svc-{_load(spec_path)['name']}"
+    user = f"svc-{load_spec(spec_path)['name']}"
     out = host.run(f"systemctl --user -M {user}@ is-enabled podman-auto-update.timer")
     assert out.stdout.strip() == "enabled", out.stderr
+
+
+@_quadlet_case("container")
+def test_container_unit_active(host, owner, spec_path, template):
+    placed(host, owner)
+    user = f"svc-{load_spec(spec_path)['name']}"
+    r = host.run(f"systemctl --user -M {user}@ is-active {unit_stem(template)}.service")
+    assert r.stdout.strip() == "active", r.stderr
+
+
+@_quadlet_case("container")
+def test_container_healthy(host, owner, spec_path, template):
+    placed(host, owner)
+    user = f"svc-{load_spec(spec_path)['name']}"
+    r = run_as(host, user, f"podman healthcheck run {container_name(template)}")
+    assert r.rc == 0, r.stderr
+
+
+@_quadlet_case("build")
+def test_build_unit_succeeded(host, owner, spec_path, template):
+    placed(host, owner)
+    user = f"svc-{load_spec(spec_path)['name']}"
+    unit = f"{unit_stem(template)}-build.service"
+    # Quadlet writes a `Type=oneshot` with `RemainAfterExit=yes`, so a finished build
+    # reads as active. Result=success covers a manager that let it go inactive.
+    state = host.run(f"systemctl --user -M {user}@ is-active {unit}").stdout.strip()
+    result = host.run(f"systemctl --user -M {user}@ show {unit} -p Result --value").stdout.strip()
+    assert state == "active" or result == "success", f"{unit}: is-active={state}, Result={result}"
+
+
+@service_case
+def test_domain_answers_over_https(host, owner, spec_path):
+    hostvars = placed(host, owner)
+    spec = load_spec(spec_path)
+    if "domain" not in spec:
+        pytest.skip("no domain, no route")
+    fqdn = f"{spec['domain']}.{hostvars['domain']}"
+    r = host.run(f"curl -sk -o /dev/null -w '%{{http_code}}' -H 'Host: {fqdn}' https://127.0.0.1/")
+    code = r.stdout.strip()
+    # 404 is Traefik matching no router at all, 5xx a backend that cannot answer.
+    # Anything else -- a redirect, a login page, a 401 -- proves the route arrives.
+    assert code.isdigit(), r.stderr
+    assert code != "404" and not code.startswith("5"), f"{fqdn} answered {code}"

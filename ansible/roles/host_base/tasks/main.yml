@@ -1,6 +1,6 @@
 - name: Install platform packages
   community.general.pacman:
-    name: [podman, passt, sops, age, ansible, git, openssh]
+    name: "{{ ['podman', 'passt', 'sops', 'age', 'ansible', 'git', 'openssh', 'make'] + (packages | default([])) }}"
     state: present
 
 - name: Allow unprivileged binding from port 80 (rootless Traefik on host network)

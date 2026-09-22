@@ -4,6 +4,7 @@
   ansible.builtin.set_fact:
     service_units: []
     changed_units: []
+    mapped_units: []
 
 - name: Unit directory
   ansible.builtin.file:
@@ -36,8 +37,7 @@
 
 - name: Map rendered files to systemd unit names
   ansible.builtin.set_fact:
-    service_units: '{{ service_units + [unit_name] }}'
-    changed_units: '{{ changed_units + ([unit_name] if item.changed else []) }}'
+    mapped_units: "{{ mapped_units + [{'unit': unit_name, 'kind': _ext, 'changed': item.changed}] }}"
   vars:
     _base: '{{ item.dest | basename }}'
     _stem: '{{ (_base | splitext)[0] }}'
@@ -47,6 +47,23 @@
   loop_control:
     label: '{{ item.dest | basename }}'
   when: (item.dest | basename | splitext)[1] in ['.container', '.pod', '.build']
+
+# A .build has to run before the pod and the containers that use its image, and a
+# rebuilt image only reaches a container when that container is restarted too --
+# `restart` on a .build unit re-runs the oneshot build.
+- name: Order units build, pod, container and propagate a build change to the containers
+  ansible.builtin.set_fact:
+    service_units: "{{ ordered | map(attribute='unit') | list }}"
+    changed_units: >-
+      {{ (ordered | selectattr('changed') | map(attribute='unit') | list)
+         + ((ordered | selectattr('kind', 'equalto', '.container') | map(attribute='unit') | list)
+            if (ordered | selectattr('kind', 'equalto', '.build') | selectattr('changed') | list | length > 0)
+            else []) }}
+  vars:
+    ordered: >-
+      {{ (mapped_units | selectattr('kind', 'equalto', '.build') | list)
+         + (mapped_units | selectattr('kind', 'equalto', '.pod') | list)
+         + (mapped_units | selectattr('kind', 'equalto', '.container') | list) }}
 
 - name: Restart everything if config or a secret changed
   ansible.builtin.set_fact:

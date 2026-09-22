@@ -15,6 +15,18 @@
   loop_control:
     label: '{{ item.key }}'
 
+# `binds` groups and `groups` are one list to the host: both end up as supplementary
+# groups of the service user, and both are why the unit needs GroupAdd=keep-groups.
+- name: Derive bind, device and group facts
+  ansible.builtin.set_fact:
+    binds: '{{ service.binds | default({}) }}'
+    devices_enabled: '{{ (gpu | default(false) | bool) and (service.devices | default([]) | length > 0) }}'
+    extra_groups: '{{ (_declared + _from_binds) | unique | list }}'
+    keep_groups: '{{ (_declared + _from_binds) | length > 0 }}'
+  vars:
+    _declared: '{{ service.groups | default([]) }}'
+    _from_binds: "{{ service.binds | default({}) | dict2items | map(attribute='value.group') | list }}"
+
 # The `exists` test runs on the controller, which is where both candidates live in
 # every mode: the checkout for ansible-pull, /repo for a Molecule run.
 - name: Resolve the secrets file (host override first)

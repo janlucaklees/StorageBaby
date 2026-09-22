@@ -1,22 +1,11 @@
-"""Traefik itself: the unit runs, the container is healthy, and it serves.
+"""Traefik itself: the secrets it needs, the dashboard, the HTTP redirect.
 
 The generic bits of the contract (user, secrets, route file, volume, auto-update
-timer) are covered for every service by test_service.py -- this file only asserts
-what is specific to Traefik.
+timer, unit active, container healthy, the FQDN answering over HTTPS) are covered for
+every service by test_service.py -- this file only asserts what is specific to Traefik.
 """
 
-
 from conftest import run_as
-
-
-def test_unit_active(host):
-    r = host.run("systemctl --user -M svc-traefik@ is-active traefik.service")
-    assert r.stdout.strip() == "active", r.stderr
-
-
-def test_container_healthy(host):
-    r = run_as(host, "svc-traefik", "podman healthcheck run traefik")
-    assert r.rc == 0, r.stderr
 
 
 def test_secrets_mounted(host):
@@ -26,6 +15,8 @@ def test_secrets_mounted(host):
 
 
 def test_dashboard_via_https(host):
+    # Not covered by the generic HTTPS check: that one only asks for a sane status on
+    # `/`, this one pins the dashboard path and a real 200 from api@internal.
     r = host.run("curl -sk -o /dev/null -w '%{http_code}' -H 'Host: traefik.test.local' https://127.0.0.1/dashboard/")
     assert r.stdout.strip() == "200", r.stderr
 

@@ -49,11 +49,18 @@
     # `service` and `service_dir` are lazy templates evaluated inside the role, so the
     # loop variable must not be `item`: any loop within the role would shadow it and
     # resolve these against the inner loop's item instead.
+    # The per-host `service_config` override is merged into `service.config` here and
+    # not inside the role: `service` arrives as an include_role param, and a role param
+    # outranks every set_fact the role could make -- the merged copy would be silently
+    # discarded. `_spec` is lazy too, so the file is read once, where the role reads it.
     - name: Apply the service role per placed service
       ansible.builtin.include_role:
         name: service
       vars:
-        service: "{{ lookup('file', placed_service) | from_yaml }}"
+        _spec: "{{ lookup('file', placed_service) | from_yaml }}"
+        service: >-
+          {{ _spec | combine({'config': (_spec.config | default({}))
+             | combine((service_config | default({}))[_spec.name] | default({}), recursive=True)}) }}
         service_dir: '{{ placed_service | dirname }}'
       loop: '{{ placed_services }}'
       loop_control:

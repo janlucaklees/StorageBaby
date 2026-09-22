@@ -5,6 +5,7 @@
   ansible.builtin.set_fact:
     config_copy: { changed: false }
     secret_sync: { changed: false }
+    _group_member: { changed: false }
 
 - name: Service user
   ansible.builtin.user:
@@ -23,6 +24,20 @@
     svc_uid: '{{ getent_passwd[svc_user][1] }}'
     unit_dir: '/etc/containers/systemd/users/{{ getent_passwd[svc_user][1] }}'
 
+- name: Extra host groups exist
+  ansible.builtin.group:
+    name: '{{ item }}'
+    system: true
+  loop: '{{ extra_groups }}'
+
+- name: Service user is a member of its extra groups
+  ansible.builtin.user:
+    name: '{{ svc_user }}'
+    groups: '{{ extra_groups }}'
+    append: true
+  register: _group_member
+  when: extra_groups | length > 0
+
 - name: Check subordinate ids
   ansible.builtin.shell: grep -q '^{{ svc_user }}:' /etc/subuid && grep -q '^{{ svc_user }}:' /etc/subgid
   register: _subids
@@ -37,6 +52,23 @@
   ansible.builtin.command: loginctl enable-linger {{ svc_user }}
   args:
     creates: /var/lib/systemd/linger/{{ svc_user }}
+
+# Supplementary groups are read once, when the user's manager starts, so a new
+# membership only reaches the containers after that manager is restarted --
+# daemon-reexec does not pick it up. Terminating the user stops its containers;
+# units.yml starts them again at the end of this same run. Guarded on the membership
+# change, so a run that changes nothing never touches a running service.
+- name: Terminate the user session after a membership change
+  ansible.builtin.command: loginctl terminate-user {{ svc_user }}
+  when: _group_member.changed
+  changed_when: true
+
+# Explicit, rather than trusting logind to bring a lingering user back: the wait
+# below talks to that manager's bus, which exists only while it runs.
+- name: Start the user manager again
+  ansible.builtin.command: systemctl start user@{{ svc_uid }}.service
+  when: _group_member.changed
+  changed_when: true
 
 # rc 1 is what `is-system-running` returns for a degraded manager, which the
 # `until` deliberately accepts -- without this the command module would still
@@ -60,6 +92,30 @@
   loop: '{{ volumes | dict2items }}'
   loop_control:
     label: '{{ item.key }} -> {{ item.value }}'
+
+# Bind paths are host trees the service uses but does not own, so an existing one is
+# never re-permissioned: the operator (Phase 4's samba role on storagebaby) decides
+# who may read it. The role only guarantees the group exists, that the service user
+# is in it, and that a missing path starts out setgid to that group.
+- name: Check which bind directories exist
+  ansible.builtin.stat:
+    path: '{{ item.value.host }}'
+  loop: '{{ binds | dict2items }}'
+  loop_control:
+    label: '{{ item.key }}'
+  register: _bind_stat
+
+- name: Create missing bind directories with the declared group
+  ansible.builtin.file:
+    path: '{{ item.item.value.host }}'
+    state: directory
+    owner: root
+    group: '{{ item.item.value.group }}'
+    mode: '2775'
+  loop: '{{ _bind_stat.results }}'
+  loop_control:
+    label: '{{ item.item.key }}'
+  when: not item.stat.exists
 
 # root-owned, not svc_user-owned: config is git-driven and deployed by root, the
 # service only reads it. It also has to be, for traefik: host_base owns the very
