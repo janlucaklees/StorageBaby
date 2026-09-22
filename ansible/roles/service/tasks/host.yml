@@ -55,16 +55,17 @@
 
 # Supplementary groups are read once, when the user's manager starts, so a new
 # membership only reaches the containers after that manager is restarted --
-# daemon-reexec does not pick it up. Terminating the user stops its containers;
-# units.yml starts them again at the end of this same run. Guarded on the membership
-# change, so a run that changes nothing never touches a running service.
-- name: Terminate the user session after a membership change
-  ansible.builtin.command: loginctl terminate-user {{ svc_user }}
+# daemon-reexec does not pick it up. A stop/start pair on user@<uid>.service, not
+# `loginctl terminate-user`: both halves are synchronous, so the manager is really
+# down before it is brought back and the wait below has a bus to talk to. The stop
+# takes the service's containers with it; units.yml starts them again at the end of
+# this same run. Guarded on the membership change, so a run that changes nothing
+# never touches a running service.
+- name: Stop the user manager after a membership change
+  ansible.builtin.command: systemctl stop user@{{ svc_uid }}.service
   when: _group_member.changed
   changed_when: true
 
-# Explicit, rather than trusting logind to bring a lingering user back: the wait
-# below talks to that manager's bus, which exists only while it runs.
 - name: Start the user manager again
   ansible.builtin.command: systemctl start user@{{ svc_uid }}.service
   when: _group_member.changed

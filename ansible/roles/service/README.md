@@ -37,6 +37,13 @@ GroupAdd=keep-groups
 `| bool` on the two flags: they come from a `set_fact`, so a template must not rely on
 them being a real boolean rather than the string `"False"`, which would be truthy.
 
+## What every `.container` must declare
+
+`HealthCmd=` (plus `HealthOnFailure=kill` and `Restart=always`, which the static test
+enforces) and `ContainerName=`. Both are contract, not style: the integration verifier runs
+`podman healthcheck run <ContainerName>` for every container of every placed service, so a
+unit without a health command or without its own name fails the suite.
+
 ## Unit names and order
 
 `<stem>.container` → `<stem>.service`, `<stem>.pod` → `<stem>-pod.service`, `<stem>.build` →
@@ -44,11 +51,18 @@ them being a real boolean rather than the string `"False"`, which would be truth
 container — and a changed `.build` also restarts every container of the service, because
 their image has just been rebuilt.
 
+One caveat for the first `.build` that lands: `Start inactive units` starts anything whose
+`is-active` is not `active`. Quadlet writes build units as `Type=oneshot` with
+`RemainAfterExit=yes`, so a finished build reads as active — but on a Podman that drops the
+`RemainAfterExit`, a successful build would read `inactive` and be rebuilt on every
+converge, which reports changed and breaks idempotence. Fix it there by treating a build
+unit's `Result=success` as up rather than by making the test tolerant.
+
 ## What the role does to the host
 
 Creates `svc-<name>` (lingering, subuid/subgid allocated), the volume directories (0750,
 owned by the service user), every group named by `groups` or by a bind (system groups) with
 `svc-<name>` a member, and any missing bind directory (2775, root:<group>). An existing bind
 directory is left exactly as it is — its permissions belong to the operator, not to the role.
-A membership change terminates the user session so the new groups take effect, which stops
-the service's containers; the unit tasks at the end of the same run start them again.
+A membership change stops and starts the user manager so the new groups take effect, which
+stops the service's containers; the unit tasks at the end of the same run start them again.

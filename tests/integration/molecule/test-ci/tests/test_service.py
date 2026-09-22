@@ -68,6 +68,14 @@ def container_name(template: Path) -> str:
     return unit_stem(template)
 
 
+def image_tag(template: Path) -> str | None:
+    """The `ImageTag=` a `.build` unit produces, or None when it declares none."""
+    for line in template.read_text().splitlines():
+        if line.startswith("ImageTag="):
+            return line.split("=", 1)[1].strip()
+    return None
+
+
 def _quadlet_case(kind: str):
     cases = [(owner, p, t) for owner, p in SPECS for t in quadlets(p, kind)]
     return pytest.mark.parametrize(
@@ -148,11 +156,15 @@ def test_build_unit_succeeded(host, owner, spec_path, template):
     placed(host, owner)
     user = f"svc-{load_spec(spec_path)['name']}"
     unit = f"{unit_stem(template)}-build.service"
-    # Quadlet writes a `Type=oneshot` with `RemainAfterExit=yes`, so a finished build
-    # reads as active. Result=success covers a manager that let it go inactive.
-    state = host.run(f"systemctl --user -M {user}@ is-active {unit}").stdout.strip()
+    # `Result=success` alone proves nothing -- it is also what systemd reports for a
+    # unit that has never run. The image the build was supposed to produce is the
+    # evidence that it actually ran, so both are required.
     result = host.run(f"systemctl --user -M {user}@ show {unit} -p Result --value").stdout.strip()
-    assert state == "active" or result == "success", f"{unit}: is-active={state}, Result={result}"
+    assert result == "success", f"{unit}: Result={result}"
+    tag = image_tag(template)
+    assert tag, f"{template.name}: no ImageTag=, so the build has nothing to be checked against"
+    r = run_as(host, user, f"podman image exists {tag}")
+    assert r.rc == 0, f"{unit} reports success but image {tag} does not exist: {r.stderr}"
 
 
 @service_case
@@ -164,7 +176,10 @@ def test_domain_answers_over_https(host, owner, spec_path):
     fqdn = f"{spec['domain']}.{hostvars['domain']}"
     r = host.run(f"curl -sk -o /dev/null -w '%{{http_code}}' -H 'Host: {fqdn}' https://127.0.0.1/")
     code = r.stdout.strip()
+    # The rc is not optional: curl prints `000` and exits non-zero when it never got a
+    # response at all, and a status test on its own would read that as a pass.
+    assert r.rc == 0, f"{fqdn}: curl failed with {code}: {r.stderr}"
+    assert code.isdigit(), r.stdout
     # 404 is Traefik matching no router at all, 5xx a backend that cannot answer.
-    # Anything else -- a redirect, a login page, a 401 -- proves the route arrives.
-    assert code.isdigit(), r.stderr
-    assert code != "404" and not code.startswith("5"), f"{fqdn} answered {code}"
+    # Anything in between -- a redirect, a login page, a 401 -- proves the route arrives.
+    assert 200 <= int(code) < 500 and code != "404", f"{fqdn} answered {code}"

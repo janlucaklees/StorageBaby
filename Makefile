@@ -25,6 +25,7 @@ DEVTOOLS_RUN_VM := docker run --rm -t --network host \
 	-v $(MOLECULE_CACHE):/root/.cache/molecule \
 	-e HOME=/root \
 	-e MOLECULE_EPHEMERAL_DIRECTORY=/root/.cache/molecule/$(SCENARIO) \
+	-e MOLECULE_VM_MEMORY_MIB -e MOLECULE_VM_VCPUS \
 	$(DEVTOOLS_IMAGE)
 
 # Adds the operator's age key directory.

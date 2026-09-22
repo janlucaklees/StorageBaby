@@ -20,5 +20,8 @@ if run podman secret exists "$name"; then
 		exit 0
 	fi
 fi
-printf '%s' "$value" | run podman secret create --replace "$name" -
+# stdout of the create goes to /dev/null: podman prints the new secret's id there,
+# and the caller's `changed_when` compares this script's whole stdout to CHANGED --
+# with the id in front it never matched, so a changed secret never restarted anything.
+printf '%s' "$value" | run podman secret create --replace "$name" - > /dev/null
 echo CHANGED
