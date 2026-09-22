@@ -1,0 +1,36 @@
+[Unit]
+Description=Jellyfin
+
+[Container]
+Image=lscr.io/linuxserver/jellyfin:latest
+ContainerName=jellyfin
+AutoUpdate=registry
+PublishPort=127.0.0.1:{{ service.port }}:8096
+{% if keep_groups | bool %}
+GroupAdd=keep-groups
+{% endif %}
+Environment=TZ={{ tz }}
+Environment=PUID=1000
+Environment=PGID=1000
+Environment=JELLYFIN_PublishedServerUrl={{ service.config.published_url }}
+Volume={{ volumes.config }}:/config
+{% for name, b in binds.items() %}
+Volume={{ b.host }}:{{ b.container }}:{{ b.mode | default('ro') }}
+{% endfor %}
+{% if devices_enabled | bool %}
+{% for d in service.devices %}
+AddDevice={{ d }}
+{% endfor %}
+{% endif %}
+HealthCmd=curl -sf http://127.0.0.1:8096/health || exit 1
+# A first start migrates the library database before anything answers on 8096, and
+# HealthOnFailure=kill would turn that into a restart loop.
+HealthStartPeriod=90s
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

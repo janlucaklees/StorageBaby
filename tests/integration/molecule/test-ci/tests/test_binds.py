@@ -4,6 +4,16 @@ Runs for every placed service that declares `binds`: the role must have created 
 directory with the declared group and added the service user to it. The test writes a
 group-readable file as root and reads it back through the service's first container.
 Collects nothing while no placed service has binds.
+
+Scope, because it is easy to over-read: `podman exec` builds its credentials from the
+*container configuration*, so what this proves is that the host group reached the
+container -- the service user is in it and `GroupAdd=keep-groups` carried it across.
+It does not prove that the service's own long-running process still has that group.
+An image that drops privileges internally can lose it again: s6-overlay images
+(linuxserver's, e.g. jellyfin) call `setgroups()` when they switch to their own user,
+and a `setgroups()` inside a user namespace can only set gids that namespace maps --
+so the kept, unmapped host groups are dropped, while this test keeps passing. Where
+that matters the service's README says how its access is really granted.
 """
 
 import pytest

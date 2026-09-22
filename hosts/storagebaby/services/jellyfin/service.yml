@@ -1,0 +1,13 @@
+name: jellyfin
+port: 8096
+domain: jellyfin
+volumes:
+  config: { class: pool }
+binds:
+  media: { host: /pool/shared/media, container: /media, mode: ro, group: media }
+devices: [/dev/dri]
+groups: [render, video]
+config:
+  published_url: jellyfin.janlucaklees.de
+secrets: []
+backup: none
