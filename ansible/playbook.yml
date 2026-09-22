@@ -44,12 +44,16 @@
     - role: host_base
       when: not render_only
   tasks:
+    # `service` and `service_dir` are lazy templates evaluated inside the role, so the
+    # loop variable must not be `item`: any loop within the role would shadow it and
+    # resolve these against the inner loop's item instead.
     - name: Apply the service role per placed service
       ansible.builtin.include_role:
         name: service
       vars:
-        service: "{{ lookup('file', item) | from_yaml }}"
-        service_dir: '{{ item | dirname }}'
+        service: "{{ lookup('file', placed_service) | from_yaml }}"
+        service_dir: '{{ placed_service | dirname }}'
       loop: '{{ placed_services }}'
       loop_control:
-        label: '{{ item | dirname | basename }}'
+        loop_var: placed_service
+        label: '{{ placed_service | dirname | basename }}'

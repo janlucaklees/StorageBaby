@@ -31,5 +31,7 @@ def test_playbook_syntax():
     subprocess.run(
         ["ansible-playbook", "--syntax-check", "-i", "storagebaby,", "ansible/playbook.yml"],
         check=True,
+        capture_output=True,
+        text=True,
         cwd=str(Path(__file__).resolve().parents[2]),
     )
