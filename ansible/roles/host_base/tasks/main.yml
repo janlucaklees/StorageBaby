@@ -41,6 +41,21 @@
     - /etc/containers/systemd/users
     - /var/lib/storagebaby
 
+# A class root is the host's, not the first-converged service's. Without this task
+# nobody creates it explicitly and it appears as a by-product of a volume directory:
+# `file: state=directory` applies the requested owner and mode to every parent it has
+# to create on the way, so `/srv/pool` ended up `0750 svc-<first service>` and every
+# other service user was denied the traverse into its own directory below it. Root and
+# 0755 here, create-only 0750 svc-owned below -- the split the volume tasks assume.
+- name: Storage class roots
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: "{{ storage_roots | dict2items | map(attribute='value') | list }}"
+
 - name: Deploy units
   ansible.builtin.copy:
     src: '{{ item }}'

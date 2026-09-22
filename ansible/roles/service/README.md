@@ -64,6 +64,10 @@ Creates `svc-<name>` (lingering, subuid/subgid allocated), any missing volume di
 owned by the service user), every group named by `groups` or by a bind (system groups) with
 `svc-<name>` a member, and any missing bind directory (2775, root:<group>).
 
+The class roots themselves (`storage_roots`) are not this role's: `host_base` creates them
+root-owned and 0755, precisely so that a volume directory created here never silently
+becomes one, 0750 and owned by whichever service converged first.
+
 Both kinds of directory are created, never re-permissioned. An existing bind directory's
 permissions belong to the operator, not to the role. An existing volume directory belongs to
 the image: entrypoints routinely `chown`/`chmod` their data tree on every start — usually to a
