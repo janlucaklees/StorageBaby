@@ -28,7 +28,7 @@ backup: none
 
 - **`binds`** are paths that live inside this host's folder tree by definition (the service folder is host-specific), so absolute paths are fine. The role ensures the directory exists, ensures the named group exists, adds the service user to it, and sets no recursive permissions. The operator makes the tree readable or writable by that group once; Phase 4's samba role owns those trees on storagebaby. Test hosts get empty directories with the right group.
 - **`devices`** render to `AddDevice=` only when `host.yml` has `gpu: true`. Test hosts have no GPU.
-- **`groups`** adds `GroupAdd=keep-groups` to the unit so the host supplementary groups reach the container. Used for `/dev/dri` (render, video) and for `binds` groups.
+- **`groups`** adds `GroupAdd=keep-groups` to the unit so the host supplementary groups reach the container's initial process. Found in Task 5: images that switch to an unprivileged user through s6 (linuxserver) drop those groups, and `UserNS=keep-id` breaks their init outright. For such images the bind tree must be world-readable (`o+rX`) and GPU access goes through a udev rule that makes `/dev/dri/renderD*` mode 0666 on hosts with `gpu: true` (installed by `host_base`). The group mechanism stays for images that keep their groups; `test_binds` only proves the `podman exec` path, not the app process.
 - **`config`** is free-form and readable in templates as `service.config.*`. `host.yml` may override per service with `service_config: { kopia: { repository: filesystem } }`; the role deep-merges host over service. This is how test hosts get a filesystem Kopia repository while storagebaby uses S3.
 - `port` becomes optional. `test_ports` ignores services without one. paperless-upload has none.
 
