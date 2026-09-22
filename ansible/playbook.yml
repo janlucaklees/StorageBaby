@@ -15,12 +15,17 @@
     # container for a Molecule run, the host itself for ansible-pull. The fileglob
     # lookup cannot do this -- it globs only the basename, never a wildcard in a
     # directory component, so `*/service.yml` silently matches nothing.
+    # `follow: true` is what makes a placement work: a service folder lives once
+    # under its owning host (or under shared/) and every other host that runs it
+    # links to it. Without this, os.walk refuses to descend a symlinked directory
+    # and the linked service is silently never placed.
     - name: Discover shared service specs
       ansible.builtin.find:
         paths: '{{ storagebaby_repo_root }}/hosts/shared/services'
         patterns: service.yml
         recurse: true
         depth: 2
+        follow: true
       delegate_to: localhost
       become: false
       register: _shared_specs
@@ -31,6 +36,7 @@
         patterns: service.yml
         recurse: true
         depth: 2
+        follow: true
       delegate_to: localhost
       become: false
       register: _host_specs

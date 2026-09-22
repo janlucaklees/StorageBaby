@@ -1,0 +1,6 @@
+name: yuzukam
+port: 3000
+domain: yuzukam
+volumes: {}
+secrets: []
+backup: none
