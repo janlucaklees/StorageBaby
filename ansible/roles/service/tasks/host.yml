@@ -38,12 +38,16 @@
   args:
     creates: /var/lib/systemd/linger/{{ svc_user }}
 
+# rc 1 is what `is-system-running` returns for a degraded manager, which the
+# `until` deliberately accepts -- without this the command module would still
+# call that attempt a failure.
 - name: Wait for the user manager
   ansible.builtin.command: systemctl --user -M {{ svc_user }}@ is-system-running --wait
   register: _mgr
   retries: 15
   delay: 2
   until: _mgr.rc == 0 or 'degraded' in _mgr.stdout
+  failed_when: _mgr.rc not in [0, 1]
   changed_when: false
 
 - name: Volume directories

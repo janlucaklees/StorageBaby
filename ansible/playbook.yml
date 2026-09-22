@@ -41,8 +41,10 @@
           {{ (_shared_specs.files | map(attribute='path') | sort)
              + (_host_specs.files | map(attribute='path') | sort) }}
   roles:
+    # `| bool`: ansible-core rejects a non-boolean conditional, and an
+    # `-e render_only=...` on the command line arrives as a string.
     - role: host_base
-      when: not render_only
+      when: not (render_only | bool)
   tasks:
     # `service` and `service_dir` are lazy templates evaluated inside the role, so the
     # loop variable must not be `item`: any loop within the role would shadow it and

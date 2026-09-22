@@ -74,6 +74,7 @@
         printf '%s: "%s"\n' '{{ key }}' "$(head -c 24 /dev/urandom | base64 | tr -d '/+=')" >> "$TMP"
         {% endfor %}
         sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "{{ _hosts_root }}/{{ inventory_hostname }}/secrets/{{ item | dirname | basename }}.sops.yaml"
+        rm -f "$TMP"
       args:
         executable: /bin/bash
         # sops looks for .sops.yaml from the working directory upwards. From the repo it
