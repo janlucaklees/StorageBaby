@@ -7,3 +7,6 @@ storage_roots:
   fast: /srv/fast
 volume_overrides: {}
 deploy_timer: false
+gpu: false
+packages: []
+service_config: {}

@@ -116,6 +116,8 @@ backup: # or `backup: none` for stateless services; one of the two is required
   retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }
 ```
 
+Phase 2 adds the optional keys `binds`, `devices`, `groups`, `config` and the host keys `gpu`, `packages`, `service_config`; see `2026-09-22-phase-2-single-services-design.md`.
+
 The service role, for each placed service:
 
 - creates `svc-<name>` (system user, subuid/subgid via `usermod --add-subids`, linger)

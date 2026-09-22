@@ -7,3 +7,14 @@ storage_roots:
   fast: /var/lib/storagebaby/fast
 volume_overrides: {}
 deploy_timer: true
+gpu: true
+packages:
+  [
+    mesa,
+    vulkan-mesa-layers,
+    vulkan-radeon,
+    vulkan-tools,
+    vdpauinfo,
+    libva-utils
+  ]
+service_config: {}
