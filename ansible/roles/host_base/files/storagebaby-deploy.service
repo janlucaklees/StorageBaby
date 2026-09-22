@@ -8,3 +8,6 @@ Type=oneshot
 EnvironmentFile=/etc/storagebaby/deploy.conf
 Environment="GIT_SSH_COMMAND=ssh -i /etc/storagebaby/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 ExecStart=/usr/bin/ansible-pull --url ${REPO_URL} --checkout ${BRANCH} --directory /var/lib/storagebaby/repo --inventory ansible/inventory/hosts.yml --limit %H --only-if-changed $EXTRA_ARGS ansible/playbook.yml
+# Without this, a host whose hostname has no hosts/<name> folder converges nothing
+# at all -- --limit matches no host and ansible-pull still exits 0. Fail visibly.
+ExecStartPost=/usr/bin/test -d /var/lib/storagebaby/repo/hosts/%H

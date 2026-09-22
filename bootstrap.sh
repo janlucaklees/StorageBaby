@@ -65,6 +65,9 @@ Type=oneshot
 EnvironmentFile=/etc/storagebaby/deploy.conf
 Environment="GIT_SSH_COMMAND=ssh -i /etc/storagebaby/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 ExecStart=/usr/bin/ansible-pull --url ${REPO_URL} --checkout ${BRANCH} --directory /var/lib/storagebaby/repo --inventory ansible/inventory/hosts.yml --limit %H --only-if-changed $EXTRA_ARGS ansible/playbook.yml
+# Without this, a host whose hostname has no hosts/<name> folder converges nothing
+# at all -- --limit matches no host and ansible-pull still exits 0. Fail visibly.
+ExecStartPost=/usr/bin/test -d /var/lib/storagebaby/repo/hosts/%H
 EOF
 
 cat > /etc/systemd/system/storagebaby-deploy.timer << 'EOF'
@@ -88,5 +91,7 @@ echo
 echo "Add this as a read-only deploy key on the repository:"
 cat /etc/storagebaby/deploy_key.pub
 echo
-echo "Add this age recipient to .sops.yaml under this host's rule, then run sops updatekeys:"
+echo "Add this age recipient to .sops.yaml under this host's own rule AND under the"
+echo "hosts/shared/** rule (every host runs the shared services), then run sops updatekeys"
+echo "on every affected *.sops.yaml:"
 cat /etc/storagebaby/age.pub

@@ -1,10 +1,11 @@
+{% set route = service.route | default({}) %}
 http:
   routers:
     {{ service.name }}:
       rule: "Host(`{{ fqdn }}`)"
       entryPoints: [websecure]
-      service: {{ service.route.internal | default(service.name) }}
-{% if acme and (service.route.wildcard_cert | default(false)) %}
+      service: {{ route.internal | default(service.name) }}
+{% if acme and (route.wildcard_cert | default(false)) %}
       tls:
         certResolver: porkbun
         domains:
@@ -13,7 +14,7 @@ http:
 {% else %}
       tls: {}
 {% endif %}
-{% if service.route.internal is not defined %}
+{% if route.internal is not defined %}
   services:
     {{ service.name }}:
       loadBalancer:

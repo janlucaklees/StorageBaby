@@ -93,3 +93,29 @@ sops:
 .PHONY: install-hooks
 install-hooks:
 	lefthook install
+
+# Host-side service control. Unlike everything above, these run on a host as root
+# and not in the devtools image: a service's units belong to the `svc-<name>`
+# user's systemd manager, which is reachable only from that host.
+define require_service
+	@[ -n "$(SERVICE)" ] || { \
+		echo "$@: SERVICE is required, e.g. make $@ SERVICE=traefik" >&2; \
+		exit 2; \
+	}
+endef
+
+.PHONY: start stop restart
+start stop restart:
+	$(require_service)
+	systemctl --user -M svc-$(SERVICE)@ $@ $(SERVICE).service
+
+.PHONY: ps
+ps:
+	$(require_service)
+	systemctl --user -M svc-$(SERVICE)@ status $(SERVICE).service
+
+# journalctl has no `--user -M` form, so units are addressed by name instead.
+.PHONY: logs
+logs:
+	$(require_service)
+	journalctl _SYSTEMD_USER_UNIT=$(SERVICE).service -f

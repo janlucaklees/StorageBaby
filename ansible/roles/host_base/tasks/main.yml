@@ -47,7 +47,7 @@
     dest: '/etc/systemd/system/{{ item }}'
     mode: '0644'
   loop: [storagebaby-deploy.service, storagebaby-deploy.timer]
-  notify: systemd daemon-reload
+  notify: Systemd daemon-reload
 
 - name: Flush handlers
   ansible.builtin.meta: flush_handlers

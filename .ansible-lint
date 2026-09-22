@@ -1,0 +1,19 @@
+profile: moderate
+
+exclude_paths:
+  - tests/
+  - .superpowers/
+  - .claude/
+  - devtools/
+  - docs/
+
+skip_list:
+  # A service's units live in the `svc-<name>` user's systemd manager, reached with
+  # `systemctl --user -M <user>@`. ansible.builtin.systemd has no equivalent -- its
+  # `scope: user` means the connecting user's manager -- so command is the only way.
+  - command-instead-of-module
+  # The service role's variables are its template contract: quadlet templates read
+  # `volumes`, `config_dir`, `fqdn`, `port` and `tz` by those names, and host.yml
+  # sets `volume_overrides`. A `service_` prefix would rename the documented API of
+  # every service folder for style alone.
+  - var-naming[no-role-prefix]

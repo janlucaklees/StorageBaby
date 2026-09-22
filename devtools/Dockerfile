@@ -1,4 +1,5 @@
-FROM docker.io/library/archlinux:base
+# Pinned so a rebuild is reproducible; bump deliberately.
+FROM docker.io/library/archlinux:base-20260920.0.596911
 
 RUN pacman -Syu --noconfirm --needed \
 	python python-pip nodejs npm git openssh \

@@ -1,7 +1,6 @@
 # Runtime/data/secret dirs — not source, never formatted
 mounts/
 **/volumes/
-traefik/secrets/*.secret
 paperless/consume/
 paperless/export/
 .git/
