@@ -7,6 +7,11 @@ SCENARIO ?= test-ci
 LIBVIRT_SOCK := /var/run/libvirt/libvirt-sock
 LIBVIRT_IMAGES := /var/lib/libvirt/images
 
+# Molecule's per-scenario state inside the cache volume. It writes the inventory it
+# generates for the running VM to $(MOLECULE_EPHEMERAL)/inventory, which is what
+# molecule-exec below hands to Ansible.
+MOLECULE_EPHEMERAL := /root/.cache/molecule/$(SCENARIO)
+
 # Base: repo mount only. Everything that neither drives Docker nor reads the
 # operator's age key runs with this.
 DEVTOOLS_RUN := docker run --rm -t \
@@ -24,7 +29,7 @@ DEVTOOLS_RUN_VM := docker run --rm -t --network host \
 	-v $(LIBVIRT_IMAGES):$(LIBVIRT_IMAGES) \
 	-v $(MOLECULE_CACHE):/root/.cache/molecule \
 	-e HOME=/root \
-	-e MOLECULE_EPHEMERAL_DIRECTORY=/root/.cache/molecule/$(SCENARIO) \
+	-e MOLECULE_EPHEMERAL_DIRECTORY=$(MOLECULE_EPHEMERAL) \
 	-e MOLECULE_VM_MEMORY_MIB -e MOLECULE_VM_VCPUS \
 	$(DEVTOOLS_IMAGE)
 
@@ -80,6 +85,21 @@ molecule:
 .PHONY: molecule-login
 molecule-login:
 	$(subst --rm -t,--rm -it,$(DEVTOOLS_RUN_VM)) sh -c 'cd tests/integration && molecule login -s $(SCENARIO)'
+
+# The non-interactive counterpart: one command on the running test VM, for scripts,
+# CI and anything without a terminal. `molecule login` needs a real TTY, so without
+# this the only way to look at a VM from a script is a throwaway testinfra test.
+# Ansible's ad hoc mode against the inventory Molecule already wrote is enough --
+# it carries the VM's address and key, so there is no second source of truth.
+# CMD is pasted into a single-quoted shell word, so a command containing a single
+# quote needs `make molecule-login` instead.
+.PHONY: molecule-exec
+molecule-exec:
+	@[ -n "$(CMD)" ] || { \
+		echo "molecule-exec: CMD is required, e.g. make molecule-exec CMD='podman ps -a'" >&2; \
+		exit 2; \
+	}
+	$(DEVTOOLS_RUN_VM) ansible all -i $(MOLECULE_EPHEMERAL)/inventory -m shell -a '$(CMD)'
 
 .PHONY: test-clean
 test-clean:

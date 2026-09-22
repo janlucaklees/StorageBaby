@@ -79,6 +79,7 @@ occasional restart. The fix belongs in git.
     make test-integration      # Molecule scenario test-ci in a KVM VM
     make molecule CMD=converge # a single Molecule step in that scenario
     make molecule-login        # SSH into the running test VM
+    make molecule-exec CMD='podman ps -a'   # one command on it, no TTY needed
     make test-clean            # destroy the VM and drop the Molecule cache
     make sops FILE=hosts/shared/services/traefik/secrets.sops.yaml
     make install-hooks         # once per clone: lefthook's formatting hook
