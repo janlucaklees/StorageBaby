@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Git-driven configuration for a home NAS/media server ("StorageBaby") running Arch Linux. It covers the full stack: physical disk management, parity/redundancy, file sharing, and media services as rootless Podman containers. A host is set up once with `bootstrap.sh` and converges itself from this repository after that; nothing is changed on a host by hand. Design: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design.md`.
 
-Migrated so far: traefik (shared), and on storagebaby yuzukam, stirling-pdf, jellyfin, paperless-upload and kopia. The `docker-compose.yml` directories still at the repo root are the not-yet-migrated remainder — `nextcloud/`, `paperless/`, `openarchiver/` and `immich/` go in Phase 3, `samba/` and `snapraid/` in Phase 4. A new service goes under `hosts/`, never into one of them.
+Migrated so far: traefik (shared), and on storagebaby yuzukam, stirling-pdf, jellyfin, paperless-upload and kopia. The `docker-compose.yml` directories still at the repo root are the not-yet-migrated remainder: `nextcloud/` and `paperless/` are tracked Phase 3 inputs, `immich/` and `openarchiver/` are untracked working copies of the same phase, and `samba/` and `snapraid/` are Phase 4. A new service goes under `hosts/`, never into one of them.
 
 ## Managing services
 

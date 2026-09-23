@@ -32,31 +32,37 @@ storagebaby. "auto" means `AutoUpdate=registry` plus the service user's
 | paperless-upload                     | none         | host build (`.build` unit from the service's own `config/build/`) | 2     |
 
 Everything but traefik is placed on storagebaby; the test host places the same
-five folders by symlink. Still on `docker-compose.yml` and waiting: `nextcloud/`,
-`paperless/`, `openarchiver/`, `immich/` (Phase 3), `samba/` and `snapraid/`
-(Phase 4).
+five folders by symlink. Still on `docker-compose.yml` and waiting: `nextcloud/`
+and `paperless/` (tracked) plus `immich/` and `openarchiver/` (untracked working
+copies) in Phase 3, then `samba/` and `snapraid/` in Phase 4.
 
 Kopia is pinned on purpose — a kopia upgrade can carry a repository format
 upgrade, which is not a decision for a nightly timer.
 
-## Operator steps before the first storagebaby deploy
+## Operator steps before and right after the first storagebaby deploy
 
-Converging storagebaby for the first time takes six things that are not in git,
-because they are either a secret or somebody else's data:
+Four things have to be done by hand before converging storagebaby the first
+time, because they are either a secret or somebody else's data:
 
 1. **Open the shared trees to the services that read them.** The role creates a
-   bind directory only when it is missing, and never touches the permissions of
-   one that exists — so both of these are the operator's, once:
+   bind directory only when it is missing and never touches the permissions of
+   one that exists, so both trees are the operator's, once:
 
    ```bash
+   doas chgrp -R media /pool/shared/media
    doas chmod -R o+rX /pool/shared/media
-   doas chgrp -R scans /pool/shared/scans && doas chmod -R g+rwX /pool/shared/scans
+   doas chgrp -R scans /pool/shared/scans
+   doas chmod -R g+rwX /pool/shared/scans
    ```
 
-   Jellyfin needs the first because the linuxserver image drops its supplementary
-   groups when s6 switches to its own user, so group access never reaches the app
-   process — `hosts/storagebaby/services/jellyfin/README.md` has the measurement.
-   The uploader keeps its groups, so the `scans` group is enough for it.
+   For the media tree the `o+rX` is what Jellyfin actually reads through: the
+   linuxserver image drops its supplementary groups when s6 switches to its own
+   user, so group access never reaches the app process —
+   `hosts/storagebaby/services/jellyfin/README.md` has the measurement. The
+   `chgrp` still matters anyway, because the `media` group is what Samba and the
+   rest of the host use, and it is what the role itself would set on a tree it
+   creates. The uploader keeps its groups, so for the scans tree the group is the
+   whole mechanism.
 
 2. **Put the real Backblaze credentials into kopia's secrets** — both are
    `REPLACE_ME` in git — and confirm `s3_endpoint` and `s3_bucket` in
@@ -76,14 +82,15 @@ because they are either a secret or somebody else's data:
    `REPLACE_ME_paperless_api_token` — the file it was to be carried over from was
    empty. Uploads fail until Phase 3 delivers Paperless either way.
 
-5. **Expect existing volume directories to keep their owner and mode.** A converge
-   creates the ones that are missing and leaves the rest alone, so anything already
-   on the pool stays exactly as it is.
+Two more things are not steps but expectations about that first converge:
 
-6. **Check GPU transcoding after cutover.** Jellyfin reaches `/dev/dri` through a
-   udev rule installed by `host_base` on a `gpu: true` host. The test VM has no
-   GPU, so nothing in this repo proves it works — the first real converge is the
-   first test.
+- **Existing volume directories keep their owner and mode.** A converge creates
+  the ones that are missing and leaves the rest alone, so anything already on the
+  pool stays exactly as it is.
+- **GPU transcoding is unverified until real hardware runs it.** Jellyfin reaches
+  `/dev/dri` through a udev rule `host_base` installs on a `gpu: true` host. The
+  test VM has no GPU, so nothing in this repo proves it works — check it after
+  cutover.
 
 ## New host
 
