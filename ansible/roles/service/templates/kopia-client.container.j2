@@ -8,7 +8,10 @@ Pod={{ service.name }}.pod
 Entrypoint=/bin/sh
 Exec={{ config_dir }}/kopia-client.sh
 Environment=TZ={{ tz }}
-Environment=KOPIA_SERVER_URL=https://kopia.{{ domain }}
+{# `:443` spelled out, although it is the scheme's default: kopia 0.23 hands the URL's
+   authority to its gRPC resolver as it stands, and a bare host arrives there as
+   `<host>:` -- "invalid target address, missing port after port-separator colon". #}
+Environment=KOPIA_SERVER_URL=https://kopia.{{ domain }}:443
 Environment=KOPIA_CLIENT_USERNAME={{ service.name }}
 Environment=KOPIA_CLIENT_HOSTNAME={{ hostname }}
 Environment=KOPIA_PIN_SERVER_CERT={{ '0' if acme else '1' }}
@@ -28,7 +31,16 @@ Environment=KOPIA_KEEP_DAILY={{ service.backup.retention.daily }}
 Environment=KOPIA_KEEP_WEEKLY={{ service.backup.retention.weekly }}
 Environment=KOPIA_KEEP_MONTHLY={{ service.backup.retention.monthly }}
 Environment=KOPIA_KEEP_ANNUAL={{ service.backup.retention.annual }}
-Secret=kopia_password
+{# As an environment variable and not as a file under /run/secrets, because the value
+   has to reach more than the start script: `podman exec` inherits the container's
+   environment but not the script's, and both the HealthCmd below and every
+   administrative kopia command are execs. Kopia's own persisted-credentials mechanism
+   does not cover this case -- `repository connect server` writes repository.config but
+   no password file beside it, so without this every exec dies at an interactive
+   prompt ("inappropriate ioctl for device"). The value is then readable in this
+   container's environment and in `podman inspect`, both of which are already reachable
+   only by root and by the service user that owns the podman secret itself. #}
+Secret=kopia_password,type=env,target=KOPIA_PASSWORD
 Volume={{ config_dir }}/kopia-client.sh:{{ config_dir }}/kopia-client.sh:ro
 Volume={{ volumes['backup-config'] }}:/app/config
 Volume={{ volumes['backup-cache'] }}:/app/cache

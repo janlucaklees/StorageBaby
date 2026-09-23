@@ -116,6 +116,21 @@ volume in `backup.paths` read-only at `/data/<volume>`, connects to `https://kop
 as `<name>@<host>` with the `kopia_password` host secret, applies the retention policy and
 then runs a Kopia server so the scheduler takes the snapshots at `backup.schedule`.
 
+`kopia_password` reaches the sidecar as an **env-type** podman secret
+(`Secret=kopia_password,type=env,target=KOPIA_PASSWORD`) rather than as a file under
+`/run/secrets`. A `podman exec` inherits the container's environment but not the start
+script's, and both the sidecar's `HealthCmd` (`kopia repository status`) and every
+administrative kopia command are execs — with the value only in the script, each of them
+dies at an interactive prompt. Kopia's own persisted-credentials mechanism does not
+cover it: `repository connect server` writes `repository.config` and no password file
+beside it, unlike the repository connects the kopia server itself makes.
+
+The sidecar also verifies an existing connection before trusting it: the server
+certificate fingerprint it pinned at connect time is frozen in `repository.config`, and
+Traefik hands out a fresh self-signed default certificate on every restart of a host
+with `acme: false`. A stored connection that cannot open the repository is therefore
+deleted and made again rather than retried forever.
+
 The role adds two implicit volumes, `backup-config` and `backup-cache` (class `fast`),
 before the volume directories are created, so they are made and owned like any other.
 Databases are backed up as dumps, not as data directories: a dump timer writes into a
