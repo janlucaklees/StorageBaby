@@ -12,6 +12,10 @@ GROUP_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 # single route can override for itself. Everything else about a route lives in the
 # service-wide `route:` block.
 ROUTE_KEYS = {"domain", "port", "scheme", "insecure_skip_verify"}
+# What the service-wide `route:` block may carry: traefik's own two options, plus the
+# two backend ones an entry may then override for itself. Unchecked, a misspelling
+# here is silent -- the template reads the keys it knows and ignores the rest.
+BLOCK_KEYS = {"internal", "wildcard_cert", "scheme", "insecure_skip_verify"}
 SCHEMES = {"http", "https"}
 
 
@@ -53,6 +57,8 @@ def test_service_contract(p):
     assert isinstance(spec.get("config", {}), dict)
     assert isinstance(spec["secrets"], list)
     assert spec["backup"] == "none" or {"paths", "schedule", "retention"} <= set(spec["backup"])
+    block = spec.get("route", {})
+    assert set(block) <= BLOCK_KEYS, f"{p.name}: unknown route block keys {set(block) - BLOCK_KEYS}"
     routes = spec.get("routes")
     if routes is not None:
         assert "domain" not in spec and "port" not in spec, f"{p.name}: use either routes or domain+port"
@@ -61,9 +67,16 @@ def test_service_contract(p):
             assert {"domain", "port"} <= set(r), f"{p.name}: route entries need domain and port"
             assert set(r) <= ROUTE_KEYS, f"{p.name}: unknown route keys {set(r) - ROUTE_KEYS}"
             assert isinstance(r["port"], int)
-            check_backend(p, r)
+            # What the route really gets, which is what the template resolves: the
+            # entry over the block. Checking the block on its own instead would call
+            # `route: {insecure_skip_verify: true}` an error even when every entry
+            # says `scheme: https` -- and would miss an entry that overrides the
+            # scheme back to http while the block still skips verification.
+            check_backend(p, block | r)
         assert len({r["domain"] for r in routes}) == len(routes), f"{p.name}: duplicate route domains"
-    check_backend(p, spec.get("route", {}))
+    else:
+        # The one-route shorthand: the block is the whole of what the route resolves to.
+        check_backend(p, block)
     for secret, ref in spec.get("host_secrets", {}).items():
         assert GROUP_RE.match(secret), f"{p.name}: invalid host secret name {secret}"
         assert re.match(r"^[a-z0-9-]+\.[A-Za-z0-9_-]+$", ref), f"{p.name}: host secret {secret} must reference <set>.<key>"
