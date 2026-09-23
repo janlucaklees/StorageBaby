@@ -41,6 +41,33 @@
     - /etc/containers/systemd/users
     - /var/lib/storagebaby
 
+# Everything below this point writes into the storage roots, and `file: state=directory`
+# creates every missing parent on the way -- so on a host whose pool is not mounted it
+# would recreate /pool/apps and every volume under it on the root filesystem, empty,
+# unattended, from the nightly deploy timer, and the services would come up on the wrong
+# data. The mount is a precondition, checked and never created: only the operator knows
+# why a declared filesystem is missing.
+- name: Check the mountpoints declared in host.yml
+  ansible.builtin.command: mountpoint -q -- {{ item }}
+  loop: '{{ mountpoints }}'
+  register: _mountpoints
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Require every declared mountpoint to be mounted
+  ansible.builtin.assert:
+    that: item.rc == 0
+    fail_msg: >-
+      {{ item.item }} is declared in hosts/{{ inventory_hostname }}/host.yml under
+      `mountpoints` but nothing is mounted there. Refusing to converge: the storage
+      roots below it would be created on the root filesystem instead. Mount it, then
+      converge again.
+    quiet: true
+  loop: '{{ _mountpoints.results | default([]) }}'
+  loop_control:
+    label: '{{ item.item }}'
+
 # A class root is the host's, not the first-converged service's. Without this task
 # nobody creates it explicitly and it appears as a by-product of a volume directory:
 # `file: state=directory` applies the requested owner and mode to every parent it has

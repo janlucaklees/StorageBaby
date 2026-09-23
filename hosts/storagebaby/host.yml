@@ -5,6 +5,11 @@ tz: Europe/Berlin
 storage_roots:
   pool: /pool/apps
   fast: /var/lib/storagebaby/fast
+# Filesystems that must be mounted before anything is written below them.
+# `host_base` checks these and refuses to converge otherwise -- without it an
+# unmounted pool would let the nightly deploy timer recreate /pool/apps and every
+# volume under it on the root filesystem, silently and empty.
+mountpoints: [/pool]
 volume_overrides: {}
 deploy_timer: true
 gpu: true

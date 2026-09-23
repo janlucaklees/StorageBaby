@@ -5,6 +5,8 @@ tz: Europe/Berlin
 storage_roots:
   pool: /srv/pool
   fast: /srv/fast
+# The test VM has one filesystem; both storage roots are ordinary directories on it.
+mountpoints: []
 volume_overrides: {}
 deploy_timer: false
 gpu: false

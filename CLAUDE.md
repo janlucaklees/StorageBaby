@@ -12,7 +12,7 @@ Migrated so far: traefik (shared), and on storagebaby yuzukam, stirling-pdf, jel
 
 Placement is the folder:
 
-- `hosts/<host>/host.yml` — everything host-specific (domain, ACME, storage roots, volume overrides, deploy timer, `gpu`, `packages`, `service_config`).
+- `hosts/<host>/host.yml` — everything host-specific (domain, ACME, storage roots, `mountpoints`, volume overrides, deploy timer, `gpu`, `packages`, `service_config`). `mountpoints` is a list of absolute paths that must already be mounted: `host_base` checks each with `mountpoint -q` and aborts the converge otherwise, so an unmounted pool cannot be silently recreated as empty directories on the root filesystem by the nightly deploy timer. storagebaby declares `[/pool]`; the test host, one filesystem, declares `[]`.
 - `hosts/<host>/services/<name>/` — a service that runs on that host only.
 - `hosts/shared/services/<name>/` — a service that runs on every host (traefik).
 - `hosts/<host>/secrets/<service>.sops.yaml` — optional per-host override of a service's secrets.
