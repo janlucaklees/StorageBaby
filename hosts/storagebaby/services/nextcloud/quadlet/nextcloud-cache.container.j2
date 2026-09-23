@@ -1,0 +1,21 @@
+[Unit]
+Description=Nextcloud cache and file locking
+
+[Container]
+Image=docker.io/library/redis:alpine
+ContainerName=nextcloud-cache
+Pod=nextcloud.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+{# No volume: Nextcloud uses this for its memory cache and its transactional file
+   locks, both of which are rebuilt from the database and the filesystem after a
+   restart. Persisting them would only carry a stale lock table across one. #}
+HealthCmd=redis-cli --raw incr ping
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

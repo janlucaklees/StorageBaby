@@ -368,3 +368,25 @@ def test_backup_sidecar_snapshots_to_the_server(host, owner, spec_path):
     assert r.rc == 0, f"could not list snapshots on the kopia server: {r.stderr}"
     source = f"{name}@{host.check_output('uname -n')}:/data/{first}"
     assert source in r.stdout, f"{source} is not among the server's snapshot sources:\n{r.stdout}"
+
+
+@service_case
+def test_nextcloud_is_installed_and_out_of_maintenance(host, owner, spec_path):
+    """The one service whose `after_change` hooks can be checked from outside.
+
+    Every other check in this file is derived from a spec and says nothing about any
+    particular service. This one is named, because nextcloud's hooks are the only ones
+    on the platform that do real work and `occ status` is the only place their effect
+    shows: `installed: true` is the pod's first start having got all the way through
+    the installer, and `maintenance: false` is `php occ maintenance:mode --off` -- the
+    first of the five -- having actually run. The generic hook case in test_deploy.py
+    can only check a `touch`.
+    """
+    placed(host, owner)
+    spec = load_spec(spec_path)
+    if spec["name"] != "nextcloud":
+        pytest.skip("no `occ` to ask")
+    r = run_as(host, "svc-nextcloud", "podman exec -u www-data nextcloud-app php occ status")
+    assert r.rc == 0, f"occ status failed: {r.stderr}"
+    assert "installed: true" in r.stdout, r.stdout
+    assert "maintenance: false" in r.stdout, r.stdout

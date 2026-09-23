@@ -1,0 +1,34 @@
+[Unit]
+Description=Nextcloud web server
+After=nextcloud-app.service
+Wants=nextcloud-app.service
+
+[Container]
+Image=docker.io/library/nginx:alpine
+ContainerName=nextcloud-nginx
+Pod=nextcloud.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+{# Only nginx.conf is replaced; mime.types and fastcgi_params, which it includes, stay
+   the image's own. #}
+Volume={{ config_dir }}/nginx.conf:/etc/nginx/nginx.conf:ro
+{# Read-only: nginx serves the static half of the installation straight off the volume
+   php-fpm owns, and has no business writing into it. #}
+Volume={{ volumes.html }}:/var/www/html:ro
+Tmpfs=/tmp
+{# The probe that proves the pair: /status.php is a php file, so a 200 here means nginx
+   reached php-fpm over the pod's loopback, php ran and Nextcloud answered. busybox
+   wget rather than curl -- this is Alpine, and wget is the one that is always there.
+   It exits non-zero on any status but 2xx, which is the whole check. #}
+HealthCmd=wget -q -O /dev/null http://127.0.0.1/status.php
+HealthOnFailure=kill
+{# As long as the app's: nginx can serve nothing until the installation is in the
+   volume and php-fpm answers. #}
+HealthStartPeriod=600s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Nextcloud background jobs
+{# The same pair the dump unit uses, and for the same reason: `podman exec` into a
+   container that is not running fails, and Requisite= refuses to run rather than
+   starting the pod behind the timer's back. #}
+After=nextcloud-app.service
+Requisite=nextcloud-app.service
+
+[Service]
+Type=oneshot
+{# What the compose stack had ofelia do every five minutes. Nextcloud's own
+   recommendation is real cron over the AJAX fallback, and this is it: the background
+   jobs run whether or not anybody has the web UI open. #}
+ExecStart=/usr/bin/podman exec -u www-data nextcloud-app php -f /var/www/html/cron.php

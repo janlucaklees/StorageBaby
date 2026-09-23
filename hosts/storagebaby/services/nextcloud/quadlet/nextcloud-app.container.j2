@@ -1,0 +1,78 @@
+[Unit]
+Description=Nextcloud (php-fpm)
+After=nextcloud-database.service nextcloud-cache.service
+Wants=nextcloud-database.service nextcloud-cache.service
+
+[Container]
+Image=docker.io/library/nextcloud:{{ service.config.version }}
+ContainerName=nextcloud-app
+Pod=nextcloud.pod
+Environment=TZ={{ tz }}
+Environment=POSTGRES_HOST=127.0.0.1
+Environment=POSTGRES_DB={{ service.config.database_name }}
+Environment=POSTGRES_USER={{ service.config.database_user }}
+Environment=POSTGRES_PASSWORD_FILE=/run/secrets/database_password
+Environment=REDIS_HOST=127.0.0.1
+Environment=NEXTCLOUD_TRUSTED_DOMAINS={{ routes[0].fqdn }}
+{# Traefik terminates TLS and reaches nginx over plain HTTP on loopback, so everything
+   Nextcloud generates from the request it sees would be `http://` on a name it never
+   hears. These two are what make a redirect, a WebDAV URL and an email link come out
+   as the public one. Read at runtime by the image's reverse-proxy.config.php, unlike
+   NEXTCLOUD_TRUSTED_DOMAINS above, which the entrypoint applies on install and
+   upgrade. #}
+Environment=OVERWRITEPROTOCOL=https
+Environment=OVERWRITEHOST={{ routes[0].fqdn }}
+{# Rendered only when a host declares one. `trusted_proxies` is empty by design here --
+   through pasta, Traefik's requests arrive from the host's own address, a different
+   literal per host, and Nextcloud uses the value only to believe X-Forwarded-For. The
+   README has the measurement. Quoted because the value is a space-separated *list* to
+   Nextcloud: unquoted, systemd would keep the first address and drop the rest. #}
+{% if service.config.trusted_proxies | default('') %}
+Environment="TRUSTED_PROXIES={{ service.config.trusted_proxies }}"
+{% endif %}
+Secret=database_password
+{# The first-run install. The image only reads these when it installs -- on storagebaby
+   the migrated installation is already there and they are ignored, on a test host they
+   are what makes `occ` have something to talk to. `_FILE` rather than env-type
+   secrets: the entrypoint runs file_env on both. #}
+Environment=NEXTCLOUD_ADMIN_USER_FILE=/run/secrets/admin_user
+Environment=NEXTCLOUD_ADMIN_PASSWORD_FILE=/run/secrets/admin_password
+Secret=admin_user
+Secret=admin_password
+Volume={{ volumes.html }}:/var/www/html
+{# `html` is the one volume on the platform two images share, and they are not the
+   same user inside it: php-fpm's workers and `occ` are www-data, nginx's workers are
+   `nginx`. The role hands over a directory that is 0750, the entrypoint chowns the
+   tree it rsyncs in to www-data and never widens the mount point itself, and nginx
+   could then stat nothing through it:
+
+     [crit] stat() "/var/www/html/status.php" failed (13: Permission denied)
+
+   A compose named volume was 0755 and the old stack never met this. So the container
+   that owns the tree makes its own mount point traversable first and then hands over
+   to the entrypoint it replaced -- `/entrypoint.sh php-fpm` is the image's own
+   Entrypoint and Cmd, read off it with `podman image inspect`. Only the mount point:
+   everything under it keeps the modes the image gives it, and `data/` stays 0770. #}
+Entrypoint=/bin/sh
+Exec=-c 'chmod 0755 /var/www/html; exec /entrypoint.sh php-fpm'
+{# The two php files the compose stack mounted, from this service's `config/`. #}
+Volume={{ config_dir }}/www.conf:/usr/local/etc/php-fpm.d/www.conf:ro
+Volume={{ config_dir }}/opcache.ini:/usr/local/etc/php/conf.d/opcache.ini:ro
+{# php-fpm speaks FastCGI, not HTTP, so the most this can ask is whether anything is
+   listening on 9000 -- nginx's /status.php probe below is the one that proves the two
+   talk. The image is Alpine: no bash, so no /dev/tcp, no curl and no cgi-fcgi. The
+   interpreter the container exists for is always there, so it does the connect. #}
+HealthCmd=php -r 'exit(@fsockopen("127.0.0.1", 9000) ? 0 : 1);'
+HealthOnFailure=kill
+{# Long, because the first start is not a start: the entrypoint copies the whole
+   installation into the empty `html` volume and then runs the installer against an
+   empty database. Being killed halfway through that would restart the copy from the
+   beginning, every time. #}
+HealthStartPeriod=600s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

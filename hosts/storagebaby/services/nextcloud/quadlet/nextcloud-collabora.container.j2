@@ -1,0 +1,62 @@
+[Unit]
+Description=Collabora Online (the office backend Nextcloud embeds)
+
+[Container]
+Image=docker.io/collabora/code:latest
+ContainerName=nextcloud-collabora
+Pod=nextcloud.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+{# Collabora reads its admin credentials from the environment and supports no `_FILE`
+   variable, so both arrive as env-type podman secrets: podman injects them into the
+   process at start instead of writing them into the container's config, so `podman
+   inspect` does not show them. The lowercase targets are Collabora's own names. #}
+Secret=collabora_username,type=env,target=username
+Secret=collabora_password,type=env,target=password
+{# Quoted: systemd splits an unquoted Environment= on whitespace and keeps the first
+   word, so the dictionary list would silently become German only. #}
+Environment="dictionaries=de_DE en_GB en_US"
+{# The one host Collabora accepts WOPI requests from: the Nextcloud route, which is
+   what the browser loads the editor from. #}
+Environment=aliasgroup1=https://{{ routes[0].fqdn }}:443
+{# Collabora keeps its own TLS, which is the image's default, and Traefik re-encrypts
+   to it -- the same arrangement the kopia server already uses, declared as
+   `scheme: https` plus `insecure_skip_verify` on this service's collabora route. The
+   old compose stack turned TLS off here because Traefik spoke plain HTTP to every
+   backend; it can re-encrypt now, and leaving TLS on is what gives this container a
+   health check at all -- see below. `ssl.termination=false` follows: TLS is not
+   terminated in front of coolwsd any more, coolwsd sees it. Quoted for the same
+   reason as the dictionaries above. #}
+Environment="extra_params=--o:ssl.enable=true --o:ssl.termination=false"
+{# Upstream's own run command asks for this one capability: coolwsd builds a chroot
+   jail per document and populates its /dev with mknod. Rootless, it is a capability
+   inside the service user's namespace and nothing on the host. #}
+AddCapability=MKNOD
+{# A JSON array rather than a shell line, and openssl rather than curl: since 26.04 the
+   CODE image is a Nix-built distroless rootfs. /bin and /sbin are empty and the whole
+   of /usr/bin is coolwsd, coolmount, coolforkit-*, c_rehash, a few perl-less debconf
+   scripts -- and openssl. There is no /bin/sh, so podman's default CMD-SHELL wrapping
+   cannot run at all (it fails with an empty message and exit 1, which is how this was
+   found), and nothing to ask /hosting/discovery with.
+
+   So the probe is the handshake: a TCP connect plus a completed TLS handshake against
+   coolwsd's own certificate, which is the "is it accepting and serving" a health check
+   has to establish. Measured: 0 against the live port, 1 ("connect:errno=111") against
+   a dead one. Paperless's tika probe is the same shape, for the same reason -- an
+   image with nothing in it to ask with.
+
+   `-no_ign_eof` is not optional and has to come after `-quiet`: `-quiet` implies
+   `-ign_eof`, and s_client then sits on its open stdin until podman kills it at the
+   30 s health timeout -- which is a failing health check, not a passing one. Spelled
+   out, the empty stdin of a `podman exec` ends the connection and openssl exits. #}
+HealthCmd=["CMD", "/usr/bin/openssl", "s_client", "-connect", "127.0.0.1:9980", "-quiet", "-no_ign_eof"]
+HealthOnFailure=kill
+{# The image is ~2 GB and unpacks its template jail on first start. #}
+HealthStartPeriod=240s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
