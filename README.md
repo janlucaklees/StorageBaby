@@ -41,30 +41,11 @@ upgrade, which is not a decision for a nightly timer.
 
 ## Operator steps before and right after the first storagebaby deploy
 
-Four things have to be done by hand before converging storagebaby the first
-time, because they are either a secret or somebody else's data:
+Three things have to be done by hand **before** converging storagebaby the first
+time, because they are secrets. The fourth can only be done **after** that first
+converge, because it needs groups the converge creates:
 
-1. **Open the shared trees to the services that read them.** The role creates a
-   bind directory only when it is missing and never touches the permissions of
-   one that exists, so both trees are the operator's, once:
-
-   ```bash
-   doas chgrp -R media /pool/shared/media
-   doas chmod -R o+rX /pool/shared/media
-   doas chgrp -R scans /pool/shared/scans
-   doas chmod -R g+rwX /pool/shared/scans
-   ```
-
-   For the media tree the `o+rX` is what Jellyfin actually reads through: the
-   linuxserver image drops its supplementary groups when s6 switches to its own
-   user, so group access never reaches the app process —
-   `hosts/storagebaby/services/jellyfin/README.md` has the measurement. The
-   `chgrp` still matters anyway, because the `media` group is what Samba and the
-   rest of the host use, and it is what the role itself would set on a tree it
-   creates. The uploader keeps its groups, so for the scans tree the group is the
-   whole mechanism.
-
-2. **Put the real Backblaze credentials into kopia's secrets** — both are
+1. **Put the real Backblaze credentials into kopia's secrets** — both are
    `REPLACE_ME` in git — and confirm `s3_endpoint` and `s3_bucket` in
    `hosts/storagebaby/services/kopia/service.yml` against the live B2 account.
    They were written from the old README, not read off the account.
@@ -73,14 +54,55 @@ time, because they are either a secret or somebody else's data:
    make sops FILE=hosts/storagebaby/services/kopia/secrets.sops.yaml
    ```
 
-3. **Back up kopia's repository password outside this repository.** It was
-   generated for the migration and lives only in `secrets.sops.yaml`. Kopia
-   derives the repository's encryption keys from it: no reset, no escrow, no way
-   into the snapshots without it.
+   ☐ **Check whether that bucket already holds a repository.** `start.sh` connects
+   if it can and creates if it cannot, so a fresh bucket needs nothing more. But a
+   bucket that already holds the old stack's repository needs its **existing**
+   password put into `repository_password` in the same `secrets.sops.yaml`, in
+   place of the one generated for the migration — otherwise both the connect and
+   the create fail and the unit restart-loops.
+   `hosts/storagebaby/services/kopia/README.md` spells the two cases out.
 
-4. **Replace the paperless-upload token.** `secrets.sops.yaml` holds
+2. **Back up kopia's repository password outside this repository.** If the bucket
+   is fresh, the generated one in `secrets.sops.yaml` is what the repository will
+   be encrypted with, and it lives nowhere else. Kopia derives the repository's
+   encryption keys from it: no reset, no escrow, no way into the snapshots
+   without it.
+
+3. **Replace the paperless-upload token.** `secrets.sops.yaml` holds
    `REPLACE_ME_paperless_api_token` — the file it was to be carried over from was
    empty. Uploads fail until Phase 3 delivers Paperless either way.
+
+4. **Converge once, then open the shared trees to the services that read them.**
+   This one is deliberately after the first converge: the `media` and `scans`
+   groups do not exist on the host until the `service` role creates them, so a
+   `chgrp` run before it has nothing to chgrp to. Expect jellyfin to come up with
+   an empty library and paperless-upload to restart-loop (it cannot create
+   `processed/` in a tree it may not write) until these run:
+
+   ```bash
+   doas chgrp -R media /pool/shared/media
+   doas chmod -R o+rX /pool/shared/media
+   doas chgrp -R scans /pool/shared/scans
+   doas chmod -R g+rwX /pool/shared/scans
+   doas chmod g+s /pool/shared/scans
+   ```
+
+   The role creates a bind directory only when it is missing and never touches
+   the permissions of one that exists, so both trees stay the operator's — which
+   is also why these are not one-shot: anything dropped into them later by
+   another writer inherits whatever that writer gives it.
+
+   For the media tree the `o+rX` is what Jellyfin actually reads through: the
+   linuxserver image drops its supplementary groups when s6 switches to its own
+   user, so group access never reaches the app process —
+   `hosts/storagebaby/services/jellyfin/README.md` has the measurement. The
+   `chgrp` still matters anyway, because the `media` group is what Samba and the
+   rest of the host use, and it is what the role itself would set on a tree it
+   creates. The uploader keeps its groups, so for the scans tree the group is the
+   whole mechanism — and the `g+s` is what makes the existing tree match the
+   `2775` the role would have given a fresh one, so files the scanner and the
+   uploader drop there stay group-`scans` instead of falling back to the writer's
+   own group.
 
 Two more things are not steps but expectations about that first converge:
 
@@ -91,6 +113,92 @@ Two more things are not steps but expectations about that first converge:
   `/dev/dri` through a udev rule `host_base` installs on a `gpu: true` host. The
   test VM has no GPU, so nothing in this repo proves it works — check it after
   cutover.
+
+## Migrating existing service data
+
+**Nothing in this repository moves the old stack's data.** The role creates a
+volume directory when it is missing, leaves an existing one alone, and never
+repairs ownership afterwards — it is create-only, by design, because images chown
+their own data tree and an enforced mode would fight them on every converge. So
+carrying the data over is the operator's job, done once, by hand, per service.
+**A service whose data is not moved simply starts empty** — new library, new
+settings — and moving it later means stopping the service and redoing the two
+steps below.
+
+### The two layouts
+
+|                              | Path                                                   |
+| ---------------------------- | ------------------------------------------------------ |
+| old (rootful Docker Compose) | `/pool/apps/<svc>/volumes/<name>`                      |
+| new (this repo)              | `<storage root for the volume's class>/<svc>/<volume>` |
+
+`storage_roots` in `hosts/storagebaby/host.yml` resolves the classes: `pool` →
+`/pool/apps`, `fast` → `/var/lib/storagebaby/fast`. Which volume is which class is
+in each service's `service.yml`. Concretely:
+
+| Service      | old                                                                | new                                                        |
+| ------------ | ------------------------------------------------------------------ | ---------------------------------------------------------- |
+| jellyfin     | `/pool/apps/jellyfin/volumes/jellyfin_config`                      | `/pool/apps/jellyfin/config`                               |
+| kopia        | `/pool/apps/kopia/volumes/config`                                  | `/pool/apps/kopia/config`                                  |
+| kopia        | `/pool/apps/kopia/volumes/cache`                                   | `/var/lib/storagebaby/fast/kopia/cache`                    |
+| kopia        | `/pool/apps/kopia/volumes/logs`                                    | `/var/lib/storagebaby/fast/kopia/logs`                     |
+| stirling-pdf | `/pool/apps/stirling-pdf/volumes/{configs,logs,pipeline,tessdata}` | `/pool/apps/stirling-pdf/{configs,logs,pipeline,tessdata}` |
+
+`stirling-pdf`'s old folder is not a compose stack — it is the untracked Quadlet
+attempt that preceded this repo, with the same four names under `volumes/`.
+`yuzukam` and `paperless-upload` declare no volumes at all: yuzukam is stateless,
+and paperless-upload's only state is the `scans` bind, which stays where it is and
+is handled by operator step 4 above.
+
+### The recipe, per service
+
+1. Stop the old stack (`cd <old dir> && docker compose down`, or the old Quadlet
+   unit for stirling-pdf) and stop the new unit if it already ran:
+   `make stop SERVICE=<svc>`.
+2. `mv` each old tree onto its new path. `mv` and not `cp`: both sides are on the
+   pool, so it is a rename and costs nothing, and there is no second copy to
+   forget about afterwards.
+3. Fix the ownership for the rootless mapping. This is the step that is easy to
+   skip and impossible to skip: the old trees are owned by host **uid 1000** —
+   rootful Docker running the image under `PUID=1000` — and under rootless Podman
+   that uid belongs to the operator's login user, not to the service.
+
+**Which chown depends on what uid the image runs as _inside_ the container**, because
+that is what the user namespace maps:
+
+- **Images that drop to an in-container uid** — jellyfin (`PUID=1000` via
+  s6), stirling-pdf, paperless-upload (`bun`, uid 1000). Container uid 1000 lands
+  on a host subuid of the service user, and `podman unshare` is what translates:
+
+  ```bash
+  cd /tmp && doas runuser -u svc-jellyfin -- podman unshare chown -R 1000:1000 /pool/apps/jellyfin/config
+  ```
+
+- **Images that run as root inside** — kopia. Container uid 0 maps straight onto
+  the service user itself, so a plain chown says it:
+
+  ```bash
+  doas chown -R svc-kopia:svc-kopia /pool/apps/kopia/config
+  doas chown -R svc-kopia:svc-kopia /var/lib/storagebaby/fast/kopia/cache
+  ```
+
+  (`runuser -u svc-kopia -- podman unshare chown -R 0:0 <path>` is the same thing
+  said the other way round.)
+
+Then `make start SERVICE=<svc>` and check `make ps SERVICE=<svc>`. If the ownership
+is wrong the container comes up and fails — nothing on the host will quietly fix it
+on the next converge.
+
+Two service-specific notes:
+
+- **kopia's `cache` belongs to whichever repository `config` points at.** Move both
+  or neither; a cache from a different repository fails at startup with
+  `cipher: message authentication failed`, which reads like a wrong password and is
+  not one. `cache` is rebuildable, so leaving it behind is always safe.
+- **A migrated kopia `config` carries the old `repository.config`**, and `start.sh`
+  skips the connect whenever that file is present — which is the point, the
+  connection is already made. To force a fresh connect from `service.yml` and the
+  secrets instead, delete `repository.config` before starting.
 
 ## New host
 

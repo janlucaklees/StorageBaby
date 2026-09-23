@@ -108,12 +108,17 @@ from the surviving list, the probe file is `root:media 0640`, and the process is
 neither its owner nor in its group. It cannot read it.
 
 **So group membership is not the access mechanism here — the other bits are.** The
-one-time operator command on storagebaby, not run by the role:
+one-time operator command on storagebaby, not run by the role, and run **after** the
+first converge — the `media` group is created by the role, so before that there is
+nothing to `chgrp` to:
 
 ```bash
 doas chgrp -R media /pool/shared/media
 doas chmod -R o+rX /pool/shared/media
 ```
+
+Jellyfin comes up before that and serves an empty library; the root `README.md`
+carries this as operator step 4.
 
 `chgrp` still matters: the group is what Samba and the rest of the host use, and
 what the role would set on a fresh tree. `o+rX` is what Jellyfin actually reads

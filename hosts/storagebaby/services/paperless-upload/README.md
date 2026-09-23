@@ -87,6 +87,22 @@ accepted it. The role creates `/pool/shared/scans` as `root:scans 2775` **only i
 does not exist**; on storagebaby it already does, and its permissions stay the
 operator's. `processed/` is created by the script at startup (`mkdir -p`).
 
+So on storagebaby the existing tree has to be opened by hand, **after** the first
+converge — the `scans` group is created by the role, so there is nothing to `chgrp`
+to before it:
+
+```bash
+doas chgrp -R scans /pool/shared/scans
+doas chmod -R g+rwX /pool/shared/scans
+doas chmod g+s /pool/shared/scans
+```
+
+The `g+s` is what makes the existing tree match the `2775` the role gives a fresh
+one, so new files keep the `scans` group instead of the writer's own. Until this
+runs the container restart-loops: its health check is `test -d /data/processed`, and
+the startup `mkdir -p` fails in a tree the service user may not write. That is
+operator step 4 in the root `README.md`.
+
 ### It writes as the service user
 
 ```ini
