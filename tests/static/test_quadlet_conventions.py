@@ -3,7 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from conftest import placements, route_ports
+from conftest import REPO, placements, route_ports
+
+ROLE_TEMPLATES = REPO / "ansible/roles/service/templates"
 
 
 def _service_dirs() -> list[Path]:
@@ -13,6 +15,11 @@ def _service_dirs() -> list[Path]:
 
 def _containers() -> list[Path]:
     return sorted(f for d in _service_dirs() for f in (d / "quadlet").glob("*.container.j2"))
+
+
+def _unit_templates() -> list[Path]:
+    """Every Quadlet unit template: the service folders' own, and the role's generated ones."""
+    return sorted([f for d in _service_dirs() for f in (d / "quadlet").glob("*.j2")] + list(ROLE_TEMPLATES.glob("*.container.j2")))
 
 
 @pytest.mark.parametrize("path", _containers(), ids=lambda p: f"{p.parent.parent.name}/{p.name}")
@@ -33,6 +40,36 @@ def test_published_ports_are_loopback_only(path):
     for ln in path.read_text().splitlines():
         if ln.startswith("PublishPort="):
             assert ln.startswith("PublishPort=127.0.0.1:"), f"{path.name}: {ln}"
+
+
+JINJA = re.compile(r"\{\{.*?\}\}", flags=re.S)
+# The one expression that renders as several words: a list glued together with a space.
+JOINS_ON_WHITESPACE = re.compile(r"""join\(\s*['"][ \t]['"]\s*\)""")
+
+
+def rendered_shape(assignment: str) -> str:
+    """The assignment with every Jinja expression reduced to what it renders as: a word.
+
+    The spaces inside `{{ tz }}` say nothing about the rendered line -- one expression is
+    one value, however it is spelled. `{{ x | join(' ') }}` is the exception, and it is
+    the whole point of this check.
+    """
+    return JINJA.sub(lambda m: "word word" if JOINS_ON_WHITESPACE.search(m.group()) else "word", assignment)
+
+
+@pytest.mark.parametrize("path", _unit_templates(), ids=lambda p: f"{p.parent.parent.name}/{p.name}")
+def test_environment_values_with_whitespace_are_quoted(path):
+    # systemd splits an unquoted `Environment=` on whitespace and keeps the first word,
+    # logging "Invalid environment assignment, ignoring" for the rest and nothing else.
+    # bootstrap.sh's GIT_SSH_COMMAND was the first casualty of that; KOPIA_PATHS was the
+    # second, where it silently reduced a multi-volume backup to its first volume.
+    # Quoting wraps the whole assignment: Environment="NAME=one two".
+    for ln in path.read_text().splitlines():
+        if not ln.startswith("Environment="):
+            continue
+        assignment = ln.split("=", 1)[1]
+        if re.search(r"\s", rendered_shape(assignment)):
+            assert assignment.startswith('"') and assignment.endswith('"'), f"{path.name}: {ln}"
 
 
 @pytest.mark.parametrize(

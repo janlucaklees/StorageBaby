@@ -8,6 +8,7 @@
     host_secret_sync: { changed: false }
     _group_member: { changed: false }
     _set_values: {}
+    _set_status: []
     timer_units: []
 
 - name: Service user

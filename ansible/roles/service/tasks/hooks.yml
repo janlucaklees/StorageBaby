@@ -32,4 +32,8 @@
   loop: '{{ _hooks }}'
   loop_control:
     label: '{{ item.container }}: {{ item.command }}'
-  changed_when: true
+  # A `unit_changed` hook only runs on a converge that already changed something, so
+  # calling it changed is honest. A `when: always` hook runs on every converge, and
+  # reporting that as a change would make the play changed forever -- a host that never
+  # settles, and a failing idempotence check.
+  changed_when: "(item.when | default('unit_changed')) == 'unit_changed'"

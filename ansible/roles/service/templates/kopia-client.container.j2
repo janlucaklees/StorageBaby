@@ -12,8 +12,17 @@ Environment=KOPIA_SERVER_URL=https://kopia.{{ domain }}
 Environment=KOPIA_CLIENT_USERNAME={{ service.name }}
 Environment=KOPIA_CLIENT_HOSTNAME={{ hostname }}
 Environment=KOPIA_PIN_SERVER_CERT={{ '0' if acme else '1' }}
-Environment=KOPIA_PATHS={{ service.backup.paths | join(' ') }}
+{# Quoted: systemd splits an unquoted Environment= on whitespace and keeps only the
+   first word, which would reduce a multi-volume backup to its first volume. #}
+Environment="KOPIA_PATHS={{ service.backup.paths | join(' ') }}"
 Environment=KOPIA_SNAPSHOT_TIME={{ service.backup.schedule }}
+{# Also exported by the script, and repeated here for HealthCmd: a health check is its
+   own process, and `kopia repository status` has to read the same config and cache as
+   the server the script started, not the defaults under the container's HOME. #}
+Environment=KOPIA_CONFIG_PATH=/app/config/repository.config
+Environment=KOPIA_CACHE_DIRECTORY=/app/cache
+Environment=KOPIA_PERSIST_CREDENTIALS_ON_CONNECT=true
+Environment=KOPIA_USE_KEYRING=false
 Environment=KOPIA_KEEP_LATEST={{ service.backup.retention.latest }}
 Environment=KOPIA_KEEP_DAILY={{ service.backup.retention.daily }}
 Environment=KOPIA_KEEP_WEEKLY={{ service.backup.retention.weekly }}
