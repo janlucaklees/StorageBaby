@@ -1,5 +1,11 @@
 -include .env
 
+# `-include .env` makes these make variables, not environment ones, and the bare
+# `-e MOLECULE_VM_*` pass-through below forwards only what is already in the
+# environment -- so without this, a value set in .env never reached the container and
+# Molecule silently fell back to its 8192/4 defaults.
+export MOLECULE_VM_MEMORY_MIB MOLECULE_VM_VCPUS
+
 DEVTOOLS_IMAGE := storagebaby-devtools
 MOLECULE_CACHE := storagebaby-molecule-cache
 AGE_DIR := $(HOME)/.config/sops/age

@@ -35,11 +35,29 @@ if [ ! -f "$config_path" ]; then
 			# key instead of a missing secret.
 			b2_key_id="$(cat /run/secrets/b2_key_id)"
 			b2_application_key="$(cat /run/secrets/b2_application_key)"
-			kopia repository connect s3 \
+			# There is no cheap "is there a repository in this bucket" probe the way the
+			# filesystem branch below has one, so the two cases are told apart by trying:
+			# `connect` first, and `create` only if that failed. A fresh bucket therefore
+			# comes up on its own instead of leaving the unit restart-looping until
+			# somebody creates the repository by hand.
+			#
+			# This does not turn a wrong password into a silent second repository: kopia
+			# refuses to create over a bucket that already holds one ("repository is
+			# already initialized"), so a bad `repository_password` against a live
+			# repository still fails both calls and the unit still restart-loops --
+			# which is the visible failure it should be.
+			if ! kopia repository connect s3 \
 				--bucket="$KOPIA_S3_BUCKET" \
 				--endpoint="$KOPIA_S3_ENDPOINT" \
 				--access-key="$b2_key_id" \
-				--secret-access-key="$b2_application_key"
+				--secret-access-key="$b2_application_key"; then
+				echo "kopia: no repository to connect to in $KOPIA_S3_BUCKET, creating one" >&2
+				kopia repository create s3 \
+					--bucket="$KOPIA_S3_BUCKET" \
+					--endpoint="$KOPIA_S3_ENDPOINT" \
+					--access-key="$b2_key_id" \
+					--secret-access-key="$b2_application_key"
+			fi
 			;;
 		filesystem)
 			# `create` fails on a repository that already exists, `connect` on one that

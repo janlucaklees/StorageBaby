@@ -41,6 +41,28 @@ container) on first start and connects to it afterwards. `s3` and `filesystem` a
 only accepted values; anything else makes the container exit 2 with a named reason
 rather than starting a server with no repository.
 
+### Connect, then create — and what that means for a live bucket
+
+Both backends create the repository if it is not there yet. The filesystem branch tells
+the two cases apart by looking (`/app/repo` non-empty), the S3 branch by trying:
+`kopia repository connect s3` first, `kopia repository create s3` with the same flags
+only when that failed. So the two cases an operator can be in with a real B2 bucket are:
+
+- **The bucket is fresh** (no repository in it). The script creates one, encrypted with
+  the generated `repository_password` from `secrets.sops.yaml`. Nothing else to do —
+  but back that password up (below), because it is now the only key to the snapshots.
+- **The bucket already holds a repository** (the one the old compose stack created).
+  Then the generated password is the wrong one and **must be replaced with the existing
+  repository's password before the first deploy**:
+
+  ```sh
+  make sops FILE=hosts/storagebaby/services/kopia/secrets.sops.yaml
+  ```
+
+  Getting this wrong does not quietly make a second repository beside the first: kopia
+  refuses to `create` over a bucket that already holds a repository, so both calls fail,
+  the unit restart-loops, and the journal says so. The failure is loud on purpose.
+
 > **`s3_endpoint` and `s3_bucket` are placeholders.** They were written from the old
 > README's Backblaze instructions, not read off a live account — the bucket may not
 > exist under that name and the region may be wrong. **Confirm both with the operator
@@ -65,8 +87,8 @@ Four, all `Secret=` in the unit and read from `/run/secrets/<name>`:
 > ```
 >
 > before the first real deploy. Until then a converge on storagebaby brings the
-> container up, the S3 connect fails, and the unit restart-loops — which is the
-> visible failure it should be.
+> container up, both the S3 connect and the S3 create fail on the credentials, and the
+> unit restart-loops — which is the visible failure it should be.
 
 > **The repository password cannot be recovered.** Kopia derives the repository's
 > encryption keys from it; there is no reset, no escrow and no way back into the
