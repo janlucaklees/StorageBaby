@@ -7,6 +7,11 @@ Description=Kopia repository server
 # decide. Bump this line to upgrade.
 Image=docker.io/kopia/kopia:0.23.1
 ContainerName=kopia
+# Kopia identifies a client as user@hostname, and the admin identity the server's own
+# CLI uses is the container's hostname. Podman defaults that to the container id, so
+# without this line every recreate would invent a new identity -- and the policies and
+# snapshot sources attached to the old one would be orphaned.
+HostName=kopia
 PublishPort=127.0.0.1:{{ service.port }}:51515
 # The image's entrypoint is /bin/kopia, so running the start script needs both: the
 # entrypoint becomes the shell and the command becomes the script.

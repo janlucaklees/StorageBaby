@@ -125,6 +125,17 @@ encrypted, 0600. That is the same class of exposure as the podman secret store t
 value already sits in on the same host, and `--no-use-keyring` is not a choice: a
 container has no keyring to store it in.
 
+`repository.config` itself is the second copy of a credential, and on storagebaby it is
+the more interesting one: with the S3 backend the connect writes the **B2 key id and
+application key** into it, because that is how kopia reaches the bucket on every later
+start without being handed the keys again. So the `config` volume on the pool — not
+just the `.kopia-password` file beside it — holds Backblaze credentials in the clear.
+Two consequences: it is not a directory to copy off the host casually, and rotating the
+B2 key is **not** done by editing `secrets.sops.yaml` alone. The start script only
+connects when `repository.config` is absent, so a rotation is: new value in the secret,
+delete `repository.config`, restart. The repository is unchanged by that, so `cache`
+stays valid — unlike the case at the end of this file.
+
 ### No TLS inside, and no fingerprint any more
 
 The old `start.sh` generated a self-signed certificate on first start and wrote its
@@ -140,8 +151,8 @@ same as every other service on the platform. Repository clients therefore connec
 HealthCmd=curl -s -i http://127.0.0.1:51515/ | head -n 1 | grep -q -e 200 -e 401
 ```
 
-Not the `curl -sf` every other unit uses. `--server-username/--server-password` put the
-UI behind basic auth, so `/` answers **401** to an unauthenticated probe and `-f` would
+Not the `curl -sf` every other unit uses. The server username and password put the UI
+behind basic auth, so `/` answers **401** to an unauthenticated probe and `-f` would
 turn the healthy steady state into a kill loop (the same trap stirling-pdf's README
 describes, without stirling's unauthenticated status endpoint to escape into). So the
 status line is what is checked: 401 is the expected answer, 200 is accepted as well so
