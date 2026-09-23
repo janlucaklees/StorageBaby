@@ -1,0 +1,54 @@
+[Unit]
+Description=Kopia repository server
+
+[Container]
+# Pinned, and deliberately without AutoUpdate=registry: a kopia upgrade can bring a
+# repository format upgrade with it, which is not something a nightly timer should
+# decide. Bump this line to upgrade.
+Image=docker.io/kopia/kopia:0.23.1
+ContainerName=kopia
+PublishPort=127.0.0.1:{{ service.port }}:51515
+# The image's entrypoint is /bin/kopia, so running the start script needs both: the
+# entrypoint becomes the shell and the command becomes the script.
+Entrypoint=/bin/sh
+Exec={{ config_dir }}/start.sh
+Environment=TZ={{ tz }}
+# The image sets these three itself; stated here so the four volumes below are
+# guaranteed to be the paths kopia really uses, whatever a future image changes.
+Environment=KOPIA_CONFIG_PATH=/app/config/repository.config
+Environment=KOPIA_CACHE_DIRECTORY=/app/cache
+Environment=KOPIA_LOG_DIR=/app/logs
+# Persist the repository password next to the config, in a file rather than in a
+# keyring no container has. Both halves are environment and not flags on purpose:
+# they have to apply to every kopia run in this container, including an operator's
+# `podman exec`, which inherits this environment but not the start script's.
+Environment=KOPIA_PERSIST_CREDENTIALS_ON_CONNECT=true
+Environment=KOPIA_USE_KEYRING=false
+Environment=KOPIA_SERVER_USERNAME={{ service.config.server_username }}
+Environment=KOPIA_REPOSITORY={{ service.config.repository }}
+Environment=KOPIA_S3_ENDPOINT={{ service.config.s3_endpoint | default('') }}
+Environment=KOPIA_S3_BUCKET={{ service.config.s3_bucket | default('') }}
+Secret=server_password
+Secret=repository_password
+Secret=b2_key_id
+Secret=b2_application_key
+Volume={{ config_dir }}/start.sh:{{ config_dir }}/start.sh:ro
+Volume={{ volumes.config }}:/app/config
+Volume={{ volumes.cache }}:/app/cache
+Volume={{ volumes.logs }}:/app/logs
+Volume={{ volumes.repo }}:/app/repo
+# Not `curl -sf`: the UI is behind basic auth, so / answers 401 and -f would call a
+# perfectly healthy server dead. The status line is what is checked -- 401 is the
+# steady state, 200 is accepted so the probe still holds without auth, and no
+# response, a 404 or a 5xx fails.
+HealthCmd=curl -s -i http://127.0.0.1:51515/ | head -n 1 | grep -q -e 200 -e 401
+# First start creates or connects the repository before the server binds.
+HealthStartPeriod=60s
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

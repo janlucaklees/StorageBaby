@@ -9,4 +9,8 @@ volume_overrides: {}
 deploy_timer: false
 gpu: false
 packages: []
-service_config: {}
+# A test host has no Backblaze account, so kopia gets a local repository under its
+# `repo` volume instead of the S3 one storagebaby declares.
+service_config:
+  kopia:
+    repository: filesystem
