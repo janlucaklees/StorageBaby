@@ -6,13 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Git-driven configuration for a home NAS/media server ("StorageBaby") running Arch Linux. It covers the full stack: physical disk management, parity/redundancy, file sharing, and media services as rootless Podman containers. A host is set up once with `bootstrap.sh` and converges itself from this repository after that; nothing is changed on a host by hand. Design: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design.md`.
 
-The old per-service `docker-compose.yml` directories (`jellyfin/`, `nextcloud/`, `paperless/`, …) are the not-yet-migrated remainder. New work goes under `hosts/`.
+Migrated so far: traefik (shared), and on storagebaby yuzukam, stirling-pdf, jellyfin, paperless-upload and kopia. The `docker-compose.yml` directories still at the repo root are the not-yet-migrated remainder — `nextcloud/`, `paperless/`, `openarchiver/` and `immich/` go in Phase 3, `samba/` and `snapraid/` in Phase 4. A new service goes under `hosts/`, never into one of them.
 
 ## Managing services
 
 Placement is the folder:
 
-- `hosts/<host>/host.yml` — everything host-specific (domain, ACME, storage roots, volume overrides, deploy timer).
+- `hosts/<host>/host.yml` — everything host-specific (domain, ACME, storage roots, volume overrides, deploy timer, `gpu`, `packages`, `service_config`).
 - `hosts/<host>/services/<name>/` — a service that runs on that host only.
 - `hosts/shared/services/<name>/` — a service that runs on every host (traefik).
 - `hosts/<host>/secrets/<service>.sops.yaml` — optional per-host override of a service's secrets.
@@ -20,24 +20,38 @@ Placement is the folder:
 A service folder is a contract, not a script:
 
 ```
-service.yml        name, port (loopback), domain, volumes with a storage class, secrets, backup policy
-quadlet/*.j2       Podman Quadlet units, rendered per host (vars: volumes.<name>, config_dir, port, fqdn, tz)
+service.yml        name, port (loopback), domain, volumes, binds, devices, groups, config, secrets, backup policy
+quadlet/*.j2       Podman Quadlet units, rendered per host (vars: volumes.<name>, binds, config_dir, port, fqdn, tz)
 config/            copied to /etc/storagebaby/<name>/, read-only for the service user
 secrets.sops.yaml  sops+age encrypted key/value pairs
 ```
 
-The generic `service` role in `ansible/roles/service/` turns that into a running service: system user `svc-<name>` with subids and linger, volume directories under the host's storage roots, `podman secret`s synced from sops, quadlets rendered into `/etc/containers/systemd/users/<uid>/`, a Traefik route file, then restarts only what changed.
+`service.yml` beyond the basics — `ansible/roles/service/README.md` is the full reference for what a template may use:
+
+- **`volumes`** — `<name>: { class: pool | fast }`, resolved against the host's `storage_roots` (or a `volume_overrides` entry) to a directory the role creates **only when it is absent**, 0750 and service-owned. An existing one is never re-permissioned: images chown their data tree on every start, so enforcing a mode would report changed forever and take the running service's access away.
+- **`binds`** — `<name>: { host, container, mode, group }`: a pre-existing host tree mounted into the container. The role guarantees the group exists and that `svc-<name>` is in it, and creates the host directory as `root:<group> 2775` if missing — again never re-permissioning an existing one.
+- **`devices`** — a list of device paths, rendered as `AddDevice=` **only** on a host whose `host.yml` says `gpu: true` (the template reads `devices_enabled`). Test hosts have no GPU and get no device line.
+- **`groups`** — extra host supplementary groups for the service user. Any `groups` or bind group sets `keep_groups`, which is what a template turns into `GroupAdd=keep-groups`. It carries the groups into the container's credentials, and it does **not** survive an image that switches user through s6 — see `hosts/storagebaby/services/jellyfin/README.md`.
+- **`config`** — free-form, readable in templates as `service.config.*`, and overridable per host through `service_config: { <service>: { ... } }` in `host.yml` (host wins, deep-merged in the playbook). That is how the test host gives kopia a filesystem repository while storagebaby uses S3.
+- **`port`** is optional, and required only when there is a `domain`. paperless-upload has neither.
+
+Placing a storagebaby service on the test host is a symlink, never a copy — one folder, two hosts: `hosts/test-a/services/<name> -> ../../storagebaby/services/<name>`.
+
+The generic `service` role in `ansible/roles/service/` turns that into a running service: system user `svc-<name>` with subids and linger, volume and bind directories, group memberships, `podman secret`s synced from sops, quadlets rendered into `/etc/containers/systemd/users/<uid>/`, a Traefik route file, then restarts only what changed.
 
 Work on the repo through the Makefile — everything runs in the `devtools` image, nothing is installed on the workstation:
 
 ```bash
-make devtools              # build the tooling image (once)
-make test-static           # contract, secrets, render checks
-make test-integration      # Molecule scenario test-ci in a KVM VM (needs libvirt + KVM)
-make molecule CMD=converge # a single Molecule step in that scenario
-make molecule-login        # SSH into the running test VM
+make devtools                         # build the tooling image (once)
+make test-static                      # contract, secrets, render checks
+make test-integration                 # Molecule scenario test-ci in a KVM VM (needs libvirt + KVM)
+make molecule CMD=converge            # a single Molecule step in that scenario
+make molecule-login                   # SSH into the running test VM
+make molecule-exec CMD='podman ps -a' # one command on it, no TTY needed
 make sops FILE=hosts/shared/services/traefik/secrets.sops.yaml
 ```
+
+`make molecule-exec` is how to look at a running test VM from a script or without a terminal — `molecule login` needs a real TTY. It runs the command through Ansible against the inventory Molecule already wrote, so there is no second source of truth for the VM's address and key.
 
 On a host, service units belong to the service user's systemd manager (run as root):
 
@@ -135,6 +149,8 @@ Updates are Podman's: floating tag plus `AutoUpdate=registry` and the user's `po
 ## Adding a new disk
 
 See `snapraid/README.md` for the full procedure: partition → ext4 → systemd mount unit → snapraid.conf update → mergerfs pool.mount update.
+
+The root `install.sh` that used to `yay -S` the storage packages and `stow` those units is removed — the container half of it is what the platform replaced. Until Phase 4 ports mounts, mergerfs, snapraid and samba into Ansible roles, that half stays a manual `stow -vv -t / <dir>` per the procedure above.
 
 ## Deployment
 
