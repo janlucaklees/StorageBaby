@@ -5,20 +5,43 @@
     mode: '0755'
   loop:
     - '{{ render_output }}/{{ service.name }}'
+    - '{{ render_output }}/{{ service.name }}/timers'
     - '{{ render_output }}/traefik-dynamic.d'
 
+# Same split as units.yml: Quadlet units here, plain systemd user units under timers/.
 - name: Render quadlet units
   ansible.builtin.template:
     src: '{{ item }}'
     dest: "{{ render_output }}/{{ service.name }}/{{ item | basename | regex_replace('\\.j2$', '') }}"
     mode: '0644'
-  loop: "{{ lookup('fileglob', service_dir ~ '/quadlet/*.j2', wantlist=True) }}"
+  loop: "{{ lookup('fileglob', service_dir ~ '/quadlet/*.j2', wantlist=True)
+    | reject('search', '\\.(timer|service)\\.j2$') | list }}"
   loop_control:
     label: '{{ item | basename }}'
 
-- name: Render traefik route
+- name: Render timer and service units
+  ansible.builtin.template:
+    src: '{{ item }}'
+    dest: "{{ render_output }}/{{ service.name }}/timers/{{ item | basename | regex_replace('\\.j2$', '') }}"
+    mode: '0644'
+  loop: "{{ lookup('fileglob', service_dir ~ '/quadlet/*.j2', wantlist=True)
+    | select('search', '\\.(timer|service)\\.j2$') | list }}"
+  loop_control:
+    label: '{{ item | basename }}'
+
+- name: Render the backup sidecar unit
+  ansible.builtin.template:
+    src: kopia-client.container.j2
+    dest: '{{ render_output }}/{{ service.name }}/{{ service.name }}-backup.container'
+    mode: '0644'
+  when: backup_enabled | bool
+
+- name: Render traefik routes
   ansible.builtin.template:
     src: traefik-route.yml.j2
-    dest: '{{ render_output }}/traefik-dynamic.d/{{ service.name }}.yml'
+    dest: '{{ render_output }}/traefik-dynamic.d/{{ service.name }}-{{ route.domain }}.yml'
     mode: '0644'
-  when: service.domain is defined
+  loop: '{{ routes }}'
+  loop_control:
+    loop_var: route
+    label: '{{ route.domain }}'

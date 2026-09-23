@@ -1,0 +1,58 @@
+# A `quadlet/*.timer.j2` and its `*.service.j2` are ordinary systemd user units, not
+# Quadlet ones: they belong in the service user's own unit directory, where the user
+# manager reads them, and not in the Quadlet directory, which only generates units.
+- name: User unit directory
+  ansible.builtin.file:
+    path: '/home/{{ svc_user }}/.config/systemd/user'
+    state: directory
+    owner: '{{ svc_user }}'
+    group: '{{ svc_user }}'
+    mode: '0755'
+
+- name: Render timer and service units
+  ansible.builtin.template:
+    src: '{{ item }}'
+    dest: "/home/{{ svc_user }}/.config/systemd/user/{{ item | basename | regex_replace('\\.j2$', '') }}"
+    owner: '{{ svc_user }}'
+    group: '{{ svc_user }}'
+    mode: '0644'
+  loop:
+    "{{ lookup('fileglob', service_dir ~ '/quadlet/*.timer.j2', wantlist=True)
+    + lookup('fileglob', service_dir ~ '/quadlet/*.service.j2', wantlist=True) }}"
+  loop_control:
+    label: '{{ item | basename }}'
+  register: timer_render
+
+- name: Timer unit names
+  ansible.builtin.set_fact:
+    timer_units:
+      "{{ lookup('fileglob', service_dir ~ '/quadlet/*.timer.j2', wantlist=True)
+      | map('basename') | map('regex_replace', '\\.j2$', '') | list }}"
+
+- name: Reload the user manager for timers
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ daemon-reload
+  when: timer_render.changed
+  changed_when: true
+
+- name: Check which timers are enabled
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ is-enabled {{ item }}
+  loop: '{{ timer_units }}'
+  register: _timer_enabled
+  changed_when: false
+  failed_when: false
+
+- name: Enable timers
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ enable --now {{ item.item }}
+  loop: '{{ _timer_enabled.results }}'
+  loop_control:
+    label: '{{ item.item }}'
+  when: item.stdout | trim != 'enabled'
+  changed_when: true
+
+# A changed timer is reloaded above, but systemd keeps running the old one until it is
+# restarted -- so a changed schedule would otherwise only take effect on the next boot.
+- name: Restart changed timers
+  ansible.builtin.command: systemctl --user -M {{ svc_user }}@ restart {{ item }}
+  loop: '{{ timer_units }}'
+  when: timer_render.changed
+  changed_when: true

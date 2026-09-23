@@ -14,6 +14,8 @@
     group: root
     mode: '0755'
 
+# `*.timer.j2` and `*.service.j2` are plain systemd user units, not Quadlet ones:
+# timers.yml renders those into the service user's own unit directory.
 - name: Render quadlet units
   ansible.builtin.template:
     src: '{{ item }}'
@@ -21,19 +23,52 @@
     owner: root
     group: root
     mode: '0644'
-  loop: "{{ lookup('fileglob', service_dir ~ '/quadlet/*.j2', wantlist=True) }}"
+  loop: "{{ lookup('fileglob', service_dir ~ '/quadlet/*.j2', wantlist=True)
+    | reject('search', '\\.(timer|service)\\.j2$') | list }}"
   loop_control:
     label: '{{ item | basename }}'
   register: quadlet_render
 
-- name: Render traefik route
+- name: Install the backup client script
+  ansible.builtin.copy:
+    src: kopia-client.sh
+    dest: '{{ config_dir }}/kopia-client.sh'
+    owner: '{{ svc_user }}'
+    group: '{{ svc_user }}'
+    mode: '0644'
+  when: backup_enabled | bool
+  register: backup_script
+
+# The sidecar is the role's own unit, not the service folder's: a service declaring
+# `backup` gets it generated into its pod from the role template.
+- name: Render the backup sidecar unit
   ansible.builtin.template:
-    src: traefik-route.yml.j2
-    dest: '/etc/storagebaby/traefik/dynamic.d/{{ service.name }}.yml'
+    src: kopia-client.container.j2
+    dest: '{{ unit_dir }}/{{ service.name }}-backup.container'
     owner: root
     group: root
     mode: '0644'
-  when: service.domain is defined
+  when: backup_enabled | bool
+  register: backup_render
+
+# One file and one router per route: two routes of a service would otherwise
+# overwrite each other's file.
+- name: Render traefik routes
+  ansible.builtin.template:
+    src: traefik-route.yml.j2
+    dest: '/etc/storagebaby/traefik/dynamic.d/{{ service.name }}-{{ route.domain }}.yml'
+    owner: root
+    group: root
+    mode: '0644'
+  loop: '{{ routes }}'
+  loop_control:
+    loop_var: route
+    label: '{{ route.domain }}'
+
+- name: Remove the pre-Phase-3 single route file
+  ansible.builtin.file:
+    path: '/etc/storagebaby/traefik/dynamic.d/{{ service.name }}.yml'
+    state: absent
 
 - name: Map rendered files to systemd unit names
   ansible.builtin.set_fact:
@@ -43,7 +78,7 @@
     _stem: '{{ (_base | splitext)[0] }}'
     _ext: '{{ (_base | splitext)[1] }}'
     unit_name: "{{ _stem ~ {'.container': '.service', '.pod': '-pod.service', '.build': '-build.service'}[_ext] }}"
-  loop: '{{ quadlet_render.results }}'
+  loop: '{{ quadlet_render.results + ([backup_render] if backup_enabled | bool else []) }}'
   loop_control:
     label: '{{ item.dest | basename }}'
   when: (item.dest | basename | splitext)[1] in ['.container', '.pod', '.build']
@@ -68,11 +103,11 @@
 - name: Restart everything if config or a secret changed
   ansible.builtin.set_fact:
     changed_units: '{{ service_units }}'
-  when: config_copy.changed or secret_sync.changed
+  when: config_copy.changed or secret_sync.changed or host_secret_sync.changed or backup_script.changed
 
 - name: Reload the user manager
   ansible.builtin.command: systemctl --user -M {{ svc_user }}@ daemon-reload
-  when: quadlet_render.changed
+  when: quadlet_render.changed or backup_render.changed
   changed_when: true
 
 - name: Restart changed units
@@ -130,3 +165,9 @@
   ansible.builtin.command: systemctl --user -M {{ svc_user }}@ enable --now podman-auto-update.timer
   when: _au.stdout.strip() != 'enabled'
   changed_when: true
+
+# Last, and inside units.yml: a hook runs against the containers this file has just
+# restarted or started, and it reads `changed_units` to know whether anything moved.
+- name: Hooks
+  ansible.builtin.include_tasks: hooks.yml
+  when: (service.hooks | default({})).get('after_change', []) | length > 0

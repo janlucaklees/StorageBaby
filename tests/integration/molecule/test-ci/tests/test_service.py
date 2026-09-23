@@ -103,15 +103,27 @@ def test_declared_secrets_are_the_podman_secrets(host, owner, spec_path):
     assert set(r.stdout.split()) == set(spec["secrets"]), r.stdout
 
 
+def routes_of(spec: dict) -> list[dict]:
+    """Every route a service declares: the `routes` list, or the domain+port shorthand."""
+    if "routes" in spec:
+        return spec["routes"]
+    return [{"domain": spec["domain"], "port": spec["port"]}] if "domain" in spec else []
+
+
 @service_case
 def test_route_rendered(host, owner, spec_path):
     hostvars = placed(host, owner)
     spec = load_spec(spec_path)
-    if "domain" not in spec:
+    routes = routes_of(spec)
+    if not routes:
         pytest.skip("no domain, no route")
-    f = host.file(f"/etc/storagebaby/traefik/dynamic.d/{spec['name']}.yml")
-    assert f.exists and f.mode == 0o644
-    assert f"Host(`{spec['domain']}.{hostvars['domain']}`)" in f.content_string
+    for route in routes:
+        f = host.file(f"/etc/storagebaby/traefik/dynamic.d/{spec['name']}-{route['domain']}.yml")
+        assert f.exists and f.mode == 0o644
+        assert f"Host(`{route['domain']}.{hostvars['domain']}`)" in f.content_string
+    # One file per route replaced the single `<name>.yml`; a leftover would keep serving
+    # the old router next to the new ones, because Traefik reads the whole directory.
+    assert not host.file(f"/etc/storagebaby/traefik/dynamic.d/{spec['name']}.yml").exists
 
 
 def subuid_range(host, user: str) -> tuple[int, int]:

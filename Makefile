@@ -131,18 +131,32 @@ define require_service
 	}
 endef
 
+# A multi-container service is one pod unit with its containers pulled in behind it;
+# a single-container service has no pod at all. Which of the two a service is cannot be
+# read off its name, so it is asked of the service user's manager: `$(call with_unit,
+# <command using $$unit>)`. grep and not the exit status of list-unit-files, because
+# that command is happy to list nothing.
+define with_unit
+	unit=$(SERVICE).service; \
+	if systemctl --user -M svc-$(SERVICE)@ list-unit-files $(SERVICE)-pod.service 2> /dev/null \
+		| grep -q '^$(SERVICE)-pod.service'; then \
+		unit=$(SERVICE)-pod.service; \
+	fi; \
+	$(1)
+endef
+
 .PHONY: start stop restart
 start stop restart:
 	$(require_service)
-	systemctl --user -M svc-$(SERVICE)@ $@ $(SERVICE).service
+	$(call with_unit,systemctl --user -M svc-$(SERVICE)@ $@ "$$unit")
 
 .PHONY: ps
 ps:
 	$(require_service)
-	systemctl --user -M svc-$(SERVICE)@ status $(SERVICE).service
+	$(call with_unit,systemctl --user -M svc-$(SERVICE)@ status "$$unit")
 
 # journalctl has no `--user -M` form, so units are addressed by name instead.
 .PHONY: logs
 logs:
 	$(require_service)
-	journalctl _SYSTEMD_USER_UNIT=$(SERVICE).service -f
+	$(call with_unit,journalctl _SYSTEMD_USER_UNIT="$$unit" -f)

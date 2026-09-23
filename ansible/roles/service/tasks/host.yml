@@ -5,7 +5,10 @@
   ansible.builtin.set_fact:
     config_copy: { changed: false }
     secret_sync: { changed: false }
+    host_secret_sync: { changed: false }
     _group_member: { changed: false }
+    _set_values: {}
+    timer_units: []
 
 - name: Service user
   ansible.builtin.user:
@@ -156,9 +159,31 @@
   register: config_copy
   when: (service_dir ~ '/config') is directory
 
+# Both helpers run a command in a service user's session as root, and both are needed
+# by services that have no secrets at all (hooks), so they are installed here rather
+# than from secrets.yml.
+- name: Install the service-user helpers
+  ansible.builtin.copy:
+    src: '{{ item.src }}'
+    dest: '{{ item.dest }}'
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - { src: podman-secret-sync.sh, dest: /usr/local/sbin/podman-secret-sync }
+    - { src: podman-as, dest: /usr/local/sbin/podman-as }
+  loop_control:
+    label: '{{ item.dest }}'
+
 - name: Secrets
   ansible.builtin.include_tasks: secrets.yml
-  when: service.secrets | length > 0
+  when: service.secrets | length > 0 or service.host_secrets | default({}) | length > 0
 
 - name: Units
   ansible.builtin.include_tasks: units.yml
+
+# Gated on the templates existing: a service without timers gets no user unit
+# directory and no systemctl calls at all.
+- name: Timers
+  ansible.builtin.include_tasks: timers.yml
+  when: lookup('fileglob', service_dir ~ '/quadlet/*.timer.j2', wantlist=True) | length > 0

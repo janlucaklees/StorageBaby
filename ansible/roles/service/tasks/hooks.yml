@@ -1,0 +1,35 @@
+# `when: unit_changed` (the default) is what makes a hook a deploy step and not a
+# nightly one: it runs only on the converge that actually restarted something, so a
+# version bump in a `.container.j2` runs the post-upgrade commands and the next run
+# does not. `when: always` opts a single command out of that.
+- name: Hooks to run this converge
+  ansible.builtin.set_fact:
+    _hooks: >-
+      {{ _declared if (changed_units | default([]) | length > 0)
+         else (_declared | selectattr('when', 'defined') | selectattr('when', 'equalto', 'always') | list) }}
+  vars:
+    _declared: "{{ (service.hooks | default({})).get('after_change', []) }}"
+
+# The units were restarted moments ago, so the container is up but its application is
+# not necessarily ready. `healthcheck run` is the container's own readiness test, which
+# is what the hook's command needs -- not merely a running container.
+- name: Wait for hook containers to be healthy
+  ansible.builtin.command: /usr/local/sbin/podman-as {{ svc_user }} podman healthcheck run {{ item.container }}
+  loop: '{{ _hooks }}'
+  loop_control:
+    label: '{{ item.container }}'
+  register: _hook_health
+  retries: 30
+  delay: 10
+  until: _hook_health.rc == 0
+  changed_when: false
+
+- name: Run after_change hooks
+  ansible.builtin.command: >-
+    /usr/local/sbin/podman-as {{ svc_user }} podman exec
+    {% if item.user is defined %}-u {{ item.user }}{% endif %}
+    {{ item.container }} sh -c {{ item.command | quote }}
+  loop: '{{ _hooks }}'
+  loop_control:
+    label: '{{ item.container }}: {{ item.command }}'
+  changed_when: true

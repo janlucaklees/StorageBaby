@@ -1,6 +1,7 @@
 # The `service` role
 
-Converges one placed service: user, volumes, bind groups, config, secrets and Quadlet units.
+Converges one placed service: user, volumes, bind groups, config, secrets, Quadlet units,
+Traefik routes, timers, after-change hooks and the generated backup sidecar.
 It is included once per `hosts/**/services/<name>/service.yml` by `ansible/playbook.yml`.
 
 ## Variables a `quadlet/*.j2` template may use
@@ -14,7 +15,10 @@ It is included once per `hosts/**/services/<name>/service.yml` by `ansible/playb
 | `devices_enabled`                    | true when the host declares `gpu: true` **and** the service declares `devices`                            |
 | `keep_groups`                        | true when the service has any `groups` or any bind group                                                  |
 | `config_dir`                         | `/etc/storagebaby/<name>`, where `config/` of the service folder is deployed (root-owned, world-readable) |
-| `fqdn`                               | `<domain>.<host domain>`, empty when the service has no `domain`                                          |
+| `routes`                             | list of `{domain, port, fqdn}`, one per declared route; empty when the service has none                   |
+| `fqdn`                               | the first route's fqdn, empty when the service has none — the one-route shorthand                         |
+| `hostname`                           | `inventory_hostname`, the host this service is placed on                                                  |
+| `backup_enabled`                     | true when the service declares a `backup` block                                                           |
 | `domain`, `tz`, `acme`, `acme_email` | from `host.yml`                                                                                           |
 
 The merge of `service.config` happens in the playbook, not in the role: `service` is an
@@ -36,6 +40,86 @@ GroupAdd=keep-groups
 
 `| bool` on the two flags: they come from a `set_fact`, so a template must not rely on
 them being a real boolean rather than the string `"False"`, which would be truthy.
+
+## Routes
+
+A service declares either `routes: [{domain, port}, ...]` or the one-route shorthand
+`domain:` + `port:`; the role turns both into `routes`, each entry gaining `fqdn`. Every
+route gets its own Traefik file `/etc/storagebaby/traefik/dynamic.d/<name>-<domain>.yml`
+and its own router and service, both named `<name>-<domain>`.
+
+The name carries the domain because Traefik reads one flat directory: two routes of one
+service would otherwise write the same file, and the second would win. The role removes a
+pre-Phase-3 `<name>.yml` on every converge, because a leftover would keep serving its old
+router beside the new ones.
+
+`service.route` is something else and unrelated: traefik's own shorthand for a router that
+points at an internal service (`internal: api@internal`) and for the wildcard certificate.
+
+## Host secrets
+
+`secrets:` are the service's own, from its folder. `host_secrets:` are values shared
+between services on one host:
+
+```yaml
+host_secrets:
+  kopia_password: kopia-clients.paperless # <set>.<key>
+```
+
+The set is `hosts/<host>/secrets/<set>.sops.yaml`, encrypted under that host's rule, so
+only that host can read it. The role copies the referenced sets to the host, decrypts them
+there and syncs each entry into a Podman secret of `svc-<name>` with the same helper the
+own secrets use — so a changed value restarts the service's units exactly like any other.
+Key names are plaintext in a sops file, so a static test checks every reference resolves.
+
+That is how one string is the same on both sides: the kopia server declares
+`client_<service>: kopia-clients.<service>` and the client `kopia_password:
+kopia-clients.<service>`.
+
+## Hooks
+
+```yaml
+hooks:
+  after_change:
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        command: 'php occ db:add-missing-indices'
+      }
+```
+
+Run in declared order after the role restarted or started the service's units, each one
+waiting first until `podman healthcheck run <container>` succeeds (30 × 10 s) — the
+container is up moments after a restart, its application is not.
+
+`when: unit_changed` (the default) runs the hook only on a converge that actually changed
+something, which is what makes it a deploy step and not a nightly one: a version bump in a
+`.container.j2` runs the post-upgrade commands, the next run does not. `when: always` opts
+a single command out of that.
+
+## Timers
+
+`quadlet/<stem>.timer.j2` and `quadlet/<stem>.service.j2` are plain systemd user units,
+not Quadlet ones — they are rendered into `~svc-<name>/.config/systemd/user/`, enabled,
+started and restarted on change, while every other `quadlet/*.j2` goes to the Quadlet
+directory. The static contract requires the two halves as a pair: a timer without its
+service never fires, a service without its timer never runs. Used for database dumps and
+for cron-like commands; they address containers by name, e.g.
+`ExecStart=/usr/bin/podman exec paperless-database sh -c 'pg_dump ... > /backups/x.dump'`.
+
+## The generated backup sidecar
+
+A service with a `backup` block gets `<name>-backup.container` generated from the role's
+own `kopia-client.container.j2` — it is not in the service folder. The sidecar joins the
+service's pod (hence the contract: `backup` requires a `<name>.pod.j2`), mounts every
+volume in `backup.paths` read-only at `/data/<volume>`, connects to `https://kopia.<domain>`
+as `<name>@<host>` with the `kopia_password` host secret, applies the retention policy and
+then runs a Kopia server so the scheduler takes the snapshots at `backup.schedule`.
+
+The role adds two implicit volumes, `backup-config` and `backup-cache` (class `fast`),
+before the volume directories are created, so they are made and owned like any other.
+Databases are backed up as dumps, not as data directories: a dump timer writes into a
+volume that is listed in `paths`.
 
 ## What every `.container` must declare
 

@@ -1,0 +1,38 @@
+[Unit]
+Description={{ service.name }} backup client (kopia)
+
+[Container]
+Image=docker.io/kopia/kopia:0.23.1
+ContainerName={{ service.name }}-backup
+Pod={{ service.name }}.pod
+Entrypoint=/bin/sh
+Exec={{ config_dir }}/kopia-client.sh
+Environment=TZ={{ tz }}
+Environment=KOPIA_SERVER_URL=https://kopia.{{ domain }}
+Environment=KOPIA_CLIENT_USERNAME={{ service.name }}
+Environment=KOPIA_CLIENT_HOSTNAME={{ hostname }}
+Environment=KOPIA_PIN_SERVER_CERT={{ '0' if acme else '1' }}
+Environment=KOPIA_PATHS={{ service.backup.paths | join(' ') }}
+Environment=KOPIA_SNAPSHOT_TIME={{ service.backup.schedule }}
+Environment=KOPIA_KEEP_LATEST={{ service.backup.retention.latest }}
+Environment=KOPIA_KEEP_DAILY={{ service.backup.retention.daily }}
+Environment=KOPIA_KEEP_WEEKLY={{ service.backup.retention.weekly }}
+Environment=KOPIA_KEEP_MONTHLY={{ service.backup.retention.monthly }}
+Environment=KOPIA_KEEP_ANNUAL={{ service.backup.retention.annual }}
+Secret=kopia_password
+Volume={{ config_dir }}/kopia-client.sh:{{ config_dir }}/kopia-client.sh:ro
+Volume={{ volumes['backup-config'] }}:/app/config
+Volume={{ volumes['backup-cache'] }}:/app/cache
+{% for path in service.backup.paths %}
+Volume={{ volumes[path] }}:/data/{{ path }}:ro
+{% endfor %}
+HealthCmd=kopia repository status
+HealthOnFailure=kill
+HealthStartPeriod=180s
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

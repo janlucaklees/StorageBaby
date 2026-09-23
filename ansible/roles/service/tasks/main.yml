@@ -2,8 +2,8 @@
   ansible.builtin.set_fact:
     svc_user: 'svc-{{ service.name }}'
     config_dir: '/etc/storagebaby/{{ service.name }}'
-    fqdn: "{{ (service.domain ~ '.' ~ domain) if service.domain is defined else '' }}"
     volumes: {}
+    routes_out: []
 
 - name: Resolve volume paths
   ansible.builtin.set_fact:
@@ -26,6 +26,39 @@
   vars:
     _declared: '{{ service.groups | default([]) }}'
     _from_binds: "{{ service.binds | default({}) | dict2items | map(attribute='value.group') | list }}"
+
+# `routes` is the general form, `domain` + `port` the one-route shorthand. Both end up
+# as the same list, so every consumer -- the route files, the pod's published ports,
+# the templates -- reads one thing. Derived here and not in host.yml: render.yml needs
+# it just as much, and both are included below.
+- name: Derive hostname, backup flag and raw routes
+  ansible.builtin.set_fact:
+    hostname: '{{ inventory_hostname }}'
+    backup_enabled: "{{ service.backup != 'none' }}"
+    _route_specs:
+      "{{ service.routes | default(([{'domain': service.domain, 'port': service.port}]
+      if service.domain is defined else [])) }}"
+
+- name: Resolve route fqdns
+  ansible.builtin.set_fact:
+    routes_out: "{{ routes_out + [item | combine({'fqdn': item.domain ~ '.' ~ domain})] }}"
+  loop: '{{ _route_specs }}'
+  loop_control:
+    label: '{{ item.domain }}'
+
+- name: Routes and the single-route fqdn kept for existing templates
+  ansible.builtin.set_fact:
+    routes: '{{ routes_out }}'
+    fqdn: "{{ (routes_out | first).fqdn if routes_out | length > 0 else '' }}"
+
+# Added to `volumes` here, before host.yml creates the volume directories, so the
+# sidecar's two get created and owned like any other volume of the service.
+- name: Implicit backup volumes
+  ansible.builtin.set_fact:
+    volumes:
+      "{{ volumes | combine({'backup-config': storage_roots.fast ~ '/' ~ service.name ~ '/backup-config',
+      'backup-cache': storage_roots.fast ~ '/' ~ service.name ~ '/backup-cache'}) }}"
+  when: backup_enabled | bool
 
 # The `exists` test runs on the controller, which is where both candidates live in
 # every mode: the checkout for ansible-pull, /repo for a Molecule run.

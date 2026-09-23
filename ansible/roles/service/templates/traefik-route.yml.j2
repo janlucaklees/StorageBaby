@@ -1,11 +1,13 @@
-{% set route = service.route | default({}) %}
+{# `route` is the loop variable: one route of the service, with domain, port and fqdn.
+   `service.route` is the spec's shorthand block for traefik's own internal service. #}
+{% set opts = service.route | default({}) %}
 http:
   routers:
-    {{ service.name }}:
-      rule: "Host(`{{ fqdn }}`)"
+    {{ service.name }}-{{ route.domain }}:
+      rule: "Host(`{{ route.fqdn }}`)"
       entryPoints: [websecure]
-      service: {{ route.internal | default(service.name) }}
-{% if acme and (route.wildcard_cert | default(false)) %}
+      service: {{ opts.internal | default(service.name ~ '-' ~ route.domain) }}
+{% if acme and (opts.wildcard_cert | default(false)) %}
       tls:
         certResolver: porkbun
         domains:
@@ -14,10 +16,10 @@ http:
 {% else %}
       tls: {}
 {% endif %}
-{% if route.internal is not defined %}
+{% if opts.internal is not defined %}
   services:
-    {{ service.name }}:
+    {{ service.name }}-{{ route.domain }}:
       loadBalancer:
         servers:
-          - url: "http://127.0.0.1:{{ service.port }}"
+          - url: "http://127.0.0.1:{{ route.port }}"
 {% endif %}

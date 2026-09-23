@@ -38,3 +38,17 @@ def placements() -> list[Placement]:
         for name, dir_, spec in shared + _services_in(HOSTS / host / "services"):
             result.append(Placement(host, name, dir_, spec))
     return result
+
+
+def routes_of(spec: dict) -> list[dict]:
+    """Every route a service declares: the `routes` list, or the domain+port shorthand."""
+    if "routes" in spec:
+        return spec["routes"]
+    return [{"domain": spec["domain"], "port": spec["port"]}] if "domain" in spec else []
+
+
+def route_ports(spec: dict) -> list[int]:
+    """Every loopback port this service occupies -- including a port without a route."""
+    if "routes" in spec:
+        return [r["port"] for r in spec["routes"]]
+    return [spec["port"]] if "port" in spec else []

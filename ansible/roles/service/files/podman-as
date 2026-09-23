@@ -1,0 +1,19 @@
+#!/bin/bash
+# usage: podman-as <user> <command> [args...]
+# Runs a command as a service user, as a client of that user's running systemd manager.
+set -euo pipefail
+user=$1
+uid=$(id -u "$user")
+
+# cd first: runuser keeps the caller's cwd, and rootless podman re-execs itself inside
+# the user namespace, where the service user cannot chdir back into root's 0700 home.
+# DBUS_SESSION_BUS_ADDRESS is what makes this a client of the *running* service rather
+# than a stray process: without it podman finds no user session, falls back to
+# --cgroup-manager=cgroupfs, and anything that places a process in the container's
+# cgroup -- exec, and healthcheck run, which is an exec -- is denied by that cgroup's
+# delegation to the user manager.
+cd /tmp
+exec runuser -u "$user" -- env \
+	XDG_RUNTIME_DIR="/run/user/$uid" \
+	DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+	"${@:2}"
