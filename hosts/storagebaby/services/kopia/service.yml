@@ -24,4 +24,5 @@ secrets: [server_password, repository_password, b2_key_id, b2_application_key]
 # `<service>@<host>` for each of them before the server binds.
 host_secrets:
   client_paperless: kopia-clients.paperless
+  client_openarchiver: kopia-clients.openarchiver
 backup: none

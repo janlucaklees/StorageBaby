@@ -1,0 +1,62 @@
+[Unit]
+Description=OpenArchiver
+After=openarchiver-database.service openarchiver-cache.service openarchiver-meilisearch.service openarchiver-tika.service
+Wants=openarchiver-database.service openarchiver-cache.service openarchiver-meilisearch.service openarchiver-tika.service
+
+[Container]
+Image=docker.io/logiclabshq/open-archiver:v0.6.0
+ContainerName=openarchiver-app
+Pod=openarchiver.pod
+Environment=TZ={{ tz }}
+Environment=NODE_ENV=production
+Environment=PORT_BACKEND=4000
+Environment=PORT_FRONTEND=3000
+Environment=APP_URL=https://{{ routes[0].fqdn }}
+Environment=ORIGIN=https://{{ routes[0].fqdn }}
+{# Not optional, and not in the old compose file: `createServer` refuses to start
+   without both JWT variables, and the backend exiting is invisible from outside --
+   the frontend comes up regardless and answers 500 from its own proxy. #}
+Environment=JWT_EXPIRES_IN={{ service.config.jwt_expires_in }}
+Environment=MEILI_HOST=http://127.0.0.1:7700
+Environment=REDIS_HOST=127.0.0.1
+Environment=REDIS_PORT=6379
+Environment=REDIS_TLS_ENABLED=false
+Environment=TIKA_URL=http://127.0.0.1:9998
+Environment=STORAGE_TYPE=local
+Environment=STORAGE_LOCAL_ROOT_PATH=/var/data/open-archiver
+Environment=BODY_SIZE_LIMIT=100M
+{# OpenArchiver reads every credential from the environment and supports no `_FILE`
+   variable, so the five that have somewhere to go arrive as env-type podman secrets:
+   podman injects them into the process at start instead of writing them into the
+   container's config, so `podman inspect` shows the container's Config.Env without
+   them. #}
+Secret=redis_password,type=env,target=REDIS_PASSWORD
+Secret=meili_master_key,type=env,target=MEILI_MASTER_KEY
+Secret=jwt_secret,type=env,target=JWT_SECRET
+Secret=encryption_key,type=env,target=ENCRYPTION_KEY
+Secret=storage_encryption_key,type=env,target=STORAGE_ENCRYPTION_KEY
+{# The sixth has nowhere to go: the database password is not its own variable here, it
+   is a field inside DATABASE_URL, and a URL assembled in the unit would put the
+   password in a world-readable file. So the secret is mounted as a file and the URL is
+   assembled inside the container, by a shell that replaces the image's entrypoint and
+   then execs what that entrypoint would have run. #}
+Secret=database_password
+{# `docker-entrypoint.sh pnpm docker-start:oss` is the image's own Entrypoint and Cmd,
+   read off the image with `podman image inspect` rather than guessed, and a version
+   bump has to read them again. `exec` so the app is pid 1 and gets the signals systemd
+   sends, instead of a shell that swallows them. The README has the inspect command. #}
+Entrypoint=/bin/sh
+Exec=-c 'export DATABASE_URL="postgresql://{{ service.config.database_user }}:$(cat /run/secrets/database_password)@127.0.0.1:5432/{{ service.config.database_name }}"; exec docker-entrypoint.sh pnpm docker-start:oss'
+Volume={{ volumes.data }}:/var/data/open-archiver
+{# The image is Alpine-based and carries no curl, but it does carry busybox wget. #}
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1
+HealthOnFailure=kill
+{# First start runs the schema migrations against an empty database. #}
+HealthStartPeriod=120s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

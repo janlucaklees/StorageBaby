@@ -1,0 +1,13 @@
+[Unit]
+Description=Dump the openarchiver database into the backups volume
+{# Ordered after the database and conditional on it: a `podman exec` into a container
+   that is not running fails, and without Requisite= the dump would still be attempted
+   -- leaving yesterday's file in /backups for the sidecar to snapshot as if it were
+   tonight's. Requisite= does not start the database, it refuses to run without it, so
+   a stopped pod makes the dump fail loudly instead of quietly going stale. #}
+After=openarchiver-database.service
+Requisite=openarchiver-database.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/podman exec openarchiver-database sh -c 'pg_dump -U {{ service.config.database_user }} -Fc {{ service.config.database_name }} > /backups/{{ service.config.database_name }}.dump.tmp && mv /backups/{{ service.config.database_name }}.dump.tmp /backups/{{ service.config.database_name }}.dump'

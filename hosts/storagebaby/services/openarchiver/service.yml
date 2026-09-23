@@ -1,0 +1,33 @@
+name: openarchiver
+# The app listens on 3000 inside the pod; the loopback port is 3001 because yuzukam
+# already occupies 3000 on every host both are placed on. Only the pod's publish line
+# bridges the two -- nothing inside the pod knows about 3001.
+port: 3001
+domain: openarchiver
+volumes:
+  data: { class: pool }
+  database: { class: fast }
+  cache: { class: fast }
+  meilisearch: { class: fast }
+  backups: { class: fast }
+config:
+  database_name: openarchiver
+  database_user: openarchiver
+  # How long a session token stays valid. Required by the app, not optional -- see the
+  # README; `7d` is upstream's own default from its `.env.example`.
+  jwt_expires_in: 7d
+secrets:
+  [
+    database_password,
+    redis_password,
+    meili_master_key,
+    jwt_secret,
+    encryption_key,
+    storage_encryption_key
+  ]
+host_secrets:
+  kopia_password: kopia-clients.openarchiver
+backup:
+  paths: [data, backups]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }

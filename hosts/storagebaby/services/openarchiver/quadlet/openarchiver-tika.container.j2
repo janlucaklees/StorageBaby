@@ -1,0 +1,22 @@
+[Unit]
+Description=OpenArchiver tika (attachment text extraction)
+
+[Container]
+{# Pinned, and the `-full` variant: OpenArchiver extracts text from mail attachments,
+   which needs tika's OCR and the extra parsers the slim image leaves out. #}
+Image=docker.io/apache/tika:3.2.2.0-full
+ContainerName=openarchiver-tika
+Pod=openarchiver.pod
+Environment=TZ={{ tz }}
+{# The tika image carries neither curl nor wget, so the probe is a bare TCP connect
+   through bash's /dev/tcp -- and it has to say `bash`, because podman runs a HealthCmd
+   through the image's `/bin/sh`, which here is dash and has no /dev/tcp at all. #}
+HealthCmd=bash -c "exec 3<>/dev/tcp/127.0.0.1/9998"
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

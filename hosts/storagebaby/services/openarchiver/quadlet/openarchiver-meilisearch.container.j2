@@ -1,0 +1,28 @@
+[Unit]
+Description=OpenArchiver search index (meilisearch)
+
+[Container]
+{# Pinned: meilisearch upgrades its on-disk index format between minor versions and
+   refuse to open a newer dump, so a version change is a line in git and a migration,
+   not something a nightly timer decides. #}
+Image=docker.io/getmeili/meilisearch:v1.38
+ContainerName=openarchiver-meilisearch
+Pod=openarchiver.pod
+Environment=TZ={{ tz }}
+Environment=MEILI_ENV=production
+{# meilisearch takes the master key only from the environment, so the secret is injected
+   as one rather than mounted under /run/secrets. Podman puts an env-type secret into
+   the container at start; it is not stored in the container's config. #}
+Secret=meili_master_key,type=env,target=MEILI_MASTER_KEY
+Volume={{ volumes.meilisearch }}:/meili_data
+{# /health is the unauthenticated liveness endpoint -- every other route needs the
+   master key. The image ships curl for exactly this. #}
+HealthCmd=curl -sf http://127.0.0.1:7700/health || exit 1
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

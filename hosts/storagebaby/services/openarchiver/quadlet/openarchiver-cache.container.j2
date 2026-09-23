@@ -1,0 +1,26 @@
+[Unit]
+Description=OpenArchiver cache and job queue (valkey)
+
+[Container]
+Image=docker.io/valkey/valkey:8-alpine
+ContainerName=openarchiver-cache
+Pod=openarchiver.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+{# The password reaches valkey through argv, which is how valkey takes it, so it is read
+   from the secret file inside the container instead of being rendered into the unit:
+   the unit is world-readable and `podman inspect` would print it. `exec` so valkey is
+   pid 1 of the container and gets the signals the shell would otherwise swallow. #}
+Exec=sh -c 'exec valkey-server --requirepass "$(cat /run/secrets/redis_password)"'
+Secret=redis_password
+Volume={{ volumes.cache }}:/data
+{# Same reason as the command: the probe reads the password rather than carrying it. #}
+HealthCmd=sh -c 'valkey-cli --no-auth-warning -a "$(cat /run/secrets/redis_password)" ping | grep -q PONG'
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
