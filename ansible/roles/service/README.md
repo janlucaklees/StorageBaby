@@ -106,8 +106,12 @@ hooks:
 ```
 
 Run in declared order after the role restarted or started the service's units, each one
-waiting first until `podman healthcheck run <container>` succeeds (30 × 10 s) — the
-container is up moments after a restart, its application is not.
+waiting first until `podman healthcheck run <container>` succeeds (60 × 10 s) — the
+container is up moments after a restart, its application is not. Ten minutes because
+that is the longest `HealthStartPeriod` any unit in the repo declares (nextcloud's app,
+600 s, for a first start that copies an installation in and then runs the installer);
+a wait shorter than the start period a container is allowed would fail the play on
+exactly the converge that needed it most.
 
 `when: unit_changed` (the default) runs the hook only on a converge that actually changed
 something, which is what makes it a deploy step and not a nightly one: a version bump in a

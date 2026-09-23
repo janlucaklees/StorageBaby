@@ -19,7 +19,11 @@
   loop_control:
     label: '{{ item.container }}'
   register: _hook_health
-  retries: 30
+  # 600 s, which is the largest `HealthStartPeriod` in the repo (nextcloud's app). A
+  # hook may not give up before the container it execs into is allowed to finish
+  # starting -- otherwise the first converge of the slowest service, the one where the
+  # hooks matter, is the one that fails the play.
+  retries: 60
   delay: 10
   until: _hook_health.rc == 0
   changed_when: false
