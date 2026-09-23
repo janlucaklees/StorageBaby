@@ -21,3 +21,14 @@ def test_container_declares_health_and_restart(path):
     lines = path.read_text().splitlines()
     for required in ["HealthCmd=", "HealthOnFailure=kill", "Restart=always"]:
         assert any(ln.startswith(required) for ln in lines), f"{path.name}: no line starting with {required!r}"
+
+
+@pytest.mark.parametrize("path", _containers(), ids=lambda p: f"{p.parent.parent.name}/{p.name}")
+def test_published_ports_are_loopback_only(path):
+    # Traefik is the only thing on these hosts that listens on a routable address, and a
+    # `PublishPort=<port>:<port>` binds 0.0.0.0 -- which would put the service on the LAN
+    # past Traefik, past its TLS and past whatever auth the route carries. The unit is the
+    # only place this can be got wrong, so it is checked here and not left to a firewall.
+    for ln in path.read_text().splitlines():
+        if ln.startswith("PublishPort="):
+            assert ln.startswith("PublishPort=127.0.0.1:"), f"{path.name}: {ln}"
