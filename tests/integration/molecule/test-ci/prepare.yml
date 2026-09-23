@@ -67,12 +67,22 @@
         mode: '0755'
       delegate_to: localhost
 
+    # 32 random bytes as 64 lowercase hex characters, and both properties matter.
+    # *Hex*, because an application is allowed to demand a shape: OpenArchiver refuses
+    # to start unless STORAGE_ENCRYPTION_KEY and ENCRYPTION_KEY are "a 64-character hex
+    # string (32 bytes)", and a base64 value made the whole pod come up and then
+    # crash-loop its workers. *64 characters*, because that is the longest anything
+    # here asks for. Every other consumer takes an opaque string, so one shape that
+    # satisfies the strictest of them satisfies all of them -- this generator knows
+    # nothing about which service it is writing for, and it should stay that way.
+    # Hex is also URL-safe, which matters where a password is a field inside a
+    # connection URL (openarchiver's DATABASE_URL).
     - name: Write and encrypt one secrets file per service
       ansible.builtin.shell: |
         set -euo pipefail
         rm -f "$TMP"
         {% for key in (lookup('file', item) | from_yaml).secrets %}
-        printf '%s: "%s"\n' '{{ key }}' "$(head -c 24 /dev/urandom | base64 | tr -d '/+=')" >> "$TMP"
+        printf '%s: "%s"\n' '{{ key }}' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$TMP"
         {% endfor %}
         sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "{{ _hosts_root }}/{{ inventory_hostname }}/secrets/{{ item | dirname | basename }}.sops.yaml"
         rm -f "$TMP"
@@ -119,7 +129,7 @@
         set -euo pipefail
         rm -f "$TMP"
         {% for key in (_refs | select('match', item ~ '\.') | map('regex_replace', '^[^.]*\.', '') | unique | sort | list) %}
-        printf '%s: "%s"\n' '{{ key }}' "$(head -c 24 /dev/urandom | base64 | tr -d '/+=')" >> "$TMP"
+        printf '%s: "%s"\n' '{{ key }}' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$TMP"
         {% endfor %}
         sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "{{ _hosts_root }}/{{ inventory_hostname }}/secrets/{{ item }}.sops.yaml"
         rm -f "$TMP"
