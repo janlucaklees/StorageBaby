@@ -185,10 +185,32 @@ runs `podman healthcheck run` against each of them. Three are worth a note:
   needs it, so `/health` is the only endpoint a probe can use. The image ships
   `curl` for exactly this.
 - **the app** has no `curl` either — its image is Alpine-based — but it does have
-  busybox `wget`, so the probe is `wget -q -O /dev/null http://127.0.0.1:3000/`.
-  It also gets `HealthStartPeriod=120s`: the first start runs the schema
-  migrations, and without it `HealthOnFailure=kill` would kill a container that is
-  merely still migrating.
+  busybox `wget`. Its probe asks **both** of the processes this container runs
+  under `concurrently`, and the backend first:
+
+  ```ini
+  HealthCmd=sh -c 'wget -q -O /dev/null http://127.0.0.1:4000/ && wget -q -O /dev/null http://127.0.0.1:3000/'
+  ```
+
+  Asking only 3000 tested the API by accident. Measured on the test VM, with the
+  backend process killed and the frontend left running:
+
+  ```
+  wget http://127.0.0.1:3000/   → HTTP/1.1 503 Service Unavailable   (exit 1)
+  wget http://127.0.0.1:4000/   → connection refused                 (exit 1)
+  ```
+
+  So the old probe did fail — but only because rendering `/` proxies to the API.
+  That is an upstream implementation detail, not a property of the check: a
+  release that served that page from a cache, or a change of landing route, would
+  leave a probe on 3000 reporting a healthy container in front of an application
+  that can do nothing. Asking 4000 says what it means. The backend's own `GET /`
+  answers `Backend is running!!` — there is no `/health` route in OpenArchiver
+  0.6, and this is the one unauthenticated endpoint it has.
+
+  It also gets `HealthStartPeriod=120s`: the first start runs `pnpm install` and
+  the schema migrations, and without it `HealthOnFailure=kill` would kill a
+  container that is merely still starting.
 
 ## Trusted proxies
 

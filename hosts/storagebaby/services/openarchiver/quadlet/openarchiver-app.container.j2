@@ -48,8 +48,14 @@ Secret=database_password
 Entrypoint=/bin/sh
 Exec=-c 'export DATABASE_URL="postgresql://{{ service.config.database_user }}:$(cat /run/secrets/database_password)@127.0.0.1:5432/{{ service.config.database_name }}"; exec docker-entrypoint.sh pnpm docker-start:oss'
 Volume={{ volumes.data }}:/var/data/open-archiver
-{# The image is Alpine-based and carries no curl, but it does carry busybox wget. #}
-HealthCmd=wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1
+{# Both halves, and the backend first. This container runs two servers under
+   `concurrently` -- the SvelteKit frontend on 3000 and the API on PORT_BACKEND -- and
+   only asking 3000 tests the API by accident: it fails today only because rendering
+   `/` proxies to the API, so a change upstream that served that page without it would
+   leave the probe calling a dead backend healthy. Asking 4000 says what it means. The
+   backend's `GET /` answers `Backend is running!!`; there is no /health route in 0.6.
+   The image is Alpine-based and carries no curl, but it does carry busybox wget. #}
+HealthCmd=sh -c 'wget -q -O /dev/null http://127.0.0.1:4000/ && wget -q -O /dev/null http://127.0.0.1:3000/'
 HealthOnFailure=kill
 {# First start runs the schema migrations against an empty database. #}
 HealthStartPeriod=120s

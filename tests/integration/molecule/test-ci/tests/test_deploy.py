@@ -78,6 +78,11 @@ def test_deploy_restarts_only_the_changed_service(host):
     other = other_placed_service(host)
     before = active_since(host, "svc-traefik", "traefik.service")
     other_before = active_since(host, f"svc-{other[0]}", other[1]) if other else None
+    # `systemctl show` answers for a unit it does not know with a 0 timestamp, and 0 ==
+    # 0 would make the "and nothing else restarted" assertion below pass without ever
+    # looking at a running service. So the reading itself has to be a real one.
+    if other:
+        assert other_before != "0", f"{other[1]} has no ActiveEnterTimestamp: is that the right unit name?"
     r = host.run(
         "cd /srv/src && sed -i 's|^port: .*|port: 8081|' hosts/shared/services/traefik/service.yml "
         "&& git -c user.name=t -c user.email=t@t commit -qam 'change traefik port' && git push -q origin stable"
