@@ -94,11 +94,13 @@ to before it:
 ```bash
 doas chgrp -R scans /pool/shared/scans
 doas chmod -R g+rwX /pool/shared/scans
-doas chmod g+s /pool/shared/scans
+doas find /pool/shared/scans -type d -exec chmod g+s {} +
 ```
 
 The `g+s` is what makes the existing tree match the `2775` the role gives a fresh
-one, so new files keep the `scans` group instead of the writer's own. Until this
+one, so new files keep the `scans` group instead of the writer's own — and it is a
+per-directory bit that nothing already on disk inherits, which is why it goes on
+through `find` and not as a single `chmod` on the share root. Until this
 runs the container restart-loops: its health check is `test -d /data/processed`, and
 the startup `mkdir -p` fails in a tree the service user may not write. That is
 operator step 4 in the root `README.md`.

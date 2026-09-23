@@ -84,8 +84,13 @@ converge, because it needs groups the converge creates:
    doas chmod -R o+rX /pool/shared/media
    doas chgrp -R scans /pool/shared/scans
    doas chmod -R g+rwX /pool/shared/scans
-   doas chmod g+s /pool/shared/scans
+   doas find /pool/shared/scans -type d -exec chmod g+s {} +
    ```
+
+   The setgid bit is per directory and is not inherited by anything that already
+   exists, so a plain `chmod g+s /pool/shared/scans` would fix the share root and
+   leave every subdirectory already under it — `processed/`, and whatever the
+   scanner made — without it. Hence the `find`.
 
    The role creates a bind directory only when it is missing and never touches
    the permissions of one that exists, so both trees stay the operator's — which
@@ -146,6 +151,9 @@ in each service's `service.yml`. Concretely:
 
 `stirling-pdf`'s old folder is not a compose stack — it is the untracked Quadlet
 attempt that preceded this repo, with the same four names under `volumes/`.
+Kopia's fourth volume, `repo`, is not in the table: it holds a repository only
+under `repository: filesystem`, which is the test hosts' backend, so on
+storagebaby it stays empty and there is nothing to migrate into it.
 `yuzukam` and `paperless-upload` declare no volumes at all: yuzukam is stateless,
 and paperless-upload's only state is the `scans` bind, which stays where it is and
 is handled by operator step 4 above.
@@ -159,31 +167,52 @@ is handled by operator step 4 above.
    pool, so it is a rename and costs nothing, and there is no second copy to
    forget about afterwards.
 3. Fix the ownership for the rootless mapping. This is the step that is easy to
-   skip and impossible to skip: the old trees are owned by host **uid 1000** —
-   rootful Docker running the image under `PUID=1000` — and under rootless Podman
-   that uid belongs to the operator's login user, not to the service.
+   skip and impossible to skip, and the owner it has to be fixed _from_ differs per
+   service: jellyfin's old tree is owned by host **uid 1000**, because rootful
+   Docker ran the linuxserver image under `PUID=1000` — and under rootless Podman
+   that uid is the operator's login user, not the service. Kopia's old tree is
+   **root-owned**, because that image runs as root and Docker ran it rootful.
+   Neither is what the new mapping needs.
 
 **Which chown depends on what uid the image runs as _inside_ the container**, because
-that is what the user namespace maps:
+that is what the user namespace maps. `podman unshare` is what translates a
+container-side uid into the host uid it actually lands on, and it has to run as the
+service user — with that user's runtime directory, the same way every other rootless
+command in this repo is invoked:
 
-- **Images that drop to an in-container uid** — jellyfin (`PUID=1000` via
-  s6), stirling-pdf, paperless-upload (`bun`, uid 1000). Container uid 1000 lands
-  on a host subuid of the service user, and `podman unshare` is what translates:
+- **jellyfin** — the linuxserver image drops to `PUID=1000`, so the tree has to end
+  up owned by container uid 1000, which is a subuid of `svc-jellyfin` on the host:
 
   ```bash
-  cd /tmp && doas runuser -u svc-jellyfin -- podman unshare chown -R 1000:1000 /pool/apps/jellyfin/config
+  uid=$(id -u svc-jellyfin)
+  cd /tmp # rootless podman cannot chdir back into root's 0700 home
+  doas runuser -u svc-jellyfin -- env XDG_RUNTIME_DIR=/run/user/$uid \
+  	podman unshare chown -R 1000:1000 /pool/apps/jellyfin/config
   ```
 
-- **Images that run as root inside** — kopia. Container uid 0 maps straight onto
-  the service user itself, so a plain chown says it:
+- **stirling-pdf** — its in-container uid is **not** established anywhere here;
+  nothing in this repo measured it. Two ways out, both fine: read it once after the
+  first start with `podman exec stirling-pdf id -u` and put that number into the
+  command above, or chown the migrated trees to `0:0` under `podman unshare` —
+  container root, which _is_ `svc-stirling-pdf` on the host — and let the image's own
+  start-time chown finish the job.
+
+- **kopia** — runs as root inside, so container uid 0 maps straight onto the service
+  user itself and a plain chown says it:
 
   ```bash
   doas chown -R svc-kopia:svc-kopia /pool/apps/kopia/config
   doas chown -R svc-kopia:svc-kopia /var/lib/storagebaby/fast/kopia/cache
   ```
 
-  (`runuser -u svc-kopia -- podman unshare chown -R 0:0 <path>` is the same thing
-  said the other way round.)
+  (`runuser -u svc-kopia -- env XDG_RUNTIME_DIR=/run/user/$(id -u svc-kopia) podman unshare chown -R 0:0 <path>`
+  is the same thing said the other way round.)
+
+- **paperless-upload** — nothing to do. It declares no volumes, and its unit runs
+  `UserNS=keep-id:uid=1000,gid=1000`, so container uid 1000 **is**
+  `svc-paperless-upload`'s own host uid: no subuid, nothing for `podman unshare` to
+  translate. Its only state is the `/pool/shared/scans` bind, and that one is opened
+  by group and setgid in operator step 4 — never by a chown.
 
 Then `make start SERVICE=<svc>` and check `make ps SERVICE=<svc>`. If the ownership
 is wrong the container comes up and fails — nothing on the host will quietly fix it
