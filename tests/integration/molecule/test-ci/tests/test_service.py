@@ -149,12 +149,21 @@ def test_service_user_lingers(host, owner, spec_path):
 
 @service_case
 def test_declared_secrets_are_the_podman_secrets(host, owner, spec_path):
+    """Exactly the declared names, from both sources, and nothing left over.
+
+    `secrets` and `host_secrets` land in the same place -- podman secrets of
+    `svc-<name>`, synced by the same helper -- and only differ in which file the value
+    came from. So the store has to hold the union of the two: checking `secrets` alone
+    would call a service with a `kopia_password` wrong, and dropping the equality would
+    stop noticing a secret that was removed from the spec but not from the host.
+    """
     placed(host, owner)
     spec = load_spec(spec_path)
     user = f"svc-{spec['name']}"
     r = run_as(host, user, "podman secret ls --format '{{.Name}}'")
     assert r.rc == 0, r.stderr
-    assert set(r.stdout.split()) == set(spec["secrets"]), r.stdout
+    declared = set(spec["secrets"]) | set(spec.get("host_secrets", {}))
+    assert set(r.stdout.split()) == declared, r.stdout
 
 
 def routes_of(spec: dict) -> list[dict]:
