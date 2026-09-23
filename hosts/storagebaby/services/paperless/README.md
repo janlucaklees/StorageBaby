@@ -170,22 +170,17 @@ sidecar's mechanics.
 `database` and `broker` are deliberately absent — the first is dumped, the second
 is a queue.
 
-> **The sidecar cannot finish its connection yet, and the reason is not here.**
-> It registers, authenticates and writes its `repository.config` over the Kopia
-> server's REST API — but opening the repository is a **gRPC** call, gRPC is
-> HTTP/2, and the Kopia server runs `--insecure` behind Traefik with an HTTP/1.1
-> listener that speaks no h2c (`curl --http2-prior-knowledge` against
-> `127.0.0.1:51515` is refused outright). Traefik cannot bridge that: an `http://`
-> backend downgrades the call and it is never answered (504 a minute later), and an
-> `h2c://` backend is rejected by the listener (500). Kopia 0.23 gives the client no
-> way to opt out of gRPC — `kopia repository connect server` has no `--no-grpc`.
->
-> Making it work means giving the Kopia server its own TLS again and letting Traefik
-> re-encrypt to it, which reverses the "No TLS inside" decision in
-> `hosts/storagebaby/services/kopia/README.md` and is a change to that service, not
-> to this one. Everything on this side of it — the generated unit, the pod
-> membership, the read-only mounts, the shared password, the retention policy — is
-> in place and exercised.
+Being the first client, this service is what established that a Kopia repository
+client speaks **gRPC** and that Traefik therefore has to reach the server over
+TLS — `hosts/storagebaby/services/kopia/README.md` has the whole finding. Nothing
+about it is visible here: the sidecar connects to `https://kopia.<domain>` like
+any other client and the server lists
+
+```
+paperless@test-a:/data/data
+paperless@test-a:/data/media
+paperless@test-a:/data/backups
+```
 
 ## The after-change hook
 
