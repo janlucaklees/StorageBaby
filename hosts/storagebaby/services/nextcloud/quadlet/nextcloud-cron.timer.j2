@@ -1,9 +1,12 @@
 [Unit]
 Description=Nextcloud background jobs every five minutes
 
+{# No `Persistent=`, unlike the dump timer: a missed elapse is worthless when the
+   next one is at most five minutes away, and persisting it makes the timer fire the
+   moment it is enabled -- on a first converge that is before the installer has
+   finished, so the run fails and leaves a failed unit behind for nothing. #}
 [Timer]
 OnCalendar=*:0/5
-Persistent=true
 
 [Install]
 WantedBy=timers.target

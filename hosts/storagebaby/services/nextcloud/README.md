@@ -64,12 +64,38 @@ in how Traefik reaches the **backend** — nginx over plain HTTP, Collabora over
 the TLS it serves itself — and that is what the per-entry `scheme` and
 `insecure_skip_verify` are for; see "Collabora keeps its own TLS".
 
-### `AddHost=kopia.<domain>:host-gateway`
+### `AddHost=` — the pod has to be able to reach Traefik
 
-On the pod, for the backup sidecar: it connects to the Kopia server the way every
+```
+AddHost=kopia.<domain>:host-gateway
+AddHost=nextcloud.<domain>:host-gateway
+AddHost=collabora.<domain>:host-gateway
+```
+
+The first is for the backup sidecar: it connects to the Kopia server the way every
 other client does, through Traefik on the host (`https://kopia.<domain>`), and
-inside the pod there is no DNS that answers for that name. Harmless on a host
-where DNS does answer.
+inside the pod there is no DNS that answers for that name.
+
+The other two are this service's own route names, and the **WOPI pair** needs them
+for exactly the same reason. Collabora is a two-way server-to-server protocol and
+both directions leave the pod and come back in through Traefik on the public name:
+`nextcloud-app` fetches `https://collabora.<domain>/hosting/discovery` server-side
+(richdocuments does this on every settings save and caches the result), and
+`nextcloud-collabora` then fetches the `WOPISrc` URL back, which Nextcloud builds
+from `OVERWRITEHOST` — `https://nextcloud.<domain>/index.php/apps/richdocuments/…`.
+
+Rootless, the pod's network namespace is pasta's, and pasta copies the **host's own
+address** onto the namespace's interface. So a name that resolves to the host
+resolves, from inside the pod, to the pod — where nothing listens on 443, because
+Traefik runs with `Network=host` in the host's own network namespace. `host-gateway`
+is the one address podman maps back out to it. This is the repo rule
+("cross-service traffic goes through Traefik and the public FQDN") spelled out: it
+only works from a pod that can resolve that FQDN to the host gateway. The old
+compose stack never met it — a bridged container reaches the host's LAN address
+directly.
+
+All three lines are harmless on a host where DNS already answers for the name; they
+make the answer deterministic.
 
 ## `config/`
 
@@ -108,12 +134,29 @@ runs `podman healthcheck run` against each of them. Three are worth a note:
   exists for, so it does the connect:
 
   ```
-  HealthCmd=php -r 'exit(@fsockopen("127.0.0.1", 9000) ? 0 : 1);'
+  HealthCmd=php -r 'exit(@fsockopen("127.0.0.1", 9000, timeout: 5) ? 0 : 1);'
   ```
 
   Podman runs a `HealthCmd` that is not a JSON array through the image's
   `/bin/sh -c`, which is what strips the single quotes — the php code reaches
   `php -r` intact.
+
+  `timeout: 5` is not decoration: without it `fsockopen` waits php's
+  `default_socket_timeout`, 60 s, which is **longer than podman's 30 s health
+  timeout**, so a connect that hangs rather than being refused is reported as a
+  timed-out check instead of a clean failure. Paperless's probe spells the same
+  thing as `--max-time 2`.
+
+  It is a **named** argument rather than the positional `$errno, $errstr, 5` the
+  signature would otherwise need, and that is a Quadlet constraint, not a style
+  choice. Quadlet renders this line into the generated unit's `ExecStart=`, and
+  systemd does variable substitution there: `$errno` and `$errstr` are unset, so
+  both are replaced with the empty string before podman ever sees the command, and
+  the interpreter is handed `fsockopen("127.0.0.1", 9000, , , 5)` — a parse error,
+  i.e. a probe that can only fail, with `HealthOnFailure=kill` behind it. Anything
+  in a `HealthCmd=` or an `Exec=` that has to keep a literal `$NAME` has to reckon
+  with that. `$(...)` does not: it is not a systemd variable reference, which is
+  why openarchiver's cache probe passes through untouched.
 
   That the check is weak is the point of the next one: php-fpm listening is not
   Nextcloud answering, and the entrypoint only `exec`s php-fpm once it has
@@ -156,6 +199,18 @@ runs `podman healthcheck run` against each of them. Three are worth a note:
   implies `-ign_eof`, and s_client then sits on its open stdin until podman kills
   it at the 30 s health timeout — a failing check, not a passing one. Spelled
   out, the empty stdin of a `podman exec` ends the connection and openssl exits.
+
+  **The exposure this leaves.** The tag is `collabora/code:latest` with
+  `AutoUpdate=registry`, which is what the spec's update table asks for, and the
+  probe above depends on one binary in a **distroless** image that has already
+  changed shape once — the Ubuntu → Nix rebuild is what took `curl` away and made
+  this check what it is. A release that drops `/usr/bin/openssl` the same way
+  takes the health check with it, and `HealthOnFailure=kill` plus
+  `Restart=always` turns that into a restart loop rather than a warning in a log.
+  Pinning the tag is the escape hatch: it is a deliberate deviation from the spec
+  table, to be taken if it ever happens rather than pre-emptively, and
+  `podman-auto-update.timer` rolls back an image that fails its health check, so
+  the loop is bounded by the previous image still being there.
 
   **This is why Collabora keeps its own TLS** (see below). It is not only that
   `openssl` cannot speak plain HTTP; with TLS off there is no probe in this image
@@ -217,7 +272,17 @@ So the container that owns the tree makes its own mount point traversable before
 handing over to the entrypoint it replaced. `/entrypoint.sh php-fpm` is the
 image's own `Entrypoint` and `Cmd`, read off it with `podman image inspect` — a
 version bump has to read them again. Only the mount point is touched: everything
-under it keeps the modes the image gives it, and `data/` stays 0770.
+under it keeps the modes the image gives it.
+
+**What this changes is a host directory, not a view inside the container.**
+`/var/www/html` is the bind mount of the `html` volume — on storagebaby
+`/pool/apps/nextcloud/html` — so after the first start that directory is **0755 on
+the host**, overriding the 0750 the role creates volume directories with. That is
+a deliberate exception to the role's convention and the only one on the platform,
+and it is acceptable because it is the mount point alone: the tree under it keeps
+the image's modes and `data/`, which is the user data, stays 0770 and
+`www-data`-owned. The role never re-permissions an existing volume directory, so
+it does not fight back on the next converge.
 
 ## `AddCapability=MKNOD` on Collabora
 
@@ -238,8 +303,39 @@ inside the service user's own user namespace and nothing at all on the host —
 | `admin_password`     | `secrets.sops.yaml` in this folder                              |
 | `kopia_password`     | `hosts/<host>/secrets/kopia-clients.sops.yaml`, key `nextcloud` |
 
-> **All five of this folder's secrets are `REPLACE_ME` and must be filled before
-> the first deploy on storagebaby**, with
+### The one ordering step that cannot be got wrong
+
+**Move the data _and_ fill the secrets before the commit that places nextcloud on
+storagebaby reaches `stable`.** Not "before the first deploy" as something to do
+afterwards — there is no afterwards. CI fast-forwards `stable` on a green push and
+the deploy timer pulls it within five minutes, unattended, as root. Nobody types
+anything.
+
+What that converge does if it finds empty volumes is not a failure. The role
+creates `html` and `database` empty, postgres initialises a fresh cluster from
+`POSTGRES_PASSWORD_FILE`, and the nextcloud entrypoint sees an empty `html` and
+runs **the installer** with `NEXTCLOUD_ADMIN_USER_FILE` / `_PASSWORD_FILE`. With
+the placeholders still in place that is a brand-new empty Nextcloud with an admin
+account `REPLACE_ME` / `REPLACE_ME` — ten characters, so it passes the minimum —
+published at `https://nextcloud.home.klees.io` with nothing in front of it. The
+five `occ` hooks then run against it and succeed, so nothing anywhere reports a
+problem.
+
+Filling the secrets first does **not** avoid this; it only changes the password of
+the instance that should not exist. The data move is the half that does. Both
+halves, then the commit:
+
+1. Move `html` and the postgres data directory in, with the ownership rules under
+   "Migrating the data" below.
+2. `make sops FILE=hosts/storagebaby/services/nextcloud/secrets.sops.yaml` and
+   replace all five values.
+3. Only then let the commit that places the service land on the tested branch.
+
+The placeholders stay in the repository — they are what a test host generates over
+per run, and an empty value would only trade a quiet wrong install for a web
+installer waiting on a public address.
+
+> **All five of this folder's secrets are `REPLACE_ME`**, filled with
 >
 > ```sh
 > make sops FILE=hosts/storagebaby/services/nextcloud/secrets.sops.yaml
@@ -340,6 +436,28 @@ the sidecar to pick up — `mv` within one volume is atomic.
 
 **A database is backed up as a dump, never as its data directory.** `database` is
 therefore not in `backup.paths`; `backups` is.
+
+### Restoring one
+
+The old `nextcloud/Makefile` carried a `database_restore` beside its
+`database_snapshot`; the timer replaced the snapshot and this replaces the restore.
+The format changed with it — `pg_dump -Fc`, postgres's own custom format, where the
+Makefile used `--format=tar` — so it is `pg_restore` reading the file on stdin,
+run as the service user because the container belongs to that user's podman:
+
+```sh
+/usr/local/sbin/podman-as svc-nextcloud podman exec -i nextcloud-database \
+	pg_restore -U oc_jlk -d nextcloud --no-owner < /path/to/nextcloud.dump
+```
+
+`-U` and `-d` are `config.database_user` and `config.database_name` in
+`service.yml`. `--no-owner` because the roles in the dump are the ones the old
+stack had, and the restore target is whatever this database initialised with.
+Restoring **into** the live database wants Nextcloud stopped first
+(`make stop SERVICE=nextcloud`) or, cleaner, a `dropdb`/`createdb` pair before it —
+`pg_restore` does not empty what is already there. The file itself is either
+`/var/lib/storagebaby/fast/nextcloud/backups/nextcloud.dump` on the host or one
+restored out of a Kopia snapshot of the `backups` volume.
 
 ## The after-change hooks
 
@@ -445,15 +563,51 @@ the host directly — and the database directory has to end up owned by postgres
 in-container uid (70 in `postgres:17-alpine`), which is a subuid of
 `svc-nextcloud` on the host.
 
-Two things to check after the first converge on storagebaby, because they are
-what an installation carries rather than what a unit declares:
+Three things to check after the first converge on storagebaby, because each of
+them is something an installation carries or a path only real use takes — not
+something a unit declares and a test can read back.
+
+**1. The installation came up as itself.** As root on the host; the containers
+belong to `svc-nextcloud`'s podman, so they are reached through the role's helper
+rather than root's own podman:
 
 ```sh
 make ps SERVICE=nextcloud
-podman exec -u www-data nextcloud-app php occ status
-podman exec -u www-data nextcloud-app php occ config:system:get trusted_domains
+/usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
+	php occ status
+/usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
+	php occ config:system:get trusted_domains
 ```
 
-`trusted_domains` comes from the migrated `config.php`, not from
+`occ status` must say `installed: true` and `maintenance: false` — the migrated
+instance, not a fresh one; see "The one ordering step that cannot be got wrong".
+
+**2. `trusted_domains`.** It comes from the migrated `config.php`, not from
 `NEXTCLOUD_TRUSTED_DOMAINS` — the entrypoint only applies that on install and
 upgrade — so if the domain changed it is one `occ config:system:set` by hand.
+
+**3. Open a document in Collabora, and watch the log while it opens.**
+
+```sh
+make logs SERVICE=nextcloud                                  # the pod
+journalctl _SYSTEMD_USER_UNIT=nextcloud-collabora.service -f # coolwsd itself
+```
+
+`make logs SERVICE=nextcloud` resolves to the pod unit, which is the right place
+to see the pod come and go; the jail errors below are coolwsd's own, so the second
+line is the one to have open while the document loads. (`journalctl` has no
+`--user -M` form, which is why it addresses the unit by name and runs as root.)
+
+This is the one rootless-specific path nothing else exercises. Every probe in the
+pod stops short of it: Collabora's own health check is a TLS handshake against
+9980, which proves coolwsd is listening and nothing more. What `AddCapability=MKNOD`
+is actually there for is `coolforkit-ns`/`coolmount` building a chroot jail **per
+document** — nested namespaces and device nodes inside an already-unprivileged user
+namespace — and that code only runs when a document is opened. It is also the flow
+the three `AddHost=` lines exist for, so a failure here is either the jail or the
+WOPI round trip.
+
+Look for `coolforkit`, `coolmount` or `mount` in the errors: a jail that cannot be
+built shows up as the editor failing to load with coolwsd still perfectly healthy.
+A `WOPI` or `discovery` error, or a connection timeout to the pod's own public
+name, is the other half — the `AddHost=` section above has that mechanism.

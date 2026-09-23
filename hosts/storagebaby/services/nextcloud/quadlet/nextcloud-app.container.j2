@@ -61,8 +61,15 @@ Volume={{ config_dir }}/opcache.ini:/usr/local/etc/php/conf.d/opcache.ini:ro
 {# php-fpm speaks FastCGI, not HTTP, so the most this can ask is whether anything is
    listening on 9000 -- nginx's /status.php probe below is the one that proves the two
    talk. The image is Alpine: no bash, so no /dev/tcp, no curl and no cgi-fcgi. The
-   interpreter the container exists for is always there, so it does the connect. #}
-HealthCmd=php -r 'exit(@fsockopen("127.0.0.1", 9000) ? 0 : 1);'
+   interpreter the container exists for is always there, so it does the connect.
+
+   `timeout: 5` because fsockopen otherwise waits php's `default_socket_timeout`, 60 s,
+   which is longer than podman's 30 s health timeout: a *hung* connect would then be
+   reported as a timed-out check rather than as a clean failure. Named argument rather
+   than the positional `$errno, $errstr, 5`: Quadlet renders this line into the unit's
+   `ExecStart=`, where systemd expands `$errno` and `$errstr` to the empty string before
+   podman ever sees them, leaving php a syntax error and a probe that can only fail. #}
+HealthCmd=php -r 'exit(@fsockopen("127.0.0.1", 9000, timeout: 5) ? 0 : 1);'
 HealthOnFailure=kill
 {# Long, because the first start is not a start: the entrypoint copies the whole
    installation into the empty `html` volume and then runs the installer against an
