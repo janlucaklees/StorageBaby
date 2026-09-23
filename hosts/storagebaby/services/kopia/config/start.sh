@@ -124,9 +124,35 @@ for f in /run/secrets/client_*; do
 	fi
 done
 
+# The server's own certificate. It exists because the repository protocol is gRPC, and
+# gRPC is HTTP/2: Traefik reaches an HTTP/2 backend only over TLS, so a server running
+# `--insecure` behind it can serve the web UI and nothing else -- a client's session
+# call is forwarded as HTTP/1.1 and never answered. Traefik re-encrypts to this
+# certificate and does not verify it (`insecure_skip_verify` in service.yml); nothing
+# could, and the hop is to 127.0.0.1.
+#
+# Generated once, onto the `config` volume beside repository.config, so it survives a
+# restart and a client that pinned it keeps working. Ten years because rotating it
+# would invalidate every client's pin for no gain: it is never seen outside this host.
+cert=/app/config/server.cert
+key=/app/config/server.key
+
+if [ ! -f "$cert" ] || [ ! -f "$key" ]; then
+	echo "kopia: generating the server's TLS certificate" >&2
+	# Both names: `kopia` is the container's own hostname, KOPIA_PUBLIC_HOST the name
+	# Traefik is reached under. Neither is verified today, and having both means a
+	# future transport that does verify has something to match.
+	openssl req -x509 -newkey rsa:4096 -nodes \
+		-keyout "$key" -out "$cert" -days 3650 \
+		-subj "/CN=kopia" \
+		-addext "subjectAltName=DNS:kopia,DNS:$KOPIA_PUBLIC_HOST"
+	chmod 600 "$key"
+fi
+
 # No --server-password: it is KOPIA_SERVER_PASSWORD above. --server-username stays a
 # flag -- it is not a secret, and spelling it out here is what says basic auth is on.
 exec kopia server start \
-	--insecure \
-	--address='http://0.0.0.0:51515' \
+	--address='https://0.0.0.0:51515' \
+	--tls-cert-file="$cert" \
+	--tls-key-file="$key" \
 	--server-username="$KOPIA_SERVER_USERNAME"

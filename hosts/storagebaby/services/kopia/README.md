@@ -164,29 +164,70 @@ connects when `repository.config` is absent, so a rotation is: new value in the 
 delete `repository.config`, restart. The repository is unchanged by that, so `cache`
 stays valid — unlike the case at the end of this file.
 
-### No TLS inside, and no fingerprint any more
+### TLS inside, because the repository protocol is gRPC
 
-The old `start.sh` generated a self-signed certificate on first start and wrote its
-fingerprint to `server.fingerprint`, because the server spoke HTTPS directly. This one
-runs `--insecure` on `127.0.0.1:51515` and Traefik terminates TLS in front of it, the
-same as every other service on the platform. Repository clients therefore connect to
-`https://kopia.<domain>` with an ordinary publicly-trusted certificate and need **no**
-`--server-cert-fingerprint`. The old fingerprint file is dead state; nothing reads it.
+This server speaks TLS on `127.0.0.1:51515` and Traefik **re-encrypts** to it, which is
+not what the rest of the platform does and not a preference:
+
+```yaml
+route:
+  scheme: https
+  insecure_skip_verify: true
+```
+
+A repository client — every backup sidecar — opens the repository over **gRPC**, and
+gRPC is HTTP/2. Traefik reaches a backend over HTTP/2 only when the backend is TLS: an
+`http://` backend is downgraded to HTTP/1.1, the client's session call is forwarded as
+an HTTP/1.1 request the server never answers, and the client dies a minute later on
+
+```
+rpc error: code = Unavailable desc = unexpected HTTP status code received from
+server: 504 (Gateway Timeout)
+```
+
+An `h2c://` backend does not help either: kopia's `--insecure` listener answers no
+HTTP/2 preface at all (`curl --http2-prior-knowledge http://127.0.0.1:51515/` is
+refused outright), so Traefik reports 500. And the client cannot be told to stay on
+REST: kopia 0.23's `repository connect server` has no `--no-grpc`. The web UI works
+over HTTP/1.1 throughout, which is why an insecure server looks perfectly healthy while
+no client can connect to it.
+
+So `config/start.sh` generates a certificate on first start, onto the `config` volume
+beside `repository.config`:
+
+```sh
+openssl req -x509 -newkey rsa:4096 -nodes -keyout /app/config/server.key \
+	-out /app/config/server.cert -days 3650 -subj "/CN=kopia" \
+	-addext "subjectAltName=DNS:kopia,DNS:$KOPIA_PUBLIC_HOST"
+```
+
+and serves `--address=https://0.0.0.0:51515 --tls-cert-file=… --tls-key-file=…`.
+`KOPIA_PUBLIC_HOST` comes from the unit as `kopia.{{ domain }}`. Nothing verifies this
+certificate — Traefik is told not to, and nothing could, since it vouches for a name
+that exists only inside this host — and nothing needs to: the hop is to `127.0.0.1`.
+It is generated once and kept for ten years because it is never seen outside the host
+and rotating it buys nothing.
+
+**Clients still see Traefik's certificate, not this one.** They connect to
+`https://kopia.<domain>`, where the Let's Encrypt certificate is on storagebaby and a
+self-signed default on a test host; the sidecar pins the fingerprint only in the second
+case. This certificate is invisible to them, which is why it can be a throwaway.
 
 ### Health check
 
 ```ini
-HealthCmd=curl -s -i http://127.0.0.1:51515/ | head -n 1 | grep -q -e 200 -e 401
+HealthCmd=curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:51515/ | grep -qE '^(200|401)$'
 ```
 
 Not the `curl -sf` every other unit uses. The server username and password put the UI
 behind basic auth, so `/` answers **401** to an unauthenticated probe and `-f` would
 turn the healthy steady state into a kill loop (the same trap stirling-pdf's README
 describes, without stirling's unauthenticated status endpoint to escape into). So the
-status line is what is checked: 401 is the expected answer, 200 is accepted as well so
+status code is what is checked: 401 is the expected answer, 200 is accepted as well so
 the probe keeps working if auth is ever dropped, and everything else — no response at
-all, a 404, a 5xx — fails. `HealthStartPeriod=60s` covers the first start, where the
-repository is created or connected before the server binds.
+all, a 404, a 5xx — fails. `-k` for the certificate above. `HealthStartPeriod=60s`
+covers the first start, where the certificate is generated and the repository created
+or connected before the server binds.
 
 The same 401 is what makes the route pass the platform's HTTPS check: Traefik reaching
 a backend that answers 401 proves the route, where a 404 would mean no router matched.

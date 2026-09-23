@@ -37,7 +37,10 @@ kopia_case = pytest.mark.parametrize(
     "owner,spec_path", KOPIA_SPECS, ids=[f"{owner}/{p.parent.name}" for owner, p in KOPIA_SPECS]
 )
 
-STATUS = 'curl -s -o /dev/null -w "%{http_code}"'
+# `-k`: the server serves its own self-signed certificate, because its repository
+# protocol is gRPC and Traefik reaches an HTTP/2 backend only over TLS. Nothing on this
+# host can verify that certificate and nothing is meant to -- Traefik skips it too.
+STATUS = 'curl -sk -o /dev/null -w "%{http_code}"'
 # Resolved on the VM, inside the command: see point 1 in the module docstring.
 SECRET = "$(podman secret inspect --showsecret --format \"{{.SecretData}}\" server_password)"
 
@@ -52,7 +55,7 @@ def config_for(hostvars: dict, spec: dict) -> dict:
 def test_anonymous_is_refused(host, owner, spec_path):
     placed(host, owner)
     spec = load_spec(spec_path)
-    r = host.run(f"{STATUS} http://127.0.0.1:{spec['port']}/")
+    r = host.run(f"{STATUS} https://127.0.0.1:{spec['port']}/")
     rc, code = r.rc, r.stdout.strip()
     assert rc == 0, f"curl could not reach kopia on port {spec['port']}"
     assert code == "401", f"kopia answered {code} without credentials, expected 401"
@@ -65,7 +68,7 @@ def test_declared_credentials_are_accepted(host, owner, spec_path):
     user = config_for(hostvars, spec)["server_username"]
     # The whole request is one shell command on the VM so that the password is
     # substituted there and never reaches this process.
-    probe = f'{STATUS} -u "{user}:{SECRET}" http://127.0.0.1:{spec["port"]}/'
+    probe = f'{STATUS} -u "{user}:{SECRET}" https://127.0.0.1:{spec["port"]}/'
     r = run_as(host, f"svc-{spec['name']}", f"sh -c '{probe}'")
     rc, code = r.rc, r.stdout.strip()
     assert rc == 0, f"curl could not reach kopia on port {spec['port']}"

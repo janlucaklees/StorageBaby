@@ -30,6 +30,9 @@ Environment=KOPIA_LOG_DIR=/app/logs
 Environment=KOPIA_PERSIST_CREDENTIALS_ON_CONNECT=true
 Environment=KOPIA_USE_KEYRING=false
 Environment=KOPIA_SERVER_USERNAME={{ service.config.server_username }}
+{# The name clients reach this server under. The start script puts it in the SAN of the
+   certificate it generates, beside the container's own hostname. #}
+Environment=KOPIA_PUBLIC_HOST=kopia.{{ domain }}
 Environment=KOPIA_REPOSITORY={{ service.config.repository }}
 Environment=KOPIA_S3_ENDPOINT={{ service.config.s3_endpoint | default('') }}
 Environment=KOPIA_S3_BUCKET={{ service.config.s3_bucket | default('') }}
@@ -55,10 +58,11 @@ Volume={{ volumes.cache }}:/app/cache
 Volume={{ volumes.logs }}:/app/logs
 Volume={{ volumes.repo }}:/app/repo
 # Not `curl -sf`: the UI is behind basic auth, so / answers 401 and -f would call a
-# perfectly healthy server dead. The status line is what is checked -- 401 is the
+# perfectly healthy server dead. The status code is what is checked -- 401 is the
 # steady state, 200 is accepted so the probe still holds without auth, and no
-# response, a 404 or a 5xx fails.
-HealthCmd=curl -s -i http://127.0.0.1:51515/ | head -n 1 | grep -q -e 200 -e 401
+# response, a 404 or a 5xx fails. `-k` because the server's certificate is the
+# self-signed one it generates for itself.
+HealthCmd=curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:51515/ | grep -qE '^(200|401)$'
 # First start creates or connects the repository before the server binds.
 HealthStartPeriod=60s
 HealthOnFailure=kill

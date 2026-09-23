@@ -1,6 +1,13 @@
 name: kopia
 port: 51515
 domain: kopia
+# The server speaks TLS itself, because its repository protocol is gRPC and gRPC is
+# HTTP/2 -- Traefik reaches an HTTP/2 backend only over TLS. The certificate it
+# re-encrypts to is the self-signed one the server makes for itself on first start, so
+# there is nothing to verify it against; the hop is to 127.0.0.1. See the README.
+route:
+  scheme: https
+  insecure_skip_verify: true
 volumes:
   config: { class: pool }
   cache: { class: fast }
