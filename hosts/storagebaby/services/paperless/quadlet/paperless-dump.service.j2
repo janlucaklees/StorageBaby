@@ -1,0 +1,6 @@
+[Unit]
+Description=Dump the paperless database into the backups volume
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/podman exec paperless-database sh -c 'pg_dump -U {{ service.config.database_user }} -Fc {{ service.config.database_name }} > /backups/{{ service.config.database_name }}.dump.tmp && mv /backups/{{ service.config.database_name }}.dump.tmp /backups/{{ service.config.database_name }}.dump'

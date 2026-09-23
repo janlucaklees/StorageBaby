@@ -12,4 +12,9 @@ config:
   s3_endpoint: s3.eu-central-003.backblazeb2.com
   s3_bucket: storagebaby-kopia
 secrets: [server_password, repository_password, b2_key_id, b2_application_key]
+# One `client_<service>` per service with a `backup` block: the server's half of the
+# shared value the client references as `kopia_password`. `config/start.sh` registers
+# `<service>@<host>` for each of them before the server binds.
+host_secrets:
+  client_paperless: kopia-clients.paperless
 backup: none

@@ -1,0 +1,21 @@
+[Unit]
+Description=Paperless tika (document text extraction)
+
+[Container]
+Image=docker.io/apache/tika:latest
+ContainerName=paperless-tika
+Pod=paperless.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+{# The tika image carries neither curl nor wget, so the probe is a bare TCP connect
+   through bash's /dev/tcp -- and it has to say `bash`, because podman runs a HealthCmd
+   through the image's `/bin/sh`, which here is dash and has no /dev/tcp at all. #}
+HealthCmd=bash -c "exec 3<>/dev/tcp/127.0.0.1/9998"
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

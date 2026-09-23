@@ -1,0 +1,21 @@
+[Unit]
+Description=Paperless gotenberg (office and mail conversion)
+
+[Container]
+Image=docker.io/gotenberg/gotenberg:8
+ContainerName=paperless-gotenberg
+Pod=paperless.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+{# Chromium is only used to render .eml files, which routinely carry tracking pixels
+   and scripts: no javascript, and nothing loadable but the temporary file itself. #}
+Exec=gotenberg --chromium-disable-javascript=true --chromium-allow-list=file:///tmp/.*
+HealthCmd=curl -sf http://127.0.0.1:3000/health || exit 1
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

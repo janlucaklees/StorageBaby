@@ -1,0 +1,26 @@
+[Unit]
+Description=Paperless database
+
+[Container]
+Image=docker.io/library/postgres:17-alpine
+ContainerName=paperless-database
+Pod=paperless.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+Environment=POSTGRES_DB={{ service.config.database_name }}
+Environment=POSTGRES_USER={{ service.config.database_user }}
+Environment=POSTGRES_PASSWORD_FILE=/run/secrets/database_password
+Secret=database_password
+Volume={{ volumes.database }}:/var/lib/postgresql/data
+{# The dump timer writes here, and the backup sidecar mounts the same volume read-only:
+   a database is backed up as a dump, never as its data directory. #}
+Volume={{ volumes.backups }}:/backups
+HealthCmd=pg_isready -U {{ service.config.database_user }} -d {{ service.config.database_name }}
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

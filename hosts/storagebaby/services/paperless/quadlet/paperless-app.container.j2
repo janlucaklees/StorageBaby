@@ -1,0 +1,43 @@
+[Unit]
+Description=Paperless-ngx
+After=paperless-database.service paperless-broker.service
+Wants=paperless-database.service paperless-broker.service
+
+[Container]
+Image=ghcr.io/paperless-ngx/paperless-ngx:2.20.15
+ContainerName=paperless-app
+Pod=paperless.pod
+Environment=TZ={{ tz }}
+Environment=PAPERLESS_REDIS=redis://127.0.0.1:6379
+Environment=PAPERLESS_DBHOST=127.0.0.1
+Environment=PAPERLESS_DBNAME={{ service.config.database_name }}
+Environment=PAPERLESS_DBUSER={{ service.config.database_user }}
+Environment=PAPERLESS_DBPASS_FILE=/run/secrets/database_password
+Environment=PAPERLESS_TIKA_ENABLED=1
+Environment=PAPERLESS_TIKA_GOTENBERG_ENDPOINT=http://127.0.0.1:3000
+Environment=PAPERLESS_TIKA_ENDPOINT=http://127.0.0.1:9998
+Environment=PAPERLESS_OCR_LANGUAGE={{ service.config.ocr_language }}
+Environment=PAPERLESS_URL=https://{{ routes[0].fqdn }}
+{# Rendered only when a host declares one. `trusted_proxies` is empty by design here --
+   paperless hands the value to python-ipware as the *X-Forwarded-For* proxy list, and
+   Traefik puts no entry of its own into that header, so any value makes the chain too
+   short to validate and every failed login logs "Unable to determine IP address"
+   instead of the client. The README has the measurement. #}
+{% if service.config.trusted_proxies | default('') %}
+Environment=PAPERLESS_TRUSTED_PROXIES={{ service.config.trusted_proxies }}
+{% endif %}
+Environment=PAPERLESS_SECRET_KEY_FILE=/run/secrets/secret_key
+Secret=database_password
+Secret=secret_key
+Volume={{ volumes.data }}:/usr/src/paperless/data
+Volume={{ volumes.media }}:/usr/src/paperless/media
+HealthCmd=curl -fs -S --max-time 2 http://127.0.0.1:8000 || exit 1
+HealthOnFailure=kill
+HealthStartPeriod=120s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

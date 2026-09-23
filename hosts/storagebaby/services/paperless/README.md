@@ -1,0 +1,242 @@
+# Paperless-ngx
+
+The document archive, reachable at `paperless.<host domain>` —
+`paperless.home.klees.io` on storagebaby. Migrated from the old
+`paperless/docker-compose.yml`: five containers that used to be a compose project
+are one Podman **pod** now, plus the two things the platform adds by declaration —
+a nightly database dump and a Kopia backup client.
+
+It is the platform's first pod, and the first service to use `host_secrets`,
+`hooks.after_change`, a timer and a `backup` block.
+
+## The pod
+
+| Part                  | Image                                         | Port | Updates       |
+| --------------------- | --------------------------------------------- | ---- | ------------- |
+| `paperless-app`       | `ghcr.io/paperless-ngx/paperless-ngx:2.20.15` | 8000 | pinned in git |
+| `paperless-database`  | `docker.io/library/postgres:17-alpine`        | 5432 | auto          |
+| `paperless-broker`    | `docker.io/library/redis:alpine`              | 6379 | auto          |
+| `paperless-gotenberg` | `docker.io/gotenberg/gotenberg:8`             | 3000 | auto          |
+| `paperless-tika`      | `docker.io/apache/tika:latest`                | 9998 | auto          |
+| `paperless-backup`    | `docker.io/kopia/kopia:0.23.1`                | —    | generated     |
+
+`paperless.pod` owns the network namespace all six share, so every part talks to
+every other over `127.0.0.1` on its own upstream port — `PAPERLESS_DBHOST` is
+`127.0.0.1`, not a service name, and `PAPERLESS_REDIS` is `redis://127.0.0.1:6379`.
+The pod's single `PublishPort=127.0.0.1:8000:8000` is the only host-visible port;
+Traefik is the only thing that reaches it.
+
+`paperless-backup` is **not** in this folder. The role generates it from
+`backup:` in `service.yml` and joins it to this pod — which is why a service with
+a `backup` block must define a `.pod`.
+
+The app is pinned and the supporting parts are not: a paperless upgrade can carry
+a database migration, so it is a line in git; postgres, redis, gotenberg and tika
+are interchangeable within their major and ride `AutoUpdate=registry` with the
+service user's `podman-auto-update.timer`, which rolls back an image that fails
+its health check.
+
+### `AddHost=kopia.<domain>:host-gateway`
+
+On the pod, for the backup sidecar: it connects to the Kopia server the way every
+other client does, through Traefik on the host (`https://kopia.<domain>`), and
+inside the pod there is no DNS that answers for that name. Harmless on a host
+where DNS does answer.
+
+## Health checks
+
+Every container declares one — the platform's contract, and the integration suite
+runs `podman healthcheck run` against each of them. Two are worth a note:
+
+- **tika** ships neither `curl` nor `wget`, and podman runs a `HealthCmd` through
+  the image's `/bin/sh`, which there is dash and has no `/dev/tcp`. So the probe
+  names the shell that does: `bash -c "exec 3<>/dev/tcp/127.0.0.1/9998"` — a bare
+  TCP connect, which is all a "is the server listening" check needs.
+- **gotenberg** does have `curl`, so it uses `/health` like upstream.
+
+The app gets `HealthStartPeriod=120s`: the first start runs the database
+migrations, and without it `HealthOnFailure=kill` would kill a container that is
+merely still migrating.
+
+## Secrets
+
+| Secret              | Where from                                                      |
+| ------------------- | --------------------------------------------------------------- |
+| `database_password` | `secrets.sops.yaml` in this folder                              |
+| `secret_key`        | `secrets.sops.yaml` in this folder                              |
+| `kopia_password`    | `hosts/<host>/secrets/kopia-clients.sops.yaml`, key `paperless` |
+
+> **Both of this folder's secrets are `REPLACE_ME` and must be filled before the
+> first deploy on storagebaby**, with
+>
+> ```sh
+> make sops FILE=hosts/storagebaby/services/paperless/secrets.sops.yaml
+> ```
+>
+> - `database_password` has to be **the password of the database that is migrated
+>   in**. The postgres image only applies `POSTGRES_PASSWORD` when it initialises
+>   an empty data directory; moved-in data keeps the old stack's password, and a
+>   different value here means the app cannot log in to its own database.
+> - `secret_key` has to be **the live one** from the old stack's
+>   `paperless_secret_key.secret`. Django derives session and token signatures
+>   from it, so a new value logs every user out and invalidates every API token.
+
+`kopia_password` is the client half of the shared value the Kopia server knows as
+`client_paperless`; `hosts/storagebaby/services/kopia/README.md` has the whole
+mechanism. Test hosts generate all three fresh per run.
+
+## Trusted proxies
+
+`PAPERLESS_TRUSTED_PROXIES` is **not set**, on purpose, and that is a measurement
+rather than an omission. The old compose stack passed Traefik's container address
+(`TRAEFIK_CONTAINER_IP`); the equivalent here would be the address the app sees a
+proxied request come from, which on the test VM is:
+
+```
+tcp 0 0 ::ffff:192.168.122.25:8000  ::ffff:192.168.122.25:60108  ESTABLISHED
+```
+
+— the **host's own address**. Traefik runs with `Network=host` and connects to
+`127.0.0.1:8000`, and pasta rewrites that loopback source to the pod's address,
+which under rootless Podman is the host's. So the value would have to be a
+different literal IP per host.
+
+It would also be the wrong kind of value. Paperless 2.20 uses the setting in one
+place only — `signals.py`, `IpWare(proxy_list=settings.TRUSTED_PROXIES)`, to log
+the client address of a **failed login**. python-ipware matches `proxy_list`
+against the tail of the `X-Forwarded-For` chain, not against the peer address, and
+requires the chain to be longer than the list (`ip_count - 1 < proxy_list_count`
+→ rejected). Traefik sets `X-Forwarded-For` to the client and adds **no entry of
+its own**, so with any one-element list the chain is always too short. Measured,
+with `PAPERLESS_TRUSTED_PROXIES=127.0.0.1`:
+
+```
+[paperless.auth] Login failed for user `nobody`. Unable to determine IP address.
+```
+
+With the variable absent, `TRUSTED_PROXIES` is `[]`, ipware takes the addresses it
+can see and names one. Same request, same failed login, variable gone:
+
+```
+[paperless.auth] Login failed for user `nobody` from private IP `192.168.122.25`.
+```
+
+So the unit renders the line only when a host sets
+`service_config.paperless.trusted_proxies` — for a host that really does sit
+behind a second proxy that adds itself to the chain.
+
+Two caveats, both of which stop at the log line — no authorization decision in
+paperless reads this. ipware prefers a private address over a loopback one, so a
+request from the host itself is logged as the proxy's address rather than as
+`127.0.0.1`. And a client that sends its own `X-Forwarded-For` can put whatever it
+likes at the front of the chain, because Traefik appends to an existing header
+rather than replacing it.
+
+## The database dump
+
+```
+paperless-dump.timer    daily at 02:30
+paperless-dump.service  podman exec paperless-database pg_dump -Fc … > /backups/paperless.dump
+```
+
+Plain systemd user units in `~svc-paperless/.config/systemd/user/`, not Quadlet
+ones. 02:30 is half an hour before the snapshot at 03:00, so every snapshot
+carries a dump from the same night.
+
+The dump is written to `<name>.dump.tmp` and renamed, so `/backups` never holds a
+half-written file for the sidecar to pick up — `mv` within one volume is atomic.
+
+**A database is backed up as a dump, never as its data directory.** `database` is
+therefore not in `backup.paths`; `backups` is. Snapshotting a running postgres
+data directory copies files mid-write and restores to a database that may not
+open at all.
+
+## Backups
+
+```yaml
+backup:
+  paths: [data, media, backups]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }
+```
+
+The role generates `paperless-backup.container` from this, mounts the three
+volumes read-only at `/data/<volume>`, connects to the Kopia server as
+`paperless@<host>` and leaves a scheduler running, so the snapshots happen at
+03:00 without a timer of their own. `ansible/roles/service/README.md` has the
+sidecar's mechanics.
+
+`data` and `media` are the archive itself; `backups` carries the nightly dump.
+`database` and `broker` are deliberately absent — the first is dumped, the second
+is a queue.
+
+> **The sidecar cannot finish its connection yet, and the reason is not here.**
+> It registers, authenticates and writes its `repository.config` over the Kopia
+> server's REST API — but opening the repository is a **gRPC** call, gRPC is
+> HTTP/2, and the Kopia server runs `--insecure` behind Traefik with an HTTP/1.1
+> listener that speaks no h2c (`curl --http2-prior-knowledge` against
+> `127.0.0.1:51515` is refused outright). Traefik cannot bridge that: an `http://`
+> backend downgrades the call and it is never answered (504 a minute later), and an
+> `h2c://` backend is rejected by the listener (500). Kopia 0.23 gives the client no
+> way to opt out of gRPC — `kopia repository connect server` has no `--no-grpc`.
+>
+> Making it work means giving the Kopia server its own TLS again and letting Traefik
+> re-encrypt to it, which reverses the "No TLS inside" decision in
+> `hosts/storagebaby/services/kopia/README.md` and is a change to that service, not
+> to this one. Everything on this side of it — the generated unit, the pod
+> membership, the read-only mounts, the shared password, the retention policy — is
+> in place and exercised.
+
+## The after-change hook
+
+```yaml
+hooks:
+  after_change:
+    - {
+        container: paperless-app,
+        command: 'touch /usr/src/paperless/data/.hook-ran'
+      }
+```
+
+A marker, not a maintenance command: paperless needs no post-upgrade step of its
+own (the image runs its migrations from the entrypoint). It is here because the
+hook mechanism needs something observable from outside the container to be
+testable at all, and `touch` is the one hook shape the integration suite can
+check — the harness deletes `<data volume>/.hook-ran`, pushes a change to the app
+unit, deploys, and asserts the marker came back. Nextcloud's hooks, which do real
+work, ride the same machinery.
+
+`when` is left at its default `unit_changed`, so the hook runs on a converge that
+actually restarted something and not on the nightly no-op.
+
+## Dropped from the compose stack
+
+- **`./consume` and `./export`.** The scanner path is `paperless-upload`, which
+  posts documents through the API; nothing drops files into a consume directory
+  any more. An export is `document_exporter` run by hand when it is wanted.
+- **`USERMAP_GID=998`.** It existed so the host's scanner group could write into
+  `./consume`. With no consume mount there is nothing to line up, and the image's
+  default user is fine under the rootless mapping.
+- **Traefik labels.** Podman containers are invisible to Traefik's Docker
+  provider; the role writes a file-provider route from `domain` and `port` in
+  `service.yml` instead.
+- **Watchtower labels.** `AutoUpdate=registry` and the service user's
+  `podman-auto-update.timer` replaced it.
+
+## Migrating the data
+
+`paperless/docker-compose.yml`'s four named volumes map onto this folder's five:
+
+| Old (rootful compose)                   | New                                                               |
+| --------------------------------------- | ----------------------------------------------------------------- |
+| `/pool/apps/paperless/volumes/data`     | `/pool/apps/paperless/data`                                       |
+| `/pool/apps/paperless/volumes/media`    | `/pool/apps/paperless/media`                                      |
+| `/pool/apps/paperless/volumes/database` | `/var/lib/storagebaby/fast/paperless/database`                    |
+| `/pool/apps/paperless/volumes/broker`   | — (a queue; start empty)                                          |
+| —                                       | `/var/lib/storagebaby/fast/paperless/backups` (new, for the dump) |
+
+The repo's root README has the recipe and the ownership rules. The paperless
+image runs the app as its own in-container user, so the moved trees have to be
+chowned under `podman unshare` as `svc-paperless`, not on the host directly — and
+the database directory has to end up owned by postgres's in-container uid (70 in
+`postgres:17-alpine`), which is a subuid of `svc-paperless` on the host.

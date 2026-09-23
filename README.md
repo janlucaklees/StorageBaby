@@ -22,27 +22,29 @@ Domains are relative to the host's own domain — `jellyfin.home.klees.io` on
 storagebaby. "auto" means `AutoUpdate=registry` plus the service user's
 `podman-auto-update.timer`, which rolls back an image that fails its health check.
 
-| Service                              | Domain       | Image and updates                                                 | Phase |
-| ------------------------------------ | ------------ | ----------------------------------------------------------------- | ----- |
-| traefik (`hosts/shared`, every host) | `traefik.*`  | `docker.io/library/traefik:v3` — auto                             | 1     |
-| yuzukam                              | `yuzukam.*`  | `ghcr.io/janlucaklees/yuzukam:latest` — auto                      | 2     |
-| stirling-pdf                         | `stirling.*` | `docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest` — auto | 2     |
-| jellyfin                             | `jellyfin.*` | `lscr.io/linuxserver/jellyfin:latest` — auto                      | 2     |
-| kopia                                | `kopia.*`    | `docker.io/kopia/kopia:0.23.1` — pinned, bumped in git            | 2     |
-| paperless-upload                     | none         | host build (`.build` unit from the service's own `config/build/`) | 2     |
+| Service                              | Domain        | Image and updates                                                                                          | Phase |
+| ------------------------------------ | ------------- | ---------------------------------------------------------------------------------------------------------- | ----- |
+| traefik (`hosts/shared`, every host) | `traefik.*`   | `docker.io/library/traefik:v3` — auto                                                                      | 1     |
+| yuzukam                              | `yuzukam.*`   | `ghcr.io/janlucaklees/yuzukam:latest` — auto                                                               | 2     |
+| stirling-pdf                         | `stirling.*`  | `docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest` — auto                                          | 2     |
+| jellyfin                             | `jellyfin.*`  | `lscr.io/linuxserver/jellyfin:latest` — auto                                                               | 2     |
+| kopia                                | `kopia.*`     | `docker.io/kopia/kopia:0.23.1` — pinned, bumped in git                                                     | 2     |
+| paperless-upload                     | none          | host build (`.build` unit from the service's own `config/build/`)                                          | 2     |
+| paperless (pod)                      | `paperless.*` | `ghcr.io/paperless-ngx/paperless-ngx:2.20.15` — pinned; its postgres, redis, gotenberg and tika parts auto | 3     |
 
-Everything but traefik is placed on storagebaby; the test host places the same
-five folders by symlink. Still on `docker-compose.yml` and waiting: `nextcloud/`
-and `paperless/` (tracked) plus `immich/` and `openarchiver/` (untracked working
-copies) in Phase 3, then `samba/` and `snapraid/` in Phase 4.
+Everything but traefik is placed on storagebaby; `test-a` places all six folders
+by symlink, `test-ci` the smaller subset a GitHub runner can carry. Still on
+`docker-compose.yml` and waiting: `nextcloud/` (tracked) plus `immich/` and
+`openarchiver/` (untracked working copies) in Phase 3, then `samba/` and
+`snapraid/` in Phase 4.
 
 Kopia is pinned on purpose — a kopia upgrade can carry a repository format
 upgrade, which is not a decision for a nightly timer.
 
 ## Operator steps before and right after the first storagebaby deploy
 
-Three things have to be done by hand **before** converging storagebaby the first
-time, because they are secrets. The fourth can only be done **after** that first
+Four things have to be done by hand **before** converging storagebaby the first
+time, because they are secrets. The fifth can only be done **after** that first
 converge, because it needs groups the converge creates:
 
 1. **Put the real Backblaze credentials into kopia's secrets** — both are
@@ -70,9 +72,29 @@ converge, because it needs groups the converge creates:
 
 3. **Replace the paperless-upload token.** `secrets.sops.yaml` holds
    `REPLACE_ME_paperless_api_token` — the file it was to be carried over from was
-   empty. Uploads fail until Phase 3 delivers Paperless either way.
+   empty. Issue a new API token in Paperless once it is up and put it in.
 
-4. **Converge once, then open the shared trees to the services that read them.**
+4. **Fill paperless's two secrets, and the `kopia-clients` value it uses.**
+   `hosts/storagebaby/services/paperless/secrets.sops.yaml` holds two
+   `REPLACE_ME`s, and both have to be the **existing** values, not new ones:
+   `database_password` must match the database that is migrated in (postgres only
+   applies `POSTGRES_PASSWORD` to an empty data directory), and `secret_key` must
+   be the live one from the old stack, or every session and API token is
+   invalidated. The `paperless` key in
+   `hosts/storagebaby/secrets/kopia-clients.sops.yaml` is a free choice — it is
+   generated for this migration and only has to be one string on both sides —
+   but it is `REPLACE_ME` too, and the backup client and the Kopia server both
+   read it.
+
+   ```bash
+   make sops FILE=hosts/storagebaby/services/paperless/secrets.sops.yaml
+   make sops FILE=hosts/storagebaby/secrets/kopia-clients.sops.yaml
+   ```
+
+   `hosts/storagebaby/services/paperless/README.md` spells out why each of the
+   three cannot simply be regenerated.
+
+5. **Converge once, then open the shared trees to the services that read them.**
    This one is deliberately after the first converge: the `media` and `scans`
    groups do not exist on the host until the `service` role creates them, so a
    `chgrp` run before it has nothing to chgrp to. Expect jellyfin to come up with
@@ -148,13 +170,18 @@ in each service's `service.yml`. Concretely:
 | kopia        | `/pool/apps/kopia/volumes/cache`                                   | `/var/lib/storagebaby/fast/kopia/cache`                    |
 | kopia        | `/pool/apps/kopia/volumes/logs`                                    | `/var/lib/storagebaby/fast/kopia/logs`                     |
 | stirling-pdf | `/pool/apps/stirling-pdf/volumes/{configs,logs,pipeline,tessdata}` | `/pool/apps/stirling-pdf/{configs,logs,pipeline,tessdata}` |
+| paperless    | `/pool/apps/paperless/volumes/data`                                | `/pool/apps/paperless/data`                                |
+| paperless    | `/pool/apps/paperless/volumes/media`                               | `/pool/apps/paperless/media`                               |
+| paperless    | `/pool/apps/paperless/volumes/database`                            | `/var/lib/storagebaby/fast/paperless/database`             |
 
 `stirling-pdf`'s old folder is not a compose stack — it is the untracked Quadlet
 attempt that preceded this repo, with the same four names under `volumes/`.
 Kopia's fourth volume, `repo`, is not in the table: it holds a repository only
 under `repository: filesystem`, which is the test hosts' backend, so on
 storagebaby it stays empty and there is nothing to migrate into it.
-`yuzukam` and `paperless-upload` declare no volumes at all: yuzukam is stateless,
+Paperless's `broker` volume is not in the table — it is a Redis queue, and starting
+it empty costs nothing — and its `backups` volume is new, created empty for the
+nightly dump. `yuzukam` and `paperless-upload` declare no volumes at all: yuzukam is stateless,
 and paperless-upload's only state is the `scans` bind, which stays where it is and
 is handled by operator step 4 above.
 
@@ -207,6 +234,20 @@ command in this repo is invoked:
 
   (`runuser -u svc-kopia -- env XDG_RUNTIME_DIR=/run/user/$(id -u svc-kopia) podman unshare chown -R 0:0 <path>`
   is the same thing said the other way round.)
+
+- **paperless** — two in-container uids, so two chowns. The app's `data` and
+  `media` trees go to the uid the paperless image runs as (`podman exec
+paperless-app id -u` once it is up), and the postgres `database` tree to
+  postgres's own uid inside `postgres:17-alpine`, which is **70**:
+
+  ```bash
+  uid=$(id -u svc-paperless)
+  cd /tmp
+  doas runuser -u svc-paperless -- env XDG_RUNTIME_DIR=/run/user/$uid \
+  	podman unshare chown -R 70:70 /var/lib/storagebaby/fast/paperless/database
+  ```
+
+  Its database password is not a free choice either — see operator step 4 above.
 
 - **paperless-upload** — nothing to do. It declares no volumes, and its unit runs
   `UserNS=keep-id:uid=1000,gid=1000`, so container uid 1000 **is**

@@ -1,0 +1,19 @@
+[Unit]
+Description=Paperless broker
+
+[Container]
+Image=docker.io/library/redis:alpine
+ContainerName=paperless-broker
+Pod=paperless.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+Volume={{ volumes.broker }}:/data
+HealthCmd=redis-cli --raw incr ping
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
