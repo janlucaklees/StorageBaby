@@ -1,6 +1,10 @@
 {# `route` is the loop variable: one route of the service, with domain, port and fqdn.
-   `service.route` is the spec's shorthand block for traefik's own internal service. #}
+   `service.route` is the spec's block of options for every route of this service;
+   a `routes:` entry may override either of the backend options for itself. #}
 {% set opts = service.route | default({}) %}
+{% set scheme = route.scheme | default(opts.scheme | default('http')) %}
+{% set skip_verify = route.insecure_skip_verify | default(opts.insecure_skip_verify | default(false)) %}
+{% set transport = service.name ~ '-' ~ route.domain %}
 http:
   routers:
     {{ service.name }}-{{ route.domain }}:
@@ -17,9 +21,21 @@ http:
       tls: {}
 {% endif %}
 {% if opts.internal is not defined %}
+{% if skip_verify %}
+{# The backend's certificate is a self-signed one the service made for itself, for a
+   name that only exists inside the host. Nothing can vouch for it and nothing has to:
+   the hop is to 127.0.0.1, and what it buys is HTTP/2 to the backend, which is the
+   only way Traefik can carry gRPC. #}
+  serversTransports:
+    {{ transport }}:
+      insecureSkipVerify: true
+{% endif %}
   services:
     {{ service.name }}-{{ route.domain }}:
       loadBalancer:
+{% if skip_verify %}
+        serversTransport: {{ transport }}
+{% endif %}
         servers:
-          - url: "http://127.0.0.1:{{ route.port }}"
+          - url: "{{ scheme }}://127.0.0.1:{{ route.port }}"
 {% endif %}

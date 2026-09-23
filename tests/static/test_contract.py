@@ -8,6 +8,25 @@ REQUIRED = {"name", "volumes", "secrets", "backup"}
 CLASSES = {"pool", "fast"}
 MODES = {"ro", "rw"}
 GROUP_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+# What a `routes:` entry may carry: the route itself, plus the two backend options a
+# single route can override for itself. Everything else about a route lives in the
+# service-wide `route:` block.
+ROUTE_KEYS = {"domain", "port", "scheme", "insecure_skip_verify"}
+SCHEMES = {"http", "https"}
+
+
+def check_backend(p, opts: dict) -> None:
+    """`scheme` and `insecure_skip_verify`, wherever the two may be declared.
+
+    Skipping verification only means anything for a TLS backend, and declaring it for a
+    plain one is a statement that does nothing -- almost always a service that meant to
+    say `scheme: https` as well. So the pair is checked together rather than each alone.
+    """
+    scheme = opts.get("scheme", "http")
+    assert scheme in SCHEMES, f"{p.name}: route scheme must be one of {sorted(SCHEMES)}, not {scheme!r}"
+    skip = opts.get("insecure_skip_verify", False)
+    assert isinstance(skip, bool), f"{p.name}: insecure_skip_verify must be a boolean"
+    assert not (skip and scheme != "https"), f"{p.name}: insecure_skip_verify needs scheme: https"
 
 
 @pytest.mark.parametrize("p", placements(), ids=lambda p: f"{p.host}/{p.name}")
@@ -39,9 +58,12 @@ def test_service_contract(p):
         assert "domain" not in spec and "port" not in spec, f"{p.name}: use either routes or domain+port"
         assert isinstance(routes, list) and routes, f"{p.name}: routes must be a non-empty list"
         for r in routes:
-            assert set(r) == {"domain", "port"}, f"{p.name}: route entries need exactly domain and port"
+            assert {"domain", "port"} <= set(r), f"{p.name}: route entries need domain and port"
+            assert set(r) <= ROUTE_KEYS, f"{p.name}: unknown route keys {set(r) - ROUTE_KEYS}"
             assert isinstance(r["port"], int)
+            check_backend(p, r)
         assert len({r["domain"] for r in routes}) == len(routes), f"{p.name}: duplicate route domains"
+    check_backend(p, spec.get("route", {}))
     for secret, ref in spec.get("host_secrets", {}).items():
         assert GROUP_RE.match(secret), f"{p.name}: invalid host secret name {secret}"
         assert re.match(r"^[a-z0-9-]+\.[A-Za-z0-9_-]+$", ref), f"{p.name}: host secret {secret} must reference <set>.<key>"

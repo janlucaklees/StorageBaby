@@ -41,6 +41,78 @@
     - /etc/containers/systemd/users
     - /var/lib/storagebaby
 
+# Traefik's own default certificate, on a host with no ACME. Without one Traefik
+# generates a fresh self-signed certificate every time it starts, which is fine for a
+# browser that clicks through the warning and fatal for a Kopia backup client: the
+# client pins the fingerprint it saw at connect time, and one Traefik restart locks it
+# out. One certificate, made once, is what makes that pin outlive a restart.
+#
+# `acme: true` hosts get their certificate from Let's Encrypt and none of this runs.
+- name: Traefik certificate directory
+  ansible.builtin.file:
+    path: /etc/storagebaby/traefik/certs
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: not (acme | bool)
+
+- name: Generate Traefik's default certificate once
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - req
+      - -x509
+      - -newkey
+      - rsa:4096
+      - -nodes
+      - -keyout
+      - /etc/storagebaby/traefik/certs/default.key
+      - -out
+      - /etc/storagebaby/traefik/certs/default.crt
+      - -days
+      - '3650'
+      - -subj
+      - /CN={{ domain }}
+      - -addext
+      - subjectAltName=DNS:{{ domain }},DNS:*.{{ domain }}
+    creates: /etc/storagebaby/traefik/certs/default.crt
+  when: not (acme | bool)
+
+# 0644 on a private key, deliberately. Traefik is rootless: the container's root is
+# `svc-traefik` on the host, so the key has to be readable by a non-root user, and the
+# alternatives are worse -- chowning it to one service user makes the platform's one
+# shared directory that service's, and a group for a single reader is bookkeeping for
+# nothing. It is acceptable because this branch only runs on a host with no ACME, which
+# is a test VM whose certificate is self-signed, throwaway and worth nothing to anyone.
+# A real host takes the `acme: true` path and never has a key here at all.
+- name: The default certificate is readable by the rootless Traefik
+  ansible.builtin.file:
+    path: /etc/storagebaby/traefik/certs/{{ item }}
+    owner: root
+    group: root
+    mode: '0644'
+  loop: [default.crt, default.key]
+  when: not (acme | bool)
+
+- name: Traefik serves it as the default certificate
+  ansible.builtin.copy:
+    dest: /etc/storagebaby/traefik/dynamic.d/00-default-certificate.yml
+    # The paths are the container's, not the host's: the unit mounts the certs
+    # directory at /etc/traefik/certs. `00-` so it is obvious in a directory the
+    # service role otherwise fills with one file per route.
+    content: |
+      tls:
+        stores:
+          default:
+            defaultCertificate:
+              certFile: /etc/traefik/certs/default.crt
+              keyFile: /etc/traefik/certs/default.key
+    owner: root
+    group: root
+    mode: '0644'
+  when: not (acme | bool)
+
 # Everything below this point writes into the storage roots, and `file: state=directory`
 # creates every missing parent on the way -- so on a host whose pool is not mounted it
 # would recreate /pool/apps and every volume under it on the root filesystem, empty,

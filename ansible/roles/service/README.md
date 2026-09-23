@@ -53,8 +53,25 @@ service would otherwise write the same file, and the second would win. The role 
 pre-Phase-3 `<name>.yml` on every converge, because a leftover would keep serving its old
 router beside the new ones.
 
-`service.route` is something else and unrelated: traefik's own shorthand for a router that
-points at an internal service (`internal: api@internal`) and for the wildcard certificate.
+`service.route` is something else: a block of options that apply to every route of the
+service. `internal: api@internal` points the router at a Traefik-internal service instead
+of a rendered one and `wildcard_cert: true` asks for the wildcard certificate — both
+traefik's own. The other two describe the backend:
+
+```yaml
+route:
+  scheme: https # http (default) or https: how Traefik reaches 127.0.0.1:<port>
+  insecure_skip_verify: true # only with https, and only for a certificate nothing can vouch for
+```
+
+A `routes:` entry may carry the same two keys and then overrides them for itself.
+
+`scheme: https` is not about secrecy on a loopback hop — it is the only way Traefik
+speaks **HTTP/2** to a backend, and therefore the only way it can carry gRPC. Kopia's
+repository clients speak gRPC and cannot opt out, so `kopia/service.yml` declares both
+keys: the server makes its own certificate, Traefik re-encrypts to it and skips a
+verification nothing could pass. `insecure_skip_verify` renders a Traefik
+`serversTransport` named after the route and attaches it to that route's loadBalancer.
 
 ## Host secrets
 
