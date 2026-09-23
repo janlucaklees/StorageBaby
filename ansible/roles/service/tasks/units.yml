@@ -120,9 +120,15 @@
 # So a changed pod is the only restart its containers need. Anything the pod does not
 # bring back is started by "Start units that are not up" below, which is one start,
 # not a second one on top of a running container.
+#
+# `reject('in', ...)` rather than `difference()`: ansible-core implements `difference`
+# as `set(a) - set(b)`, whose result comes back in arbitrary order, and the order of
+# `changed_units` is load-bearing -- the task above it exists to put build before pod
+# before container, and a surviving `[pod, build]` would restart the pod's containers
+# off the image the rebuild has not produced yet. `reject` keeps the order it is given.
 - name: A changed pod is the only restart its containers need
   ansible.builtin.set_fact:
-    changed_units: '{{ changed_units | difference(_container_units) }}'
+    changed_units: "{{ changed_units | reject('in', _container_units) | list }}"
   vars:
     _pod_units: "{{ mapped_units | selectattr('kind', 'equalto', '.pod') | map(attribute='unit') | list }}"
     _container_units: "{{ mapped_units | selectattr('kind', 'equalto', '.container') | map(attribute='unit') | list }}"

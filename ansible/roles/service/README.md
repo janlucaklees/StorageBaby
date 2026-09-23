@@ -177,6 +177,16 @@ applied, a meilisearch data directory it could not read afterwards, and a Nextcl
 copied but never installed. Whatever the pod does not bring back is started once by
 "Start units that are not up".
 
+What is dropped is _every_ `.container` of the service, not only the ones the rendered
+units bind to the pod, and that is safe for one reason worth recording:
+`test_pod_publishes_exactly_the_route_ports` in
+`tests/static/test_quadlet_conventions.py` asserts that in a service with a `.pod.j2`
+every `*.container.j2` carries `Pod=<name>.pod`, and the role's own generated backup
+sidecar does too. So no container of a pod service stays outside the pod. A container
+that deliberately did would be dropped from the restart list and never restarted —
+already `active`, so "Start units that are not up" skips it — and would keep running
+against a unit file that has changed under it.
+
 The caveat that first `.build` was expected to hit, and did: `Start units that are not up`
 starts anything whose `is-active` is not `active`, and the Podman on the test VM writes
 build units as `Type=oneshot` **without** `RemainAfterExit`, so a build that ran and
