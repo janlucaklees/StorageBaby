@@ -105,6 +105,29 @@
     changed_units: '{{ service_units }}'
   when: config_copy.changed or secret_sync.changed or host_secret_sync.changed or backup_script.changed
 
+# Quadlet binds a pod's containers to its unit, so restarting the pod already stops
+# them and brings them back. Restarting each of them again right afterwards kills a
+# container seconds into a start it has only just begun -- which on a *first* converge
+# is the one start that must not be interrupted, because it is the one that migrates a
+# schema or lays down a data directory. Measured, all three on the same run: a
+# paperless squashed migration left half-applied ("column 'created' of relation
+# 'documents_paperlesstask' does not exist", then a restart loop forever), a
+# meilisearch data directory it could no longer read ("failed to infer the version of
+# the database"), and a Nextcloud tree rsynced but never installed -- which is worse
+# than a crash, because php-fpm serves it and the after-change hooks then run `occ`
+# against an instance that answers "Nextcloud is not installed".
+#
+# So a changed pod is the only restart its containers need. Anything the pod does not
+# bring back is started by "Start units that are not up" below, which is one start,
+# not a second one on top of a running container.
+- name: A changed pod is the only restart its containers need
+  ansible.builtin.set_fact:
+    changed_units: '{{ changed_units | difference(_container_units) }}'
+  vars:
+    _pod_units: "{{ mapped_units | selectattr('kind', 'equalto', '.pod') | map(attribute='unit') | list }}"
+    _container_units: "{{ mapped_units | selectattr('kind', 'equalto', '.container') | map(attribute='unit') | list }}"
+  when: _pod_units | select('in', changed_units) | list | length > 0
+
 - name: Reload the user manager
   ansible.builtin.command: systemctl --user -M {{ svc_user }}@ daemon-reload
   when: quadlet_render.changed or backup_render.changed

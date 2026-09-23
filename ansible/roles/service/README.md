@@ -167,6 +167,16 @@ unit without a health command or without its own name fails the suite.
 container — and a changed `.build` also restarts every container of the service, because
 their image has just been rebuilt.
 
+A **changed pod is the only restart its containers need**, and they are dropped from the
+restart list when it is in there. Quadlet binds them to the pod's unit, so restarting the
+pod already stops them and brings them back; restarting each of them again seconds later
+kills a container that has only just begun its first start — the one start that must not
+be interrupted, because it is the one that migrates a schema or lays a data directory
+down. Three services broke on one converge before this: a paperless migration left half
+applied, a meilisearch data directory it could not read afterwards, and a Nextcloud tree
+copied but never installed. Whatever the pod does not bring back is started once by
+"Start units that are not up".
+
 The caveat that first `.build` was expected to hit, and did: `Start units that are not up`
 starts anything whose `is-active` is not `active`, and the Podman on the test VM writes
 build units as `Type=oneshot` **without** `RemainAfterExit`, so a build that ran and
