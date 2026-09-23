@@ -1,0 +1,26 @@
+name: immich
+port: 2283
+domain: immich
+volumes:
+  upload: { class: pool }
+  database: { class: fast }
+  model-cache: { class: fast }
+config:
+  # `postgres`, not `immich`: the migrated database is the one the old compose stack
+  # created, and that one is called postgres.
+  database_name: postgres
+  database_user: immich
+  version: v2.7.5
+  # Empty on purpose, and measured: see "Trusted proxies" in the README. A host that
+  # really does sit behind a second proxy sets it through `service_config.immich`.
+  trusted_proxies: ''
+secrets: [database_password]
+host_secrets:
+  kopia_password: kopia-clients.immich
+backup:
+  # Immich takes its own database dumps into `upload/backups`, so there is no dump
+  # timer here and no separate `backups` volume -- the README has the switch that
+  # turns them on.
+  paths: [upload]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }

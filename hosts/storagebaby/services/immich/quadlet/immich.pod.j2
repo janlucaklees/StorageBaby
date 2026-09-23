@@ -1,0 +1,16 @@
+[Pod]
+PodName=immich
+{# Literal, not `{{ service.port }}`: the static check reads this line out of the raw
+   template to compare the published ports against the declared routes. #}
+PublishPort=127.0.0.1:2283:2283
+{# The backup sidecar joins this pod and talks to the kopia server through Traefik on
+   the host, so the pod has to be able to resolve the server's own name to the host.
+   Harmless where DNS already answers for it. #}
+AddHost=kopia.{{ domain }}:host-gateway
+{# The machine learning URL is not an environment variable: it is a system setting
+   stored in the database, and both a fresh install and the database migrated off the
+   compose stack hold the compose service name `immich-machine-learning`. In a pod
+   there is no such name and no DNS that answers for it, so it is aliased to the
+   loopback the ML container actually listens on. Changing the setting in the admin UI
+   instead would make a hand edit part of the deploy. #}
+AddHost=immich-machine-learning:127.0.0.1

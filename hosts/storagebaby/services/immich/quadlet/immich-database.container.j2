@@ -1,0 +1,30 @@
+[Unit]
+Description=Immich database
+
+[Container]
+{# Pinned by digest, not by tag, and deliberately without AutoUpdate=registry: this is
+   not stock postgres but Immich's build of it with the vector extensions the search
+   index needs, and server and extension versions have to move together. Upstream
+   pins the same digest in its compose file; bump both at once. #}
+Image=ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:5f6a838e4e44c8e0e019d0ebfe3ee8952b69afc2809b2c25f7b0119641978e91
+ContainerName=immich-database
+Pod=immich.pod
+Environment=TZ={{ tz }}
+Environment=POSTGRES_DB={{ service.config.database_name }}
+Environment=POSTGRES_USER={{ service.config.database_user }}
+Environment=POSTGRES_PASSWORD_FILE=/run/secrets/database_password
+{# Checksums are set when the cluster is initialised and cannot be turned on later, so
+   the line has to be here from the first start. Immich asks for them because a silently
+   corrupted page in the vector index is otherwise found by nobody. #}
+Environment=POSTGRES_INITDB_ARGS=--data-checksums
+Secret=database_password
+Volume={{ volumes.database }}:/var/lib/postgresql/data
+HealthCmd=pg_isready -U {{ service.config.database_user }} -d {{ service.config.database_name }}
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

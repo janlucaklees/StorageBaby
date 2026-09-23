@@ -1,0 +1,40 @@
+[Unit]
+Description=Immich server
+After=immich-database.service immich-cache.service
+Wants=immich-database.service immich-cache.service
+
+[Container]
+Image=ghcr.io/immich-app/immich-server:{{ service.config.version }}
+ContainerName=immich-server
+Pod=immich.pod
+Environment=TZ={{ tz }}
+Environment=DB_HOSTNAME=127.0.0.1
+Environment=DB_DATABASE_NAME={{ service.config.database_name }}
+Environment=DB_USERNAME={{ service.config.database_user }}
+Environment=DB_PASSWORD_FILE=/run/secrets/database_password
+Environment=REDIS_HOSTNAME=127.0.0.1
+{# Rendered only when a host declares one. `trusted_proxies` is empty by design here --
+   through pasta, Traefik's requests arrive from the host's own address, which is a
+   different literal per host, and Immich uses the value only to pick a client address
+   out of X-Forwarded-For for its logs and rate limiting. The README has the
+   measurement. #}
+{% if service.config.trusted_proxies | default('') %}
+Environment=IMMICH_TRUSTED_PROXIES={{ service.config.trusted_proxies }}
+{% endif %}
+Secret=database_password
+Volume={{ volumes.upload }}:/usr/src/app/upload
+{# Upstream mounts this beside TZ: the server shells out to ffmpeg and exiftool, which
+   read /etc/localtime rather than the variable. #}
+Volume=/etc/localtime:/etc/localtime:ro
+HealthCmd=curl -sf http://127.0.0.1:2283/api/server/ping || exit 1
+HealthOnFailure=kill
+{# First start runs the schema migrations, and on the vectorchord database that includes
+   building the extensions' indexes. #}
+HealthStartPeriod=120s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

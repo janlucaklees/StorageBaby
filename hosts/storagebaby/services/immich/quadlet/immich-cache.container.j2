@@ -1,0 +1,18 @@
+[Unit]
+Description=Immich cache and job queue
+
+[Container]
+Image=docker.io/library/redis:alpine
+ContainerName=immich-cache
+Pod=immich.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+HealthCmd=redis-cli --raw incr ping
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -25,4 +25,5 @@ secrets: [server_password, repository_password, b2_key_id, b2_application_key]
 host_secrets:
   client_paperless: kopia-clients.paperless
   client_openarchiver: kopia-clients.openarchiver
+  client_immich: kopia-clients.immich
 backup: none

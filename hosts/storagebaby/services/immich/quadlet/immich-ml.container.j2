@@ -1,0 +1,26 @@
+[Unit]
+Description=Immich machine learning
+
+[Container]
+Image=ghcr.io/immich-app/immich-machine-learning:{{ service.config.version }}
+ContainerName=immich-ml
+Pod=immich.pod
+Environment=TZ={{ tz }}
+{# The models it downloads on first use, kept out of the container so an image update
+   does not mean fetching a couple of gigabytes of weights again. #}
+Volume={{ volumes['model-cache'] }}:/cache
+{# Unlike the server's image this one carries neither curl nor wget -- but it is a
+   Python service, so its own interpreter makes the request. urlopen raises on a
+   non-2xx answer, which is the non-zero exit the probe needs. #}
+HealthCmd=python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:3003/ping", timeout=5)'
+HealthOnFailure=kill
+{# The image is large and loads its runtime before it binds; a model download happens
+   later, on the first request, and does not block the port. #}
+HealthStartPeriod=120s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
