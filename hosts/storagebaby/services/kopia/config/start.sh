@@ -76,6 +76,54 @@ if [ ! -f "$config_path" ]; then
 	esac
 fi
 
+# Repository users, one per backup client. `kopia server users add` is a repository
+# command, not a server one -- it writes a manifest -- so this runs here, before the
+# server binds, and needs nothing but the connection established above.
+#
+# The unit renders one `Secret=client_<service>` per `host_secrets` key that starts
+# with `client_`, so the files below are the whole client list: no name is spelled out
+# in this script, and adding a client is a line in kopia's service.yml plus the same
+# value on the client's side of the set.
+#
+# `<service>@$KOPIA_CLIENT_HOSTS` is the identity kopia matches a connecting client
+# by, and it has to be the pair the sidecar announces: KOPIA_CLIENT_USERNAME is the
+# service name, KOPIA_CLIENT_HOSTNAME the host -- the same `hostname` this variable is
+# rendered from.
+for f in /run/secrets/client_*; do
+	# An unmatched glob stays literal in POSIX sh, which is the "no clients yet" case.
+	[ -e "$f" ] || continue
+	name="${f##*/client_}"
+	user="$name@$KOPIA_CLIENT_HOSTS"
+	# kopia 0.23.1 has no --user-password-file: `server users add|set` accept only
+	# --user-password, --user-password-hash and the interactive --ask-password
+	# (cli/command_user_add_set.go). So the value goes through argv, where it is
+	# visible in this container's `ps` and, on the host, in the cmdline of a process
+	# owned by svc-kopia's subuid -- readable by root and by svc-kopia, both of which
+	# already hold the value in the podman secret store. Hashing it first does not
+	# help: `server users hash-password` takes the password through argv too.
+	if out="$(kopia server users add "$user" --user-password="$(cat "$f")" 2>&1)"; then
+		echo "kopia: registered client $user" >&2
+	else
+		case "$out" in
+			# "error getting new user profile: <user>: user already exists" --
+			# `add` refuses an existing user, `set` is the update form of the
+			# same command, and the pair is idempotent in effect. Output is
+			# captured rather than shown so that this expected case is not a
+			# scary line in the journal on every restart; every other failure
+			# prints what kopia said and takes the container down with it,
+			# because a server whose clients cannot authenticate is not up.
+			*'user already exists'*)
+				kopia server users set "$user" --user-password="$(cat "$f")"
+				echo "kopia: updated client $user" >&2
+				;;
+			*)
+				echo "$out" >&2
+				exit 1
+				;;
+		esac
+	fi
+done
+
 # No --server-password: it is KOPIA_SERVER_PASSWORD above. --server-username stays a
 # flag -- it is not a secret, and spelling it out here is what says basic auth is on.
 exec kopia server start \

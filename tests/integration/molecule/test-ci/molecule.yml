@@ -5,12 +5,18 @@ driver:
   options:
     managed: true
 platforms:
-  - name: test-a
-    hostname: test-a
+  # The VM's name *is* the host folder under `hosts/`: cloud-init sets the hostname
+  # from it, and everything downstream -- which services are placed, which host.yml
+  # is loaded, which generated secrets are seeded -- keys off `inventory_hostname`.
+  # So `MOLECULE_HOST` selects a placement, not just a machine name: `test-a` (the
+  # default) runs everything on the operator's machine, `test-ci` the smaller subset
+  # a GitHub runner can carry. One scenario, two hosts, no second copy of the plumbing.
+  - name: ${MOLECULE_HOST:-test-a}
+    hostname: ${MOLECULE_HOST:-test-a}
     # Overridable so a smaller runner can still run the scenario: CI passes 5120/2,
     # which fits a 7 GB GitHub-hosted runner. Molecule interpolates these from the
     # environment, and the Makefile forwards both into the devtools container.
-    memory_mib: ${MOLECULE_VM_MEMORY_MIB:-8192}
+    memory_mib: ${MOLECULE_VM_MEMORY_MIB:-12288}
     vcpus: ${MOLECULE_VM_VCPUS:-4}
     disk: 20G
 provisioner:

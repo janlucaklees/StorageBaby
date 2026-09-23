@@ -24,12 +24,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: static
     timeout-minutes: 45
-    # A GitHub-hosted runner has ~7 GB of RAM, less than the 8192 MiB the scenario asks
-    # for locally. The scenario reads both from the environment and defaults to the
-    # local size when they are unset.
+    # A GitHub-hosted runner has ~7 GB of RAM, less than the 12288 MiB the scenario
+    # asks for locally. The scenario reads all three from the environment and falls
+    # back to the local sizes and to `test-a` when they are unset.
     env:
       MOLECULE_VM_MEMORY_MIB: '5120'
       MOLECULE_VM_VCPUS: '2'
+      # `test-a` places every service and needs a 12 GiB VM; `test-ci` is the subset
+      # that still exercises every mechanism once and fits the runner.
+      MOLECULE_HOST: test-ci
     steps:
       - uses: actions/checkout@v4
       # Test hosts are KVM VMs driven through the runner's libvirt socket, which

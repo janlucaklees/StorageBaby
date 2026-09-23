@@ -1,0 +1,25 @@
+# The CI test host. Same platform as `test-a`, same domain, same storage roots -- only
+# the placement differs: a GitHub-hosted runner has ~7 GB of RAM and no time to spare,
+# so this host runs the subset that still exercises every mechanism once (the shared
+# traefik, one plain service, the kopia server, one `.build` service and the paperless
+# pod). `test-a` keeps everything and runs on the operator's machine.
+#
+# Which of the two a run uses is `MOLECULE_HOST` (default `test-a`); CI sets `test-ci`.
+domain: test.local
+acme: false
+acme_email: test@test.local
+tz: Europe/Berlin
+storage_roots:
+  pool: /srv/pool
+  fast: /srv/fast
+# The test VM has one filesystem; both storage roots are ordinary directories on it.
+mountpoints: []
+volume_overrides: {}
+deploy_timer: false
+gpu: false
+packages: []
+# A test host has no Backblaze account, so kopia gets a local repository under its
+# `repo` volume instead of the S3 one storagebaby declares.
+service_config:
+  kopia:
+    repository: filesystem

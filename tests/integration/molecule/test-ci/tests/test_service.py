@@ -54,6 +54,37 @@ def unit_stem(template: Path) -> str:
     return template.name.removesuffix(".j2").rsplit(".", 1)[0]
 
 
+def unit_name(template: Path) -> str:
+    """`paperless-dump.timer.j2` -> `paperless-dump.timer`, for units systemd reads as they are.
+
+    Timers and their services are plain user units, so the file name *is* the unit
+    name -- unlike a Quadlet source, where `.container` becomes `.service`.
+    """
+    return template.name.removesuffix(".j2")
+
+
+def pod_unit(spec_path: Path) -> str | None:
+    """`<name>-pod.service` when the service is a pod, None when it is one container.
+
+    Quadlet turns `<stem>.pod` into `<stem>-pod.service`. The static contract allows
+    exactly one pod per service, named after it, so the first template is the only one.
+    """
+    pods = quadlets(spec_path, "pod")
+    return f"{unit_stem(pods[0])}-pod.service" if pods else None
+
+
+def backup_paths(spec: dict) -> list[str]:
+    """The volumes the generated sidecar snapshots, or [] when the service declares none."""
+    return [] if spec["backup"] == "none" else spec["backup"]["paths"]
+
+
+def volume_path(hostvars: dict, spec: dict, volume: str) -> str:
+    """Where one of a service's volumes lives on the host: class root, or an override."""
+    override = hostvars.get("volume_overrides", {}).get(f"{spec['name']}/{volume}")
+    root = hostvars["storage_roots"][spec["volumes"][volume]["class"]]
+    return override or f"{root}/{spec['name']}/{volume}"
+
+
 def container_name(template: Path) -> str:
     """The container's name: `ContainerName=` if the template sets one, else the stem.
 
@@ -76,13 +107,36 @@ def image_tag(template: Path) -> str | None:
     return None
 
 
-def _quadlet_case(kind: str):
-    cases = [(owner, p, t) for owner, p in SPECS for t in quadlets(p, kind)]
+def kopia_server(host) -> tuple[str, str] | None:
+    """(service user, container name) of the kopia server on this VM, or None.
+
+    Looked up rather than spelled out, for the same reason every other check here is
+    derived from the repo: a host that places a backup client has to place the server
+    too, and this is what says so.
+    """
+    hostname = host.check_output("uname -n")
+    for owner, spec_path in SPECS:
+        if spec_path.parent.name == "kopia" and owner in ("shared", hostname):
+            return "svc-kopia", container_name(quadlets(spec_path, "container")[0])
+    return None
+
+
+def _template_case(pattern: str):
+    """Parametrize over every `quadlet/<pattern>` of every spec, e.g. `*.container.j2`.
+
+    An empty match set is a skipped test rather than a missing one, which is what lets
+    a check for a feature nothing uses yet be written before the first service uses it.
+    """
+    cases = [(owner, p, t) for owner, p in SPECS for t in sorted((p.parent / "quadlet").glob(pattern))]
     return pytest.mark.parametrize(
         "owner,spec_path,template",
         cases,
         ids=[f"{owner}/{t.name}" for owner, _, t in cases],
     )
+
+
+def _quadlet_case(kind: str):
+    return _template_case(f"*.{kind}.j2")
 
 
 @service_case
@@ -141,9 +195,8 @@ def test_volume_dirs_belong_to_the_service(host, owner, spec_path):
     user = f"svc-{spec['name']}"
     svc_uid = host.user(user).uid
     first, count = subuid_range(host, user)
-    for volume, cfg in (spec["volumes"] or {}).items():
-        override = hostvars.get("volume_overrides", {}).get(f"{spec['name']}/{volume}")
-        path = override or f"{hostvars['storage_roots'][cfg['class']]}/{spec['name']}/{volume}"
+    for volume in spec["volumes"] or {}:
+        path = volume_path(hostvars, spec, volume)
         d = host.file(path)
         assert d.is_directory, path
         # The role creates the directory svc-owned and then leaves it alone, so an image
@@ -198,15 +251,111 @@ def test_build_unit_succeeded(host, owner, spec_path, template):
 def test_domain_answers_over_https(host, owner, spec_path):
     hostvars = placed(host, owner)
     spec = load_spec(spec_path)
-    if "domain" not in spec:
+    routes = routes_of(spec)
+    if not routes:
         pytest.skip("no domain, no route")
-    fqdn = f"{spec['domain']}.{hostvars['domain']}"
-    r = host.run(f"curl -sk -o /dev/null -w '%{{http_code}}' -H 'Host: {fqdn}' https://127.0.0.1/")
-    code = r.stdout.strip()
-    # The rc is not optional: curl prints `000` and exits non-zero when it never got a
-    # response at all, and a status test on its own would read that as a pass.
-    assert r.rc == 0, f"{fqdn}: curl failed with {code}: {r.stderr}"
-    assert code.isdigit(), r.stdout
-    # 404 is Traefik matching no router at all, 5xx a backend that cannot answer.
-    # Anything in between -- a redirect, a login page, a 401 -- proves the route arrives.
-    assert 200 <= int(code) < 500 and code != "404", f"{fqdn} answered {code}"
+    # Every route, not just the first: a pod that publishes two ports is exactly the
+    # case where checking one of them proves nothing about the other.
+    for route in routes:
+        fqdn = f"{route['domain']}.{hostvars['domain']}"
+        r = host.run(f"curl -sk -o /dev/null -w '%{{http_code}}' -H 'Host: {fqdn}' https://127.0.0.1/")
+        code = r.stdout.strip()
+        # The rc is not optional: curl prints `000` and exits non-zero when it never got
+        # a response at all, and a status test on its own would read that as a pass.
+        assert r.rc == 0, f"{fqdn}: curl failed with {code}: {r.stderr}"
+        assert code.isdigit(), r.stdout
+        # 404 is Traefik matching no router at all, 5xx a backend that cannot answer.
+        # Anything in between -- a redirect, a login page, a 401 -- proves the route
+        # arrives.
+        assert 200 <= int(code) < 500 and code != "404", f"{fqdn} answered {code}"
+
+
+@service_case
+def test_pod_unit_active(host, owner, spec_path):
+    """A multi-container service is one pod unit with its containers pulled in behind it.
+
+    The pod is what owns the network namespace the parts share and the ports the route
+    points at, so a pod that is not up is a service that is not reachable even when
+    every container happens to be running.
+    """
+    placed(host, owner)
+    unit = pod_unit(spec_path)
+    if not unit:
+        pytest.skip("single-container service, no pod")
+    user = f"svc-{load_spec(spec_path)['name']}"
+    r = host.run(f"systemctl --user -M {user}@ is-active {unit}")
+    assert r.stdout.strip() == "active", r.stderr
+
+
+@_template_case("*.timer.j2")
+def test_timer_enabled_and_active(host, owner, spec_path, template):
+    """Both halves: enabled survives a reboot, active is the timer waiting to elapse.
+
+    `is-enabled` alone would pass for a timer that was never started, and `is-active`
+    alone for one that runs now and is gone after the next boot.
+    """
+    placed(host, owner)
+    user = f"svc-{load_spec(spec_path)['name']}"
+    unit = unit_name(template)
+    enabled = host.run(f"systemctl --user -M {user}@ is-enabled {unit}")
+    assert enabled.stdout.strip() == "enabled", enabled.stderr
+    active = host.run(f"systemctl --user -M {user}@ is-active {unit}")
+    assert active.stdout.strip() == "active", active.stderr
+
+
+@_template_case("*-dump.service.j2")
+def test_dump_service_writes_a_dump(host, owner, spec_path, template):
+    """A database is backed up as a dump, so the dump has to actually appear.
+
+    Run once here rather than waited for: the timer's schedule is nightly, and the
+    claim worth testing is that the command in the unit works against the running
+    database container -- not that systemd can tell the time.
+    """
+    hostvars = placed(host, owner)
+    spec = load_spec(spec_path)
+    user = f"svc-{spec['name']}"
+    unit = unit_name(template)
+    assert "backups" in (spec["volumes"] or {}), f"{spec['name']}: a dump unit needs a `backups` volume"
+    path = volume_path(hostvars, spec, "backups")
+    # A oneshot's `start` blocks until the job is done, so the dump is complete when
+    # this returns and a failing dump is a failing start -- no polling, no sleep.
+    r = host.run(f"timeout 600 systemctl --user -M {user}@ start {unit}")
+    journal = f"journalctl _SYSTEMD_USER_UNIT={unit} --no-pager | tail -40"
+    assert r.rc == 0, host.run(journal).stdout
+    listing = host.run(f"ls -1 {path}")
+    assert any(f.endswith(".dump") for f in listing.stdout.split()), (
+        f"{path} holds no *.dump after {unit}: {listing.stdout!r}\n{host.run(journal).stdout}"
+    )
+
+
+@service_case
+def test_backup_sidecar_snapshots_to_the_server(host, owner, spec_path):
+    """The whole backup path in one test: client connected, snapshot taken, server has it.
+
+    Checking only `repository status` would pass for a client that can log in and write
+    nothing, and checking only the sidecar's own view would pass for a snapshot that
+    never left it. So the snapshot is triggered on the client and looked for on the
+    server, under the `<service>@<host>` identity the server registered it as -- which
+    is also what proves the two halves of the shared `kopia-clients` password match.
+    """
+    placed(host, owner)
+    spec = load_spec(spec_path)
+    paths = backup_paths(spec)
+    if not paths:
+        pytest.skip("no backup")
+    name = spec["name"]
+    user = f"svc-{name}"
+    r = run_as(host, user, f"podman exec {name}-backup kopia repository status")
+    assert r.rc == 0, f"{name}-backup is not connected to the repository: {r.stderr}"
+    # One path is enough: the policy loop in the sidecar script is the same for each,
+    # and the first one is the one the retention policy was set on first.
+    first = paths[0]
+    r = run_as(host, user, f"podman exec {name}-backup kopia snapshot create /data/{first}")
+    assert r.rc == 0, f"{name}-backup could not snapshot /data/{first}: {r.stderr}"
+    server = kopia_server(host)
+    assert server, f"{name} declares a backup but no kopia server is placed on this host"
+    kopia_user, kopia_container = server
+    r = run_as(host, kopia_user, f"podman exec {kopia_container} kopia snapshot list --all")
+    assert r.rc == 0, f"could not list snapshots on the kopia server: {r.stderr}"
+    source = f"{name}@{host.check_output('uname -n')}:/data/{first}"
+    assert source in r.stdout, f"{source} is not among the server's snapshot sources:\n{r.stdout}"

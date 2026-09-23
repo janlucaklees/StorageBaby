@@ -35,19 +35,20 @@ secrets.sops.yaml  sops+age encrypted key/value pairs
 - **`config`** — free-form, readable in templates as `service.config.*`, and overridable per host through `service_config: { <service>: { ... } }` in `host.yml` (host wins, deep-merged in the playbook). That is how the test host gives kopia a filesystem repository while storagebaby uses S3.
 - **`port`** is optional, and required only when there is a `domain`. paperless-upload has neither.
 
-Placing a storagebaby service on the test host is a symlink, never a copy — one folder, two hosts: `hosts/test-a/services/<name> -> ../../storagebaby/services/<name>`.
+Placing a storagebaby service on a test host is a symlink, never a copy — one folder, several hosts: `hosts/test-a/services/<name> -> ../../storagebaby/services/<name>`. There are two test hosts: `test-a` places everything and runs on the workstation, `test-ci` a subset that fits a GitHub runner. `MOLECULE_HOST` picks which one the integration scenario converges (default `test-a`).
 
 The generic `service` role in `ansible/roles/service/` turns that into a running service: system user `svc-<name>` with subids and linger, volume and bind directories, group memberships, `podman secret`s synced from sops, quadlets rendered into `/etc/containers/systemd/users/<uid>/`, a Traefik route file, then restarts only what changed.
 
 Work on the repo through the Makefile — everything runs in the `devtools` image, nothing is installed on the workstation:
 
 ```bash
-make devtools                         # build the tooling image (once)
-make test-static                      # contract, secrets, render checks
-make test-integration                 # Molecule scenario test-ci in a KVM VM (needs libvirt + KVM)
-make molecule CMD=converge            # a single Molecule step in that scenario
-make molecule-login                   # SSH into the running test VM
-make molecule-exec CMD='podman ps -a' # one command on it, no TTY needed
+make devtools                               # build the tooling image (once)
+make test-static                            # contract, secrets, render checks
+make test-integration                       # Molecule scenario test-ci in a KVM VM (needs libvirt + KVM)
+MOLECULE_HOST=test-ci make test-integration # the same scenario on the smaller CI placement
+make molecule CMD=converge                  # a single Molecule step in that scenario
+make molecule-login                         # SSH into the running test VM
+make molecule-exec CMD='podman ps -a'       # one command on it, no TTY needed
 make sops FILE=hosts/shared/services/traefik/secrets.sops.yaml
 ```
 

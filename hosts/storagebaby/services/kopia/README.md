@@ -3,8 +3,10 @@
 The central [Kopia](https://kopia.io) repository server. It owns one encrypted
 repository and hands out per-client accounts; the application-owned backup clients
 (immich, paperless, nextcloud) get a Kopia account each and push their snapshots into
-it. Those clients are Phase 3 — right now this is a server with an empty repository
-and no users but the admin.
+it. Accounts are not clicked together either: the server registers one per
+`client_<service>` secret on every start — see [Client registration is declared
+too](#client-registration-is-declared-too). Until the first pod lands, no service
+declares one, so this is a server with an empty repository and no users but the admin.
 
 Web UI: `https://kopia.<host domain>` — `kopia.home.klees.io` on storagebaby.
 
@@ -78,6 +80,10 @@ Four, all `Secret=` in the unit and read from `/run/secrets/<name>`:
 | `repository_password` | the repository's encryption password (`KOPIA_PASSWORD`) |
 | `b2_key_id`           | Backblaze application key id, used as the S3 access key |
 | `b2_application_key`  | Backblaze application key, used as the S3 secret key    |
+
+Four of its own, that is. The `client_<service>` passwords are `host_secrets` and come
+from the host's `kopia-clients` set instead, because the client services need the same
+values — the registration section below has the whole mechanism.
 
 > **The two B2 values in `secrets.sops.yaml` are `REPLACE_ME`.** There was no
 > credential to carry over from the old stack. Put the real ones in with
@@ -185,27 +191,88 @@ repository is created or connected before the server binds.
 The same 401 is what makes the route pass the platform's HTTPS check: Traefik reaching
 a backend that answers 401 proves the route, where a 404 would mean no router matched.
 
-## Registering a client (Phase 3)
+## Client registration is declared too
 
-The old stack had `make register USER=... PASSWORD_FILE=...`. The platform equivalent
-runs against the container as the service user — `podman exec` needs that user's
-runtime directory and session bus, which is what the `env` prefix is for:
+The old stack had `make register USER=... PASSWORD_FILE=...` — one shell command per
+client, run by hand, remembered nowhere. Here a client account is three lines of git.
 
-```sh
-uid=$(id -u svc-kopia)
-cd /tmp && runuser -u svc-kopia -- env \
-	XDG_RUNTIME_DIR=/run/user/$uid \
-	DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \
-	podman exec kopia kopia server users add immich@storagebaby --user-password=…
+**1. The shared value.** Both sides of a client password are the same string, so it
+lives once, in the host's secret set `hosts/storagebaby/secrets/kopia-clients.sops.yaml`:
+
+```yaml
+paperless: <the password>
+immich: <the password>
+…
 ```
 
-No password prompt: the repository credential is persisted (above). Kopia reloads its
-user list on `SIGHUP` (`podman exec kopia kill -HUP 1`).
+**2. The server's side.** `service.yml` names the keys it needs, prefixed `client_`:
+
+```yaml
+host_secrets:
+  client_paperless: kopia-clients.paperless
+```
+
+The role syncs each into a podman secret of `svc-kopia`, and the unit template renders
+one `Secret=client_<service>` line per key with that prefix — so the container sees
+`/run/secrets/client_paperless` and nothing that is not declared.
+
+**3. The client's side.** The backing service declares the other half of the same
+reference, and the role's generated sidecar picks it up:
+
+```yaml
+host_secrets:
+  kopia_password: kopia-clients.paperless
+```
+
+`config/start.sh` then does the registration itself, on every start, after the
+repository is connected and before the server binds:
+
+```sh
+for f in /run/secrets/client_*; do
+	name="${f##*/client_}"
+	kopia server users add "$name@$KOPIA_CLIENT_HOSTS" --user-password="$(cat "$f")" \
+		|| kopia server users set … # when the user already exists
+done
+```
+
+`kopia server users add` is a **repository** command, not a server one — it writes a
+manifest — which is why it can run before `kopia server start` and needs no running
+server and no password prompt (the repository credential is persisted, above).
+`add` refuses an existing user with `user already exists`; that one case falls through
+to `set`, the update form of the same command. Every other failure aborts the start,
+loudly, rather than bringing up a server whose clients cannot authenticate.
+
+`KOPIA_CLIENT_HOSTS` is rendered from `{{ hostname }}`, the host the service is placed
+on. It is the second half of the identity kopia matches a client by: the sidecar
+announces `KOPIA_CLIENT_USERNAME=<service>` and `KOPIA_CLIENT_HOSTNAME=<host>`, so the
+account this script creates has to be exactly `<service>@<host>`.
+
+> **The password goes through argv.** kopia 0.23.1's `server users add|set` accept only
+> `--user-password`, `--user-password-hash` and the interactive `--ask-password` — there
+> is no `--user-password-file` (`cli/command_user_add_set.go`). So for the lifetime of
+> that one call the value is visible in the container's `ps` and in the host's
+> `/proc/<pid>/cmdline` for a process owned by a subuid of `svc-kopia` — readable by
+> root and by `svc-kopia`, both of which already hold the value in the podman secret
+> store. Hashing it first buys nothing: `server users hash-password` takes the password
+> through argv as well. Revisit if a later kopia grows a file or envar form.
+
+**Adding a client** is therefore: put the value in the set
+(`make sops FILE=hosts/storagebaby/secrets/kopia-clients.sops.yaml`), add
+`client_<service>` to this service's `host_secrets`, add `kopia_password` to the
+client's, converge. The secret change restarts `kopia.service`, which re-runs the
+registration. Nothing is typed at a shell, and a rotated password is one edit on one
+line rather than two that can drift apart.
 
 Each client gets only its own Kopia account: no Backblaze credentials, no repository
-password, and by default visibility of only its own snapshots and policies. Wiring that
-up per client is Phase 3's job, and it will not be done by hand at a shell — the client
-services declare their own `kopia_password` secret.
+password, and by default visibility of only its own snapshots and policies.
+
+> The set's four values are `REPLACE_ME` — placeholders for paperless, openarchiver,
+> immich and nextcloud, whose pods arrive over the rest of Phase 3. A test host never
+> uses this file: `prepare.yml` generates its own set, with a fresh random value per
+> key, encrypted to the VM's own age key.
+
+A running server rereads its user list within 5–10 minutes, or immediately on
+`kopia server refresh`.
 
 ## Volumes
 

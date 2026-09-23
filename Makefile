@@ -1,10 +1,14 @@
 -include .env
 
 # `-include .env` makes these make variables, not environment ones, and the bare
-# `-e MOLECULE_VM_*` pass-through below forwards only what is already in the
+# `-e MOLECULE_*` pass-through below forwards only what is already in the
 # environment -- so without this, a value set in .env never reached the container and
-# Molecule silently fell back to its 8192/4 defaults.
-export MOLECULE_VM_MEMORY_MIB MOLECULE_VM_VCPUS
+# Molecule silently fell back to its defaults.
+# MOLECULE_HOST picks which host folder the integration scenario converges (default
+# `test-a`, CI uses `test-ci`); it is exported here so `.env` can set it too, and
+# `MOLECULE_HOST=test-ci make test-integration` works because make re-exports what it
+# inherited.
+export MOLECULE_VM_MEMORY_MIB MOLECULE_VM_VCPUS MOLECULE_HOST
 
 DEVTOOLS_IMAGE := storagebaby-devtools
 MOLECULE_CACHE := storagebaby-molecule-cache
@@ -36,7 +40,7 @@ DEVTOOLS_RUN_VM := docker run --rm -t --network host \
 	-v $(MOLECULE_CACHE):/root/.cache/molecule \
 	-e HOME=/root \
 	-e MOLECULE_EPHEMERAL_DIRECTORY=$(MOLECULE_EPHEMERAL) \
-	-e MOLECULE_VM_MEMORY_MIB -e MOLECULE_VM_VCPUS \
+	-e MOLECULE_VM_MEMORY_MIB -e MOLECULE_VM_VCPUS -e MOLECULE_HOST \
 	$(DEVTOOLS_IMAGE)
 
 # Adds the operator's age key directory.

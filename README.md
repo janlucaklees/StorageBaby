@@ -289,7 +289,8 @@ occasional restart. The fix belongs in git.
     make format                # prettier over the whole repo
     make fmt-check             # check only, no writes
     make test-static           # contract, secrets, render checks
-    make test-integration      # Molecule scenario test-ci in a KVM VM
+    make test-integration      # Molecule scenario test-ci in a KVM VM, converging hosts/test-a
+    MOLECULE_HOST=test-ci make test-integration   # same scenario, the smaller CI placement
     make molecule CMD=converge # a single Molecule step in that scenario
     make molecule-login        # SSH into the running test VM
     make molecule-exec CMD='podman ps -a'   # one command on it, no TTY needed

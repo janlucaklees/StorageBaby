@@ -58,6 +58,7 @@
     - name: Placed services, shared first
       ansible.builtin.set_fact:
         _placed: "{{ (_shared.files | map(attribute='path') | sort) + (_own.files | map(attribute='path') | sort) }}"
+        _refs: []
 
     - name: Secrets override dir on the controller
       ansible.builtin.file:
@@ -87,6 +88,51 @@
       loop_control:
         label: '{{ item | dirname | basename }}'
       when: (lookup('file', item) | from_yaml).secrets | length > 0
+      delegate_to: localhost
+      changed_when: true
+
+    # `host_secrets` are the other half: values shared between services of one host,
+    # living in `hosts/<host>/secrets/<set>.sops.yaml` rather than in a service folder.
+    # A real host's sets are committed and encrypted to the operator; a test host has
+    # to grow its own, and both sides of a shared value have to be the *same* random
+    # string -- that is the whole point of a set. So the references are collected
+    # first, grouped by set, and one file per set is written with one value per key:
+    # kopia's `client_paperless` and paperless's `kopia_password` both name
+    # `kopia-clients.paperless`, and so both get that key's single generated value.
+    - name: Collect every host secret reference of every placed service
+      ansible.builtin.set_fact:
+        _refs: "{{ _refs + ((lookup('file', item) | from_yaml).host_secrets
+          | default({}) | dict2items | map(attribute='value') | list) }}"
+      loop: '{{ _placed }}'
+      loop_control:
+        label: '{{ item | dirname | basename }}'
+
+    - name: The set names they reference
+      ansible.builtin.set_fact:
+        _set_names: "{{ _refs | map('regex_replace', '\\..*$', '') | unique | sort | list }}"
+
+    # No set is referenced until the first pod lands, so this loop is empty today and
+    # the task is a no-op -- which is exactly what it has to be, rather than writing an
+    # empty file or failing on one.
+    - name: Write and encrypt one file per referenced host secret set
+      ansible.builtin.shell: |
+        set -euo pipefail
+        rm -f "$TMP"
+        {% for key in (_refs | select('match', item ~ '\.') | map('regex_replace', '^[^.]*\.', '') | unique | sort | list) %}
+        printf '%s: "%s"\n' '{{ key }}' "$(head -c 24 /dev/urandom | base64 | tr -d '/+=')" >> "$TMP"
+        {% endfor %}
+        sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "{{ _hosts_root }}/{{ inventory_hostname }}/secrets/{{ item }}.sops.yaml"
+        rm -f "$TMP"
+      args:
+        executable: /bin/bash
+        # Same reason as above: from /tmp sops finds no .sops.yaml whose creation rules
+        # would override the --age recipient with the operator's production key.
+        chdir: /tmp
+      environment:
+        TMP: '/tmp/{{ inventory_hostname }}-set-{{ item }}.yaml'
+      loop: '{{ _set_names }}'
+      loop_control:
+        label: '{{ item }}'
       delegate_to: localhost
       changed_when: true
 

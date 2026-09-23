@@ -33,10 +33,22 @@ Environment=KOPIA_SERVER_USERNAME={{ service.config.server_username }}
 Environment=KOPIA_REPOSITORY={{ service.config.repository }}
 Environment=KOPIA_S3_ENDPOINT={{ service.config.s3_endpoint | default('') }}
 Environment=KOPIA_S3_BUCKET={{ service.config.s3_bucket | default('') }}
+{# The hostname half of every client identity. Kopia matches a connecting client by
+   `user@hostname`, and the sidecar announces `<service>@{{ hostname }}` -- so the
+   start script has to register exactly that pair, and this is where it reads the
+   host from. Plural because it is the one host every client on this machine uses. #}
+Environment=KOPIA_CLIENT_HOSTS={{ hostname }}
 Secret=server_password
 Secret=repository_password
 Secret=b2_key_id
 Secret=b2_application_key
+{# One secret per backup client: the `client_<service>` half of the shared
+   `kopia-clients.<service>` value, whose other half is the client's own
+   `kopia_password`. Sorted so a reordered service.yml is not a unit change, and
+   filtered on the prefix because kopia may hold other host secrets one day. #}
+{% for key in service.host_secrets | default({}) | list | select('match', 'client_') | sort %}
+Secret={{ key }}
+{% endfor %}
 Volume={{ config_dir }}/start.sh:{{ config_dir }}/start.sh:ro
 Volume={{ volumes.config }}:/app/config
 Volume={{ volumes.cache }}:/app/cache
