@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 
 import pytest
-from test_service import HOSTS, SPECS, container_name, load_spec, volume_path
+from test_service import HOSTS, SPECS, container_name, load_spec, pod_unit, volume_path
 
 DEPLOY = "timeout 900 systemctl start storagebaby-deploy.service"
 JOURNAL = "journalctl -u storagebaby-deploy.service --no-pager | tail -80"
@@ -26,19 +26,25 @@ def active_since(host, user, unit):
     return host.run(cmd).stdout.strip()
 
 
-def other_placed_service(host) -> str | None:
-    """The first service placed on this VM that is not traefik, or None if there is none.
+def other_placed_service(host) -> tuple[str, str] | None:
+    """(name, top unit) of the first service placed here that is not traefik, or None.
 
     Derived from the repo rather than hard-coded: the second half of the claim below is
     "and nothing else restarted", and that is only worth asserting against a service the
     host actually runs. `SPECS` is every spec in the repo; `owner` is 'shared' or the
     host folder it lives under, which is what decides placement.
+
+    The unit is the *pod's* when the service is a pod, because a pod service has no
+    `<name>.service` at all -- and `systemctl show` answers for a unit that does not
+    exist with `ActiveEnterTimestampMonotonic=0`. Asking for the wrong name would
+    therefore compare 0 with 0 and let the claim pass without checking anything, which
+    is exactly what happened the moment a pod sorted first on this host.
     """
     hostname = host.check_output("uname -n")
     for owner, spec_path in SPECS:
         name = spec_path.parent.name
         if name != "traefik" and owner in ("shared", hostname):
-            return name
+            return name, pod_unit(spec_path) or f"{name}.service"
     return None
 
 
@@ -71,7 +77,7 @@ def test_deploy_restarts_only_the_changed_service(host):
     """
     other = other_placed_service(host)
     before = active_since(host, "svc-traefik", "traefik.service")
-    other_before = active_since(host, f"svc-{other}", f"{other}.service") if other else None
+    other_before = active_since(host, f"svc-{other[0]}", other[1]) if other else None
     r = host.run(
         "cd /srv/src && sed -i 's|^port: .*|port: 8081|' hosts/shared/services/traefik/service.yml "
         "&& git -c user.name=t -c user.email=t@t commit -qam 'change traefik port' && git push -q origin stable"
@@ -81,7 +87,7 @@ def test_deploy_restarts_only_the_changed_service(host):
     assert r.rc == 0, host.run(JOURNAL).stdout
     assert active_since(host, "svc-traefik", "traefik.service") != before
     if other:
-        assert active_since(host, f"svc-{other}", f"{other}.service") == other_before, f"{other} restarted too"
+        assert active_since(host, f"svc-{other[0]}", other[1]) == other_before, f"{other[0]} restarted too"
     assert host.run("systemctl --user -M svc-traefik@ is-active traefik.service").stdout.strip() == "active"
     # Polled, not a single shot: the restart is synchronous but Traefik's own startup
     # is not, so the first request after it can still be refused.
