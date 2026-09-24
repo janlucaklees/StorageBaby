@@ -41,7 +41,7 @@ health check.
 ```yaml
 routes:
   - { domain: nextcloud, port: 8280 }
-  - { domain: collabora, port: 9980 }
+  - { domain: collabora, port: 9980, scheme: https, insecure_skip_verify: true }
 ```
 
 This is the service the `routes` list exists for. The browser loads Nextcloud
@@ -580,6 +580,23 @@ instance, not a fresh one; see "The one ordering step that cannot be got wrong".
 **2. `trusted_domains`.** It comes from the migrated `config.php`, not from
 `NEXTCLOUD_TRUSTED_DOMAINS` — the entrypoint only applies that on install and
 upgrade — so if the domain changed it is one `occ config:system:set` by hand.
+
+richdocuments' `wopi_url` is the same story and is easy to forget beside it: it
+is an app setting written when Collabora was first configured and cached from
+then on (see "Collabora keeps its own TLS"), so after a domain change it still
+names the old host and documents fail to open with a healthy coolwsd. Both,
+together:
+
+```sh
+make ps SERVICE=nextcloud # the pod; the two commands run in nextcloud-app
+doas /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
+	php occ config:system:set trusted_domains 1 --value=nextcloud.home.klees.io
+doas /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
+	php occ config:app:set richdocuments wopi_url --value=https://collabora.home.klees.io
+```
+
+`occ config:app:get richdocuments wopi_url` says what it is now, and check 3 below
+is how to see whether it took.
 
 **3. Open a document in Collabora, and watch the log while it opens.**
 

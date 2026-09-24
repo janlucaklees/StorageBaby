@@ -69,10 +69,10 @@ a new one goes under `hosts/`.
 
 ## Operator steps before and right after the first storagebaby deploy
 
-Everything in this section is a secret, a piece of data or a permission — the three
-things that cannot live in git or in a role. All of it but the last step has to be
-done **before** storagebaby converges the first time; the last one can only be done
-**after**, because it needs groups the converge creates.
+Everything in this section is a secret, a piece of data, a permission or a check — the
+things that cannot live in git or in a role. Steps 1–6 have to be done **before**
+storagebaby converges the first time. Steps 7 and 8 can only be done **after**: one
+needs groups the converge creates, the other checks what the converge cannot.
 
 There is no grace period to do it in afterwards. CI fast-forwards `stable` on a green
 push and the deploy timer pulls it within five minutes, unattended, as root — so the
@@ -202,11 +202,53 @@ whole mechanism — and the `g+s` is what makes the existing tree match the
 uploader drop there stay group-`scans` instead of falling back to the writer's
 own group.
 
+### 8. After the first converge, check the certificate and the backups
+
+Both are things that fail **silently** — the host looks converged, every unit is
+active, and neither problem shows up until it is needed.
+
+**Is the wildcard certificate issued?** Traefik's ACME run is router-driven and
+happens after the converge has finished, so nothing in the play reports on it. Every
+backup sidecar validates Traefik's certificate out of the kopia image's CA bundle, so
+until this is right, no pod can back anything up:
+
+```sh
+echo | openssl s_client -connect 127.0.0.1:443 -servername kopia.home.klees.io 2> /dev/null \
+	| openssl x509 -noout -issuer -dates
+```
+
+The issuer has to be Let's Encrypt, not `CN=TRAEFIK DEFAULT CERT`. If it is the
+default, read `make logs SERVICE=traefik` for the Porkbun DNS challenge.
+
+**Did each sidecar connect, and did a snapshot land?** Per pod
+(`paperless`, `openarchiver`, `immich`, `nextcloud`):
+
+```sh
+doas /usr/local/sbin/podman-as svc- exec kopia repository status < name > podman < name > -backup
+```
+
+It has to succeed. A sidecar that cannot connect stays in a 15 s retry loop while its
+pod is up and healthy — nothing else reports it, and **no backup is ever taken**. Then,
+after the first 03:00, the server has to know the snapshots:
+
+```sh
+doas /usr/local/sbin/podman-as svc-kopia podman exec kopia kopia snapshot list --all
+```
+
+One `<name>@storagebaby:/data/<volume>` line per volume in that service's
+`backup.paths`. Nothing before that first schedule proves anything: connecting and
+snapshotting are two different things.
+
 Two more things are not steps but expectations about that first converge:
 
 - **Existing volume directories keep their owner and mode.** A converge creates
   the ones that are missing and leaves the rest alone, so anything already on the
   pool stays exactly as it is.
+- **The pods converged before kopia log failed connects, and heal themselves.**
+  Services converge in sorted order, so immich's sidecar starts while
+  `kopia.<domain>` has no route yet: it retries every 15 s and, after its start
+  period, is killed and restarted by `HealthOnFailure=kill`. It connects on its own
+  once kopia is up — noise in the first converge's journal, not a step.
 - **GPU transcoding is unverified until real hardware runs it.** Jellyfin reaches
   `/dev/dri` through a udev rule `host_base` installs on a `gpu: true` host. The
   test VM has no GPU, so nothing in this repo proves it works — check it after

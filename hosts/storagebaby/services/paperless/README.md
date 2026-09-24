@@ -31,10 +31,15 @@ Traefik is the only thing that reaches it.
 a `backup` block must define a `.pod`.
 
 The app is pinned and the supporting parts are not: a paperless upgrade can carry
-a database migration, so it is a line in git; postgres, redis, gotenberg and tika
-are interchangeable within their major and ride `AutoUpdate=registry` with the
-service user's `podman-auto-update.timer`, which rolls back an image that fails
-its health check.
+a database migration, so it is a line in git; the other four ride
+`AutoUpdate=registry` with the service user's `podman-auto-update.timer`, which
+rolls back an image that fails its health check. Two of them float inside a major
+they name (`postgres:17-alpine`, `gotenberg:8`) and two do not name one at all —
+`apache/tika:latest` and `redis:alpine` track whatever upstream calls current,
+which is the trade the update table already makes: neither keeps state across a
+restart (tika converts, redis's queue is rebuildable), so the health check and
+the auto-update rollback are the whole safety net they need. Postgres is the one
+that would carry a data directory across a major, which is why it names `17`.
 
 ### `AddHost=` — the pod has to be able to reach Traefik
 
@@ -146,6 +151,15 @@ carries a dump from the same night.
 
 The dump is written to `<name>.dump.tmp` and renamed, so `/backups` never holds a
 half-written file for the sidecar to pick up — `mv` within one volume is atomic.
+
+`Persistent=true` does **not** make the timer fire on the converge that enables it,
+which is the one thing it could have got wrong here: the pod has just started and the
+database is seconds old. Measured on the test VM right after a first converge, on all
+three dump timers (paperless, openarchiver, nextcloud):
+`ExecMainStartTimestampMonotonic=0` and an empty journal for every `*-dump.service` —
+systemd has no missed elapse to catch up on until the timer has a stamp, so the first
+run is the first real 02:30. (`nextcloud-cron.timer` is deliberately non-persistent
+for a different reason: a missed cron run is not worth catching up.)
 
 **A database is backed up as a dump, never as its data directory.** `database` is
 therefore not in `backup.paths`; `backups` is. Snapshotting a running postgres

@@ -167,10 +167,18 @@ generated throwaway value from the Molecule `prepare` play.
 > `make sops FILE=hosts/storagebaby/services/paperless-upload/secrets.sops.yaml` before
 > the first real deploy.
 
-**Uploads fail until Paperless itself exists** — that is Phase 3. Until then the
-container is healthy and idle, PDFs pile up in the share root, and every one of them is
-retried on the next arrival (`scan()` re-reads the whole share each time), so nothing
-is lost and nothing has to be re-dropped by hand once Paperless is up.
+**Uploads go to the paperless pod, through Traefik, on its public name.** Paperless is
+placed beside this service on storagebaby and on both test hosts, so the hop is a real
+one and the suite exercises it end to end: `test_uploader_reaches_paperless_through_traefik`
+reads `PAPERLESS_URL` out of the running container and opens a request to it from
+inside that container. It reaches Traefik because the `service` role maps every route
+name on the host to the host gateway in a Quadlet drop-in — from a rootless namespace
+the host's own address resolves to the container itself, so nothing else would.
+
+**When Paperless is down, nothing is lost and nothing has to be re-dropped by hand.**
+An upload that fails leaves the file where it is, and `scan()` re-reads the whole share
+on every arrival, so every file still in the share root is retried the next time
+anything lands there.
 
 ## Health check
 

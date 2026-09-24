@@ -227,6 +227,21 @@ dies at an interactive prompt. Kopia's own persisted-credentials mechanism does 
 cover it: `repository connect server` writes `repository.config` and no password file
 beside it, unlike the repository connects the kopia server itself makes.
 
+What an env-type secret costs in visibility, measured on the test VM: `podman inspect`
+lists the variable in `Config.Env` with its value replaced by seven asterisks
+(`KOPIA_PASSWORD=*******`), and the real value is only in the process
+(`podman exec <c> printenv <VAR>` returns it). So the name is visible and the value is
+not — unlike an `Environment=` line, which would put the value in the unit file, and
+unlike a file secret, which keeps even the name out of the container's config.
+
+The Kopia server the sidecar then runs listens on `http://127.0.0.1:51516`
+`--insecure --without-password`, and in a pod `127.0.0.1` is the whole pod's namespace
+— so every other container of that service can drive that API, which can list and
+delete snapshots. It is a deliberate trade: the scheduler needs a listener, the port is
+published by no pod so nothing off the host can reach it, and the blast radius is one
+service's own backups, reachable only from processes that already hold that service's
+live data.
+
 The sidecar also verifies an existing connection before trusting it: the server
 certificate fingerprint it pinned at connect time is frozen in `repository.config`, and
 Traefik hands out a fresh self-signed default certificate on every restart of a host

@@ -80,10 +80,16 @@ $ podman inspect openarchiver-app        # Config.Env, one line per variable
   "TIKA_URL=http://127.0.0.1:9998",
 ```
 
-Seven literal asterisks — podman masks an env secret in its inspect output, and
-the unit file in `/etc/containers/systemd/` holds only
+Seven literal asterisks — podman masks an env secret's value in its inspect
+output, while the variable's **name** is listed like any other. The real value is
+in the process and nowhere else: `podman exec openarchiver-app printenv
+JWT_SECRET` returns the 64 characters. The unit file in
+`/etc/containers/systemd/` holds only
 `Secret=jwt_secret,type=env,target=JWT_SECRET`. An `Environment=` line would have
-put the value in both.
+put the value in both. (Re-measured for this branch, on `nextcloud-collabora`'s
+`password` and on `openarchiver-app`'s `JWT_SECRET`, because two unit comments and
+the role README used to claim the opposite — that `Config.Env` does not list the
+variable at all.)
 
 **The database password is the exception**, because OpenArchiver does not take
 one. It takes `DATABASE_URL`, a single string with the password inside it. An
@@ -209,9 +215,10 @@ runs `podman healthcheck run` against each of them. Three are worth a note:
   answers `Backend is running!!` — there is no `/health` route in OpenArchiver
   0.6, and this is the one unauthenticated endpoint it has.
 
-  It also gets `HealthStartPeriod=120s`: the first start runs `pnpm install` and
-  the schema migrations, and without it `HealthOnFailure=kill` would kill a
-  container that is merely still starting.
+  It also gets `HealthStartPeriod=120s`: the first start runs the schema
+  migrations against an empty database (what the unit execs is
+  `docker-entrypoint.sh pnpm docker-start:oss` — no install step), and without it
+  `HealthOnFailure=kill` would kill a container that is merely still starting.
 
 ## Trusted proxies
 

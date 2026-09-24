@@ -129,7 +129,8 @@ nothing here; do not copy the pattern to a bind holding anything private.
 Note that `test_binds.py::test_container_can_read_group_file` probes through
 `podman exec`, which builds its credentials from the container config and
 therefore still sees the kept groups. It passes for jellyfin, and it is **not**
-evidence that Jellyfin itself can read the tree. Its docstring says so.
+evidence that Jellyfin itself can read the tree — the module docstring at the top
+of `test_binds.py` is where that caveat is written down.
 
 ## Health check
 

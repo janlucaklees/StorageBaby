@@ -1,12 +1,12 @@
 # kopia
 
 The central [Kopia](https://kopia.io) repository server. It owns one encrypted
-repository and hands out per-client accounts; the application-owned backup clients
-(immich, paperless, nextcloud) get a Kopia account each and push their snapshots into
-it. Accounts are not clicked together either: the server registers one per
+repository and hands out per-client accounts; the four pods with a `backup:` block
+(paperless, openarchiver, immich, nextcloud) get a Kopia account each and push their
+snapshots into it from the sidecar the `service` role generates into their pod.
+Accounts are not clicked together either: the server registers one per
 `client_<service>` secret on every start — see [Client registration is declared
-too](#client-registration-is-declared-too). Until the first pod lands, no service
-declares one, so this is a server with an empty repository and no users but the admin.
+too](#client-registration-is-declared-too).
 
 Web UI: `https://kopia.<host domain>` — `kopia.home.klees.io` on storagebaby.
 
@@ -307,10 +307,13 @@ line rather than two that can drift apart.
 Each client gets only its own Kopia account: no Backblaze credentials, no repository
 password, and by default visibility of only its own snapshots and policies.
 
-> The set's four values are `REPLACE_ME` — placeholders for paperless, openarchiver,
-> immich and nextcloud, whose pods arrive over the rest of Phase 3. A test host never
-> uses this file: `prepare.yml` generates its own set, with a fresh random value per
-> key, encrypted to the VM's own age key.
+> The set's four values — paperless, openarchiver, immich and nextcloud, all four pods
+> placed — are `REPLACE_ME` in git and have to be filled before the first storagebaby
+> deploy. `config/start.sh` refuses to register a client whose password is still the
+> placeholder, so the server restart-loops until they are: a value that matches on both
+> sides would otherwise work, and it is a password for an internet-reachable account
+> printed in this repository. A test host never uses this file: `prepare.yml` generates
+> its own set, with a fresh random value per key, encrypted to the VM's own age key.
 
 A running server rereads its user list within 5–10 minutes, or immediately on
 `kopia server refresh`.

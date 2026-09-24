@@ -17,8 +17,21 @@ reaches a backend that keeps its own TLS (kopia, nextcloud's collabora).
 With `acme: true` in the host's `host.yml`, the dashboard router carries the
 `porkbun` resolver and the wildcard domains, which is what triggers issuance;
 all other routers just say `tls: {}` and inherit the wildcard cert. State lives
-in the `letsencrypt` volume (`fast` class). With `acme: false` Traefik serves
-its self-signed default certificate (test hosts).
+in the `letsencrypt` volume (`fast` class).
+
+With `acme: false` (test hosts) there is no issuance, and Traefik serves a default
+certificate for everything. Not the one it invents, though: left to itself Traefik
+generates a **fresh** self-signed certificate on every start, and a Kopia backup
+sidecar pins the fingerprint it saw when it connected — so one Traefik restart would
+lock it out of the repository. So `host_base` generates one self-signed certificate
+into `/etc/storagebaby/traefik/certs` (once, ten years, `CN=<domain>` with a wildcard
+SAN), the unit mounts that directory read-only at `/etc/traefik/certs`, and a
+`00-default-certificate.yml` in `dynamic.d` installs it through `tls.stores.default`.
+Stable across restarts is the whole point, and
+`tests/.../test_host_base.py::test_traefik_serves_the_default_certificate_across_a_restart`
+is what holds it: the fingerprint served on :443 is the file's, before and after a
+restart. On an `acme: true` host none of it exists — `host_base` removes the dynamic
+file and the directory, and the unit does not mount it.
 
 ACME is router-driven, not entrypoint-driven: only a router with a
 `certResolver` and `domains` triggers a request. lego checks DNS propagation

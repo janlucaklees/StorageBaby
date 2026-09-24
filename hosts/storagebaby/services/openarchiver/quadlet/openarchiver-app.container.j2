@@ -27,9 +27,12 @@ Environment=STORAGE_LOCAL_ROOT_PATH=/var/data/open-archiver
 Environment=BODY_SIZE_LIMIT=100M
 {# OpenArchiver reads every credential from the environment and supports no `_FILE`
    variable, so the five that have somewhere to go arrive as env-type podman secrets:
-   podman injects them into the process at start instead of writing them into the
-   container's config, so `podman inspect` shows the container's Config.Env without
-   them. #}
+   the unit carries the secret's name, podman resolves the value from the service
+   user's secret store at start, and `podman inspect` prints the variable in
+   Config.Env with its value replaced by seven asterisks. Measured on the test VM:
+   `JWT_SECRET=*******` in the inspect output, the real 64-character value in the
+   process (`podman exec ... printenv JWT_SECRET`). An `Environment=` line would put
+   it in the world-readable unit file instead. #}
 Secret=redis_password,type=env,target=REDIS_PASSWORD
 Secret=meili_master_key,type=env,target=MEILI_MASTER_KEY
 Secret=jwt_secret,type=env,target=JWT_SECRET

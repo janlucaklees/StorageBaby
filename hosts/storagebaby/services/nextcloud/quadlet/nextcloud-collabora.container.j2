@@ -8,9 +8,11 @@ Pod=nextcloud.pod
 AutoUpdate=registry
 Environment=TZ={{ tz }}
 {# Collabora reads its admin credentials from the environment and supports no `_FILE`
-   variable, so both arrive as env-type podman secrets: podman injects them into the
-   process at start instead of writing them into the container's config, so `podman
-   inspect` does not show them. The lowercase targets are Collabora's own names. #}
+   variable, so both arrive as env-type podman secrets: the unit carries the secret's
+   name, podman resolves the value at start, and `podman inspect` prints the variable
+   in Config.Env with its value replaced by seven asterisks (measured on the test VM:
+   `password=*******`). An `Environment=` line would put it in the world-readable unit
+   file instead. The lowercase targets are Collabora's own names. #}
 Secret=collabora_username,type=env,target=username
 Secret=collabora_password,type=env,target=password
 {# Quoted: systemd splits an unquoted Environment= on whitespace and keeps the first
