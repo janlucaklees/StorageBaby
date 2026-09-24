@@ -1,8 +1,6 @@
 # Runtime/data/secret dirs — not source, never formatted
 mounts/
 **/volumes/
-paperless/consume/
-paperless/export/
 .git/
 *.sops.yaml
 hosts/test-*/secrets/

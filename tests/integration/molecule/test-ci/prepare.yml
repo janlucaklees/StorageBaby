@@ -121,9 +121,11 @@
       ansible.builtin.set_fact:
         _set_names: "{{ _refs | map('regex_replace', '\\..*$', '') | unique | sort | list }}"
 
-    # No set is referenced until the first pod lands, so this loop is empty today and
-    # the task is a no-op -- which is exactly what it has to be, rather than writing an
-    # empty file or failing on one.
+    # Every pod references `kopia-clients.<service>` and the kopia server the other half
+    # of each, so on a host that places one this writes a single kopia-clients file with
+    # one value per client. On a host that places no pod the list is empty and the task
+    # is a no-op -- which is what it has to be, rather than writing an empty file or
+    # failing on one.
     - name: Write and encrypt one file per referenced host secret set
       ansible.builtin.shell: |
         set -euo pipefail
@@ -154,8 +156,8 @@
   gather_facts: false
   tasks:
     # The archive has to mirror what a real `stable` checkout holds, not the working
-    # tree: the operator's .env and the *.secret files of the old docker-compose
-    # services are gitignored, and shipping them to a test VM would put real
+    # tree: the operator's .env and any *.secret file left over from the pre-platform
+    # stacks are gitignored, and shipping them to a test VM would put real
     # credentials on a throwaway host. --exclude-vcs-ignores makes GNU tar read every
     # directory's .gitignore, so the archive follows the same rules git does --
     # including for the generated test secrets, which is why they are appended back in
