@@ -383,6 +383,19 @@ def placed_route_fqdns(host) -> list[str]:
     return sorted(found)
 
 
+def container_env(host, user: str, container: str) -> dict[str, str]:
+    """`NAME -> value` from the environment podman starts a container with.
+
+    Read from the running container rather than from the rendered unit, so what a test
+    exercises is the value the service really got -- spec default, host override and
+    all. `println` puts one entry per line, which is the only shape an `Environment=`
+    value containing spaces survives.
+    """
+    r = run_as(host, user, "podman inspect " + container + " --format '{{range .Config.Env}}{{println .}}{{end}}'")
+    assert r.rc == 0, r.stderr
+    return dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
+
+
 def hosts_file_map(host, user: str, container: str) -> dict[str, str]:
     """`name -> address` from the hosts file podman mounts into a container as /etc/hosts.
 
@@ -456,18 +469,30 @@ def test_uploader_reaches_paperless_through_traefik(host, owner, spec_path):
     another service on its public name -- and it is the hop nothing exercised before,
     because the pods' `AddHost` lines only ever covered names of their own.
 
+    The name is not built here: it is read out of the running container's
+    `PAPERLESS_URL`, the one the uploader itself posts to. Constructing
+    `paperless.<domain>` instead would prove the map works and still leave the service
+    misconfigured -- which is what it was, pointing every test VM at the production
+    host, until `service_config` in both test host files overrode it.
+
     Named rather than derived, like the nextcloud hook check: paperless-upload is the
     one service on the platform that calls another one, and `bun` is the probe its
     image happens to carry. A second such service would want this generalised.
     """
-    hostvars = placed(host, owner)
+    placed(host, owner)
     spec = load_spec(spec_path)
     if spec["name"] != "paperless-upload":
         pytest.skip("does not call another service")
-    target = f"paperless.{hostvars['domain']}"
-    assert target in placed_route_fqdns(host), f"{target} is not placed on this host"
     user = f"svc-{spec['name']}"
     container = container_name(quadlets(spec_path, "container")[0])
+    url = container_env(host, user, container).get("PAPERLESS_URL")
+    assert url, f"{container} runs with no PAPERLESS_URL: there is nothing to reach"
+    assert url.startswith("https://"), f"PAPERLESS_URL is {url!r}, and this probe speaks TLS on 443"
+    target = url.removeprefix("https://").split("/")[0].split(":")[0]
+    assert target in placed_route_fqdns(host), (
+        f"PAPERLESS_URL names {target}, which no route on this host serves -- "
+        "the uploader is configured for a paperless that is not here"
+    )
     r = host.run(f"cat > /tmp/traefik-hop.js <<'JS'\n{TRAEFIK_HOP_JS}\nJS\nchmod 644 /tmp/traefik-hop.js")
     assert r.rc == 0, r.stderr
     r = run_as(host, user, f"podman cp /tmp/traefik-hop.js {container}:/tmp/traefik-hop.js")

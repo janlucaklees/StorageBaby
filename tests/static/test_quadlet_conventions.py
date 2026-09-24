@@ -100,7 +100,20 @@ def test_no_template_writes_a_host_gateway_addhost(path):
     # pod member, fatal -- podman refuses `--add-host` on a container that joins a pod.
     # `AddHost=<name>:127.0.0.1` stays allowed: immich aliases a compose service name
     # to the pod's loopback, which is a different thing entirely.
+    # The other spellings of the same shortcut are rejected with it: podman writes
+    # `host.containers.internal` and `host.docker.internal` into every container's hosts
+    # file, and 169.254.1.2 is the address they resolve to under pasta. A template
+    # reaching the host through one of those would bypass the route name -- and with it
+    # Traefik's routing, its TLS and whatever the route declares -- just as surely, and
+    # would break the day podman changes that address. Comments may name them; lines
+    # that do something may not.
     for ln in path.read_text().splitlines():
         assert not ln.startswith("AddHost=") or not ln.endswith(":host-gateway"), (
             f"{path.name}: {ln} -- the service role renders the host-gateway map, templates do not"
         )
+        if ln.lstrip().startswith("#"):
+            continue
+        for shortcut in ("host.containers.internal", "host.docker.internal", "169.254.1.2"):
+            assert shortcut not in ln, (
+                f"{path.name}: {ln} -- reach another service by its route name, not by {shortcut}"
+            )

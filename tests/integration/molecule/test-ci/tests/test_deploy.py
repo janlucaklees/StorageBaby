@@ -5,18 +5,31 @@ prepare, so `systemctl start` blocks until the whole convergence is done -- a mi
 or two on the first run, which clones the repo first. `timeout` keeps a wedged pull
 from hanging the verifier.
 
-All three run last (`order(-1)`, which keeps their relative order): the second and the
-third push a change to the seeded remote and restart a service, which every other test
-would otherwise have to account for.
+All four run last (`order(-1)`, which keeps their relative order): every one but the
+first pushes to the seeded remote and restarts a service, which every other test would
+otherwise have to account for.
 """
 
 import re
 from pathlib import Path
 
 import pytest
-from test_service import HOSTS, SPECS, container_name, load_spec, pod_unit, volume_path
+from test_service import (
+    HOSTS,
+    SPECS,
+    container_name,
+    hosts_file_map,
+    load_spec,
+    pod_unit,
+    quadlets,
+    unit_stem,
+    volume_path,
+)
 
 DEPLOY = "timeout 900 systemctl start storagebaby-deploy.service"
+# The working tree prepare seeded the bare remote from; pushing to it is what a real
+# commit to `stable` looks like from a host's point of view.
+SEEDED = "/srv/src"
 JOURNAL = "journalctl -u storagebaby-deploy.service --no-pager | tail -80"
 DASHBOARD = "curl -sk -o /dev/null -w '%{http_code}' -H 'Host: traefik.test.local' https://127.0.0.1/dashboard/"
 
@@ -57,6 +70,85 @@ def test_deploy_service_is_a_noop_when_nothing_changed(host):
     assert r.rc == 0, host.run(JOURNAL).stdout
     assert host.file("/var/lib/storagebaby/repo/ansible/playbook.yml").exists
     assert active_since(host, "svc-traefik", "traefik.service") == before
+
+
+def single_container_service(host):
+    """(name, unit file stem, unit, container) of the first placed one-container service.
+
+    Derived like `other_placed_service`, and for the same reason. A one-container
+    service is where the host-gateway drop-in sits on the container itself, so "exactly
+    this unit came back" is a single timestamp; on a pod service the drop-in is the
+    pod's and a restart moves every member. traefik is excluded because it is the unit
+    the other half of the claim -- "and nothing else restarted" -- watches.
+    """
+    hostname = host.check_output("uname -n")
+    for owner, spec_path in SPECS:
+        name = spec_path.parent.name
+        if name == "traefik" or owner not in ("shared", hostname) or pod_unit(spec_path):
+            continue
+        containers = quadlets(spec_path, "container")
+        if len(containers) == 1:
+            stem = unit_stem(containers[0])
+            return name, stem, f"{stem}.service", container_name(containers[0])
+    return None
+
+
+@pytest.mark.order(-1)
+def test_deploy_restores_a_drifted_host_gateway_dropin(host):
+    """Drift in a rendered drop-in is repaired by a deploy, and only its own unit moves.
+
+    The drop-in is the one rendered file whose content comes from the host's placement
+    rather than from the service's folder, so no git change can produce a *narrow* one:
+    editing a service's `domain` rewrites the drop-in of every service on the host. The
+    drift is therefore made on the VM -- an `AddHost=` line removed from the file on
+    disk -- which is also the real failure mode, a host that has been edited by hand or
+    converged from an older commit.
+
+    The commit pushed here is empty on purpose: `ansible-pull --only-if-changed` runs
+    the playbook only when the checkout moved, so the deploy needs a new sha, and an
+    empty one leaves the tree identical. Everything the converge then renders matches
+    what is already on the host except the file this test broke, which makes the pair
+    of assertions below -- this unit restarted, traefik did not -- say exactly that a
+    changed drop-in is what restarts a unit.
+    """
+    found = single_container_service(host)
+    if not found:
+        pytest.skip("no single-container service is placed on this host")
+    name, stem, unit, container = found
+    user = f"svc-{name}"
+    path = f"/etc/containers/systemd/users/{host.user(user).uid}/{stem}.container.d/10-storagebaby-hosts.conf"
+    before = host.file(path).content_string
+    mapped = [ln.split("=", 1)[1].rsplit(":", 1)[0] for ln in before.splitlines() if ln.startswith("AddHost=")]
+    assert len(mapped) > 1, f"{path} maps {mapped}: too few names to drop one and still prove anything"
+    dropped = mapped[-1]
+
+    unit_before = active_since(host, user, unit)
+    traefik_before = active_since(host, "svc-traefik", "traefik.service")
+    assert unit_before != "0", f"{unit} has no ActiveEnterTimestamp: is that the right unit name?"
+
+    r = host.run(f"sed -i '/^AddHost={dropped}:/d' {path}")
+    assert r.rc == 0, r.stderr
+    assert host.file(path).content_string != before, f"{dropped} was not removed from {path}"
+    r = host.run(
+        f"cd {SEEDED} && git -c user.name=t -c user.email=t@t commit -q --allow-empty "
+        "-m 'empty: a deploy cycle for the drop-in check' && git push -q origin stable"
+    )
+    assert r.rc == 0, r.stderr
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+
+    assert host.file(path).content_string == before, f"the deploy did not restore {path}"
+    assert active_since(host, user, unit) != unit_before, f"{unit} was not restarted by its changed drop-in"
+    assert active_since(host, "svc-traefik", "traefik.service") == traefik_before, "traefik restarted too"
+    # The file on disk is only half of it: Quadlet merges the drop-in into the unit at
+    # generation time, so the mapping reaches a running container through the
+    # daemon-reload and the restart, and this is where that is visible.
+    mapping = hosts_file_map(host, user, container)
+    gateway = mapping.get("host.containers.internal")
+    assert gateway, f"{container}: podman wrote no host.containers.internal entry"
+    assert mapping.get(dropped) == gateway, (
+        f"{container} does not resolve {dropped} to the gateway again: {mapping.get(dropped)!r}"
+    )
 
 
 @pytest.mark.order(-1)
@@ -108,9 +200,6 @@ def test_deploy_restarts_only_the_changed_service(host):
 # exactly that reason: a harmless marker whose presence says "the hooks ran on this
 # converge". A service whose hooks do something else skips rather than guessing.
 
-# The working tree prepare seeded the bare remote from; pushing to it is what a real
-# commit to `stable` looks like from a host's point of view.
-SEEDED = "/srv/src"
 TOUCH = re.compile(r"^\s*touch\s+(\S+)\s*$")
 
 

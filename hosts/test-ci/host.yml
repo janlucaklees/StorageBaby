@@ -23,3 +23,8 @@ packages: []
 service_config:
   kopia:
     repository: filesystem
+  # The uploader's own default names the production paperless, which no test host
+  # serves -- so on a VM it would talk to a name that resolves to nothing it runs, and
+  # the one real cross-service call on the platform would go untested.
+  paperless-upload:
+    paperless_url: https://paperless.test.local
