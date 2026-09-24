@@ -510,6 +510,24 @@ def test_uploader_reaches_paperless_through_traefik(host, owner, spec_path):
 
 
 @service_case
+def test_service_manager_has_no_failed_units(host, owner, spec_path):
+    """Nothing in this service user's manager is in the `failed` state.
+
+    Every other check here asks about a unit this file already knows the name of --
+    containers, the pod, the timers -- so a unit that exists for another reason and
+    failed is invisible: a `*-dump.service` that ran too early, a `nextcloud-cron`
+    that could not reach its app. The manager itself keeps the list, and the only
+    acceptable length for it is zero. Deliberately late in the file: the dump check
+    above *starts* a dump unit, and a failure there has to be visible here too.
+    """
+    placed(host, owner)
+    user = f"svc-{load_spec(spec_path)['name']}"
+    r = host.run(f"systemctl --user -M {user}@ list-units --state=failed --no-legend")
+    assert r.rc == 0, r.stderr
+    assert r.stdout.strip() == "", f"{user} has failed units:\n{r.stdout}"
+
+
+@service_case
 def test_nextcloud_is_installed_and_out_of_maintenance(host, owner, spec_path):
     """The one service whose `after_change` hooks can be checked from outside.
 

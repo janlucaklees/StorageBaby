@@ -203,17 +203,31 @@
     # tree, but .gitignore excludes hosts/test-*/secrets/ so real ones never get
     # committed. Without the force the checkout would fall back to the shared
     # secrets file, which is encrypted to the production key the VM does not have.
-    - name: Init repo and bare remote
+    #
+    # Runs every time, with no `creates:` guard, and that is the point: the deploy
+    # tests commit to this remote and push -- a traefik `port: 8081`, a comment
+    # appended to a unit template -- so a guard here would re-extract the working tree
+    # and leave the *history* mutated. A second `converge` + `verify` on a surviving VM
+    # would then deploy the mutated remote and fail
+    # `test_deploy_restores_a_drifted_host_gateway_dropin`, deterministically, because
+    # its empty commit drags the 8081 traefik along with it. Committing the re-extracted
+    # tree on top and force-pushing `stable` makes `prepare` restore the remote to the
+    # working tree instead, so the operator's edit-and-rerun loop is meaningful.
+    #
+    # `--allow-empty` because the normal case is a tree identical to the last seed;
+    # `commit` would otherwise exit 1 and take the play with it.
+    - name: Seed the repo and the bare remote from the extracted tree
       ansible.builtin.shell: |
         set -e
         cd /srv/src
-        git init -q -b stable
+        [ -d .git ] || git init -q -b stable
         git -c user.name=t -c user.email=t@t add -A
         if [ -d hosts/{{ inventory_hostname }}/secrets ]; then
           git -c user.name=t -c user.email=t@t add -f hosts/{{ inventory_hostname }}/secrets
         fi
-        git -c user.name=t -c user.email=t@t commit -qm 'seed'
-        git clone -q --bare /srv/src /srv/storagebaby.git
+        git -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'seed'
+        [ -d /srv/storagebaby.git ] || git clone -q --bare /srv/src /srv/storagebaby.git
+        git remote remove origin 2> /dev/null || true
         git remote add origin /srv/storagebaby.git
-      args:
-        creates: /srv/storagebaby.git
+        git push -qf origin stable
+      changed_when: true

@@ -164,7 +164,8 @@ def test_deploy_restarts_only_the_changed_service(host):
     renders `Environment=TZ`, so changing it restarts all of them and the "only" in the
     test's name stops being checkable.
 
-    The seeded remote is throwaway (destroyed with the VM), so nothing is restored.
+    The seeded remote is not restored here: `prepare` re-seeds it from the working
+    tree on every run, and it is destroyed with the VM in any case.
     """
     other = other_placed_service(host)
     before = active_since(host, "svc-traefik", "traefik.service")
@@ -261,7 +262,8 @@ def test_deploy_runs_after_change_hooks(host):
 
     # Appended to the unit template, not to the spec: the role restarts on any rendered
     # difference, and a trailing comment is the smallest one that cannot change what the
-    # unit does. The seeded remote is thrown away with the VM, so nothing is restored.
+    # unit does. Nothing is restored here: `prepare` re-seeds the remote from the
+    # working tree on every run.
     relative = str(Path(template).relative_to("/repo"))
     r = host.run(
         f"cd {SEEDED} && printf '# harness: force a unit change\\n' >> {relative} "
