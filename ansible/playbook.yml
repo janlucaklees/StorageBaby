@@ -105,3 +105,22 @@
       loop_control:
         loop_var: placed_service
         label: '{{ placed_service | dirname | basename }}'
+
+    # Last, after every service has had its turn. A hook waits ten minutes for the
+    # container it execs into to become healthy and then gives up *without* failing the
+    # play, because failing there would take every service sorted after this one down
+    # with it -- the role is included once per service from this one play, so a single
+    # application that cannot start (a wrong database password against a migrated
+    # cluster) would stop half the host from converging, nightly, from the deploy timer.
+    # The converge still has to report it, or a service left un-upgraded would be
+    # invisible in a green `ansible-pull`. So the role collects them in `hooks_not_run`
+    # and the failure is raised here, where nothing is waiting behind it.
+    - name: Fail when a service's after-change hooks could not run
+      ansible.builtin.fail:
+        msg: >-
+          After-change hooks were skipped for: {{ hooks_not_run
+          | map(attribute='service') | join(', ') }}. The containers that never became
+          healthy: {{ hooks_not_run | map(attribute='containers') | flatten | join(', ') }}.
+          Those services are converged but not finished -- read the journal of each
+          (`make logs SERVICE=<name>`) from the top. Every other service converged.
+      when: hooks_not_run | default([]) | length > 0

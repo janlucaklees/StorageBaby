@@ -211,6 +211,15 @@ Two more things are not steps but expectations about that first converge:
   `/dev/dri` through a udev rule `host_base` installs on a `gpu: true` host. The
   test VM has no GPU, so nothing in this repo proves it works — check it after
   cutover.
+- **A deploy that ends in "After-change hooks were skipped for: …" converged
+  everything else.** A service's after-change hooks wait ten minutes for their
+  container to report healthy; when it never does, that one service's hooks are
+  skipped and every other service still converges. The failure is raised as the very
+  last task of the play, naming the services and the containers — so the message is the
+  list of what to look at, not the point where the converge stopped. Read those
+  services' journals from the top (`make logs SERVICE=<name>`): on the first converge
+  this is what a `database_password` that does not match the migrated cluster looks
+  like. The next converge runs the skipped hooks, once the container is healthy.
 
 ## Migrating existing service data
 

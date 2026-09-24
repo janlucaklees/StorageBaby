@@ -27,7 +27,32 @@
   delay: 10
   until: _hook_health.rc == 0
   changed_when: false
+  # Deliberately not fatal. The role is included once per placed service from a single
+  # play, in sorted order, so a task that fails the play fails it for every service
+  # that has not converged yet: one application that cannot reach its database -- a
+  # wrong `database_password` against a migrated cluster is the realistic case -- would
+  # otherwise stop half the host from converging at all, ten minutes later, every
+  # night, from the deploy timer. An unhealthy container therefore skips *this*
+  # service's hooks, is recorded below, and the play goes on; `ansible/playbook.yml`
+  # fails on the collected list after the last service, so the deploy still reports
+  # failure and names what was skipped.
+  failed_when: false
 
+- name: The hook containers that never became healthy
+  ansible.builtin.set_fact:
+    _unhealthy:
+      "{{ _hook_health.results | default([]) | rejectattr('rc', 'equalto', 0)
+      | map(attribute='item.container') | unique | sort | list }}"
+
+- name: Record a service whose hooks could not run
+  ansible.builtin.set_fact:
+    hooks_not_run: "{{ (hooks_not_run | default([])) + [{'service': service.name, 'containers': _unhealthy}] }}"
+  when: _unhealthy | length > 0
+
+# All or nothing per service: a service's hooks are an ordered sequence against one
+# application -- nextcloud's five `occ` calls are the shape -- so running the ones whose
+# container happens to be healthy and skipping the rest would leave a half-upgraded
+# instance, which is worse than none.
 - name: Run after_change hooks
   ansible.builtin.command: >-
     /usr/local/sbin/podman-as {{ svc_user }} podman exec
@@ -41,3 +66,4 @@
   # reporting that as a change would make the play changed forever -- a host that never
   # settles, and a failing idempotence check.
   changed_when: "(item.when | default('unit_changed')) == 'unit_changed'"
+  when: _unhealthy | length == 0

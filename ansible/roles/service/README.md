@@ -180,6 +180,21 @@ something, which is what makes it a deploy step and not a nightly one: a version
 `.container.j2` runs the post-upgrade commands, the next run does not. `when: always` opts
 a single command out of that.
 
+**A container that never becomes healthy does not fail the play.** The wait gives up
+after its ten minutes, the service's hooks are skipped — all of them, because a
+service's hooks are one ordered sequence against one application and half of nextcloud's
+five `occ` calls is worse than none — and the service name and its container are
+appended to the play-level `hooks_not_run`. The play carries on with the next service.
+`ansible/playbook.yml` fails on that list as its very last task, so the deploy still
+reports failure and names what was skipped.
+
+The split matters because the role is included once per placed service from a **single
+play**, in sorted order: a hook that failed where it waits would fail the play there,
+and every service sorted after it would never converge at all — ten minutes later, every
+night, from the deploy timer. The realistic trigger is an application that cannot reach
+its database (a `database_password` that does not match a migrated cluster), which is
+exactly the state in which the rest of the host must still come up.
+
 ## Timers
 
 `quadlet/<stem>.timer.j2` and `quadlet/<stem>.service.j2` are plain systemd user units,
