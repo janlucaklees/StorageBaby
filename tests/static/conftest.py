@@ -47,6 +47,13 @@ def routes_of(spec: dict) -> list[dict]:
     return [{"domain": spec["domain"], "port": spec["port"]}] if "domain" in spec else []
 
 
+def placed_fqdns(host: str) -> list[str]:
+    """Every route fqdn placed on a host -- the list the role maps to the host gateway."""
+    domain = load_yaml(HOSTS / host / "host.yml")["domain"]
+    domains = {r["domain"] for p in placements() if p.host == host for r in routes_of(p.spec)}
+    return sorted(f"{d}.{domain}" for d in domains)
+
+
 def route_ports(spec: dict) -> list[int]:
     """Every loopback port this service occupies -- including a port without a route."""
     if "routes" in spec:

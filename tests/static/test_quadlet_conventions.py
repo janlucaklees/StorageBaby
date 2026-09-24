@@ -89,3 +89,18 @@ def test_pod_publishes_exactly_the_route_ports(p):
         text = tpl.read_text()
         assert re.search(rf"^Pod={p.name}\.pod$", text, flags=re.M), f"{tpl.name} must join {p.name}.pod"
         assert not re.search(r"^PublishPort=", text, flags=re.M), f"{tpl.name}: publish ports on the pod, not the container"
+
+
+@pytest.mark.parametrize("path", _unit_templates(), ids=lambda p: f"{p.parent.parent.name}/{p.name}")
+def test_no_template_writes_a_host_gateway_addhost(path):
+    # The role owns this line now: it renders `AddHost=<fqdn>:host-gateway` for *every*
+    # route name placed on the host into a Quadlet drop-in, so every service can reach
+    # every other one through Traefik without a template knowing which names exist.
+    # A hand-written one would be redundant where the role already wrote it and, on a
+    # pod member, fatal -- podman refuses `--add-host` on a container that joins a pod.
+    # `AddHost=<name>:127.0.0.1` stays allowed: immich aliases a compose service name
+    # to the pod's loopback, which is a different thing entirely.
+    for ln in path.read_text().splitlines():
+        assert not ln.startswith("AddHost=") or not ln.endswith(":host-gateway"), (
+            f"{path.name}: {ln} -- the service role renders the host-gateway map, templates do not"
+        )
