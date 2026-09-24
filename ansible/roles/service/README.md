@@ -255,8 +255,8 @@ volume that is listed in `paths`.
 
 ## What every `.container` must declare
 
-`HealthCmd=` (plus `HealthOnFailure=kill` and `Restart=always`, which the static test
-enforces) and `ContainerName=`. Both are contract, not style: the integration verifier runs
+`HealthCmd=`, `HealthOnFailure=kill`, `Restart=always` and `ContainerName=`; the static
+test enforces all four. They are contract, not style: the integration verifier runs
 `podman healthcheck run <ContainerName>` for every container of every placed service, so a
 unit without a health command or without its own name fails the suite.
 

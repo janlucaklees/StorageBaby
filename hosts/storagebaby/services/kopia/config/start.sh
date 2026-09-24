@@ -89,25 +89,30 @@ fi
 # by, and it has to be the pair the sidecar announces: KOPIA_CLIENT_USERNAME is the
 # service name, KOPIA_CLIENT_HOSTNAME the host -- the same `hostname` this variable is
 # rendered from.
+# The one placeholder on this platform that would otherwise *work*. A client
+# password is a free choice -- it only has to match on both sides -- so leaving it
+# at REPLACE_ME registers a real account, the sidecar connects with the same
+# string, backups run, and nothing anywhere reports a problem. The repository
+# endpoint is public at https://kopia.<domain>, so that is an internet-reachable
+# account whose password is printed in this repository. Refusing here, before any
+# client is registered, is what makes it as loud as every other REPLACE_ME: the
+# server does not come up and no partial set of accounts is left behind.
 for f in /run/secrets/client_*; do
 	# An unmatched glob stays literal in POSIX sh, which is the "no clients yet" case.
 	[ -e "$f" ] || continue
-	name="${f##*/client_}"
-	user="$name@$KOPIA_CLIENT_HOSTS"
-	# The one placeholder on this platform that would otherwise *work*. A client
-	# password is a free choice -- it only has to match on both sides -- so leaving it
-	# at REPLACE_ME registers a real account, the sidecar connects with the same
-	# string, backups run, and nothing anywhere reports a problem. The repository
-	# endpoint is public at https://kopia.<domain>, so that is an internet-reachable
-	# account whose password is printed in this repository. Refusing here is what makes
-	# it as loud as every other REPLACE_ME: the server does not come up.
-	client_password="$(cat "$f")"
-	if [ "$client_password" = "REPLACE_ME" ]; then
-		echo "kopia: the client password for $user is still the REPLACE_ME placeholder." >&2
+	if [ "$(cat "$f")" = "REPLACE_ME" ]; then
+		echo "kopia: the client password for ${f##*/client_} is still the REPLACE_ME placeholder." >&2
 		echo "kopia: fill hosts/<host>/secrets/kopia-clients.sops.yaml (make sops FILE=...)" >&2
-		echo "kopia: with the same value on the client's side; refusing to register it." >&2
+		echo "kopia: with the same value on the client's side; refusing to register clients." >&2
 		exit 1
 	fi
+done
+
+for f in /run/secrets/client_*; do
+	[ -e "$f" ] || continue
+	name="${f##*/client_}"
+	user="$name@$KOPIA_CLIENT_HOSTS"
+	client_password="$(cat "$f")"
 	# kopia 0.23.1 has no --user-password-file: `server users add|set` accept only
 	# --user-password, --user-password-hash and the interactive --ask-password
 	# (cli/command_user_add_set.go). So the value goes through argv, where it is

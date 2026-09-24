@@ -224,8 +224,11 @@ default, read `make logs SERVICE=traefik` for the Porkbun DNS challenge.
 (`paperless`, `openarchiver`, `immich`, `nextcloud`):
 
 ```sh
-doas /usr/local/sbin/podman-as svc- exec kopia repository status < name > podman < name > -backup
+doas /usr/local/sbin/podman-as svc-paperless podman exec paperless-backup kopia repository status
 ```
+
+The same for `openarchiver`, `immich` and `nextcloud`: the user is `svc-<name>`, the
+container `<name>-backup`.
 
 It has to succeed. A sidecar that cannot connect stays in a 15 s retry loop while its
 pod is up and healthy — nothing else reports it, and **no backup is ever taken**. Then,
