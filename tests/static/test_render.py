@@ -14,6 +14,22 @@ def quadlet_templates(p) -> list[Path]:
     return [t for t in (p.dir / "quadlet").glob("*.j2") if not t.name.endswith(TIMER_SUFFIXES)]
 
 
+def own_add_hosts(p) -> list[str]:
+    """The literal `AddHost=` values a service's own templates declare.
+
+    Only immich has one today (`immich-machine-learning:127.0.0.1`, the compose service
+    name its ML setting points at, aliased to the pod's loopback). A templated value is
+    skipped: what is rendered is not knowable from the source line, and the claim here
+    is about Quadlet's merge, not about the value.
+    """
+    found = []
+    for template in sorted((p.dir / "quadlet").glob("*.j2")):
+        for line in template.read_text().splitlines():
+            if line.startswith("AddHost=") and "{{" not in line:
+                found.append(line.split("=", 1)[1])
+    return found
+
+
 def expected_units(p) -> list[str]:
     units = [t.name[:-3] for t in quadlet_templates(p)]
     if p.spec["backup"] != "none":
@@ -66,6 +82,17 @@ def test_rendered_units_pass_quadlet_dryrun(rendered, p):
     for fqdn in placed_fqdns(p.host):
         assert f"--add-host {fqdn}:host-gateway" in r.stdout, (
             f"{p.host}/{p.name}: quadlet did not merge the host-gateway drop-in\n{r.stdout}"
+        )
+    # And that merging *appends* rather than replaces, which is the whole question for
+    # the one unit that writes an `AddHost=` of its own: immich's pod aliases the
+    # compose service name `immich-machine-learning` to the pod's loopback, and the
+    # role's drop-in adds the host's route names to the same directive. If a drop-in
+    # replaced the unit file's value, the alias would be gone, Immich's ML setting
+    # would name something nothing resolves, and machine learning would be quietly
+    # dead -- with every assertion above still passing.
+    for alias in own_add_hosts(p):
+        assert f"--add-host {alias}" in r.stdout, (
+            f"{p.host}/{p.name}: quadlet dropped the unit's own AddHost={alias}\n{r.stdout}"
         )
 
 

@@ -5,6 +5,27 @@ import pytest
 from conftest import placements
 
 REQUIRED = {"name", "volumes", "secrets", "backup"}
+# Every key a `service.yml` may carry. Without this a misspelling is silent and the
+# feature simply never runs: `hook:`, `host_secret:`, `route_s:`, `backups:` would all
+# be accepted and ignored, by the role as much as by this file. The route block and the
+# `routes[]` entries are key-checked below for the same reason, which is the argument
+# for doing it at the top level too.
+SPEC_KEYS = {
+    "name",
+    "port",
+    "domain",
+    "routes",
+    "route",
+    "volumes",
+    "binds",
+    "devices",
+    "groups",
+    "config",
+    "secrets",
+    "host_secrets",
+    "hooks",
+    "backup",
+}
 CLASSES = {"pool", "fast"}
 MODES = {"ro", "rw"}
 GROUP_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
@@ -38,6 +59,7 @@ def test_service_contract(p):
     spec = p.spec
     missing = REQUIRED - set(spec)
     assert not missing, f"{p.name}: missing keys {missing}"
+    assert set(spec) <= SPEC_KEYS, f"{p.name}: unknown service keys {set(spec) - SPEC_KEYS}"
     assert spec["name"] == p.dir.name, "name must equal the folder name"
     if "domain" in spec:
         assert isinstance(spec.get("port"), int), f"{p.name}: a service with a domain needs a loopback port"

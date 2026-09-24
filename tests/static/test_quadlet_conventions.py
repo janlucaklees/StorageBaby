@@ -25,9 +25,15 @@ def _unit_templates() -> list[Path]:
 @pytest.mark.parametrize("path", _containers(), ids=lambda p: f"{p.parent.parent.name}/{p.name}")
 def test_container_declares_health_and_restart(path):
     # A container that cannot report its own health is one systemd will happily keep
-    # "running" while it serves errors, so every unit declares all three.
+    # "running" while it serves errors, so every unit declares all four.
+    # `ContainerName=` is the fourth because everything that addresses a container by
+    # name breaks without it: the health checks the integration verifier runs, the
+    # after-change hooks' `podman exec`, `make logs/ps SERVICE=<name>`. Quadlet's own
+    # default is `systemd-<stem>`, which none of them expects -- and the verifier
+    # falls back to the stem, so a missing line only surfaced for a service placed on
+    # a test host.
     lines = path.read_text().splitlines()
-    for required in ["HealthCmd=", "HealthOnFailure=kill", "Restart=always"]:
+    for required in ["HealthCmd=", "HealthOnFailure=kill", "Restart=always", "ContainerName="]:
         assert any(ln.startswith(required) for ln in lines), f"{path.name}: no line starting with {required!r}"
 
 
