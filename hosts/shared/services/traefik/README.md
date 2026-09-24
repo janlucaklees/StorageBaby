@@ -3,8 +3,14 @@
 Rootless Traefik v3 on the host network under `svc-traefik`. It is the only
 process on 80/443. Every other service binds `127.0.0.1:<port>` and gets a
 route file rendered by the `service` role into
-`/etc/storagebaby/traefik/dynamic.d/<name>.yml` from its `service.yml`
-(`domain`, `port`, optional `route.internal` / `route.wildcard_cert`).
+`/etc/storagebaby/traefik/dynamic.d/<name>-<domain>.yml` from its `service.yml`
+— one per entry of `routes`, or one for the `domain` + `port` shorthand, each
+with its own router and service named `<name>-<domain>`.
+
+A `route:` block carries options for all of a service's routes and a `routes[]`
+entry may override them: `internal: api@internal` and `wildcard_cert: true` are
+traefik's own, `scheme: https` + `insecure_skip_verify: true` are how Traefik
+reaches a backend that keeps its own TLS (kopia, nextcloud's collabora).
 
 ## Certificates
 

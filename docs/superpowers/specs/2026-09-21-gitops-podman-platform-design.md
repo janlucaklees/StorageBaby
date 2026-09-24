@@ -118,6 +118,8 @@ backup: # or `backup: none` for stateless services; one of the two is required
 
 Phase 2 adds the optional keys `binds`, `devices`, `groups`, `config` and the host keys `gpu`, `packages`, `service_config`; see `2026-09-22-phase-2-single-services-design.md`.
 
+Phase 3 adds `routes` (several hostnames for one service), `host_secrets` (a value shared between two services of one host), `hooks.after_change`, plain systemd timer units in `quadlet/`, and makes `backup` a block the role consumes rather than a declaration nothing reads; it also turns the four multi-container stacks into pods. See `2026-09-23-phase-3-pods-and-backups-design.md`, which supersedes this section wherever the two disagree.
+
 The service role, for each placed service:
 
 - creates `svc-<name>` (system user, subuid/subgid via `usermod --add-subids`, linger)

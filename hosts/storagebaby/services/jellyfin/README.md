@@ -118,7 +118,8 @@ doas chmod -R o+rX /pool/shared/media
 ```
 
 Jellyfin comes up before that and serves an empty library; the root `README.md`
-carries this as operator step 4.
+carries this as the shared-trees operator step, the one that runs after the first
+converge rather than before it.
 
 `chgrp` still matters: the group is what Samba and the rest of the host use, and
 what the role would set on a fresh tree. `o+rX` is what Jellyfin actually reads

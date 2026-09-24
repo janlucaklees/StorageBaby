@@ -1,6 +1,6 @@
 # Phase 3: pods, backup clients and timers
 
-Status: reviewed, approved (2026-09-23)
+Status: reviewed, approved (2026-09-23); implemented 2026-09-24
 Date: 2026-09-23
 Extends: `2026-09-21-gitops-podman-platform-design.md` and `2026-09-22-phase-2-single-services-design.md`.
 
@@ -49,12 +49,12 @@ One `<name>.pod` per service. Containers `Pod=<name>.pod`, `ContainerName=<name>
 
 Secrets: every part that supports `_FILE` variables gets `Secret=<name>`; parts that only take environment get `Secret=<name>,type=env,target=<VAR>`. Composite values (OpenArchiver's `DATABASE_URL`) are assembled by a small `Entrypoint=` shell wrapper from the secret file, so a password is stored once.
 
-| Service      | Parts                                                                                                                     | Route ports                                              | Volumes (class)                                                      | Update policy       | Backup                                        |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------- | ------------------- | --------------------------------------------- |
-| paperless    | app (pinned), database postgres:17-alpine (auto), broker redis (auto), gotenberg:8 (auto), tika (auto), backup            | 8000                                                     | data pool, media pool, database fast, broker fast, backups fast      | app pinned 2.20.15  | data, media, backups (pg_dump daily)          |
-| openarchiver | app (pinned v0.6.0), database (auto), cache valkey (auto), meilisearch v1.38 (pinned), tika 3.2.2.0-full (pinned), backup | 3000                                                     | data pool, database fast, cache fast, meilisearch fast, backups fast | as listed           | data, backups                                 |
-| immich       | server (pinned), ml (pinned), database (pinned digest), cache redis (auto), backup                                        | 2283                                                     | upload pool, database fast, model-cache fast                         | server/ml/db pinned | upload (Immich writes its own DB dumps there) |
-| nextcloud    | app fpm (pinned 33-fpm-alpine), nginx (auto), database (auto), cache redis (auto), collabora (auto), backup               | 80 (nginx) → route `nextcloud`; 9980 → route `collabora` | html pool, database fast, backups fast                               | as listed           | html, backups                                 |
+| Service      | Parts                                                                                                                     | Route ports                                                              | Volumes (class)                                                      | Update policy       | Backup                                        |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------- | ------------------- | --------------------------------------------- |
+| paperless    | app (pinned), database postgres:17-alpine (auto), broker redis (auto), gotenberg:8 (auto), tika (auto), backup            | 8000                                                                     | data pool, media pool, database fast, broker fast, backups fast      | app pinned 2.20.15  | data, media, backups (pg_dump daily)          |
+| openarchiver | app (pinned v0.6.0), database (auto), cache valkey (auto), meilisearch v1.38 (pinned), tika 3.2.2.0-full (pinned), backup | 3001                                                                     | data pool, database fast, cache fast, meilisearch fast, backups fast | as listed           | data, backups                                 |
+| immich       | server (pinned), ml (pinned), database (pinned digest), cache redis (auto), backup                                        | 2283                                                                     | upload pool, database fast, model-cache fast                         | server/ml/db pinned | upload (Immich writes its own DB dumps there) |
+| nextcloud    | app fpm (pinned 33-fpm-alpine), nginx (auto), database (auto), cache redis (auto), collabora (auto), backup               | 8280 → route `nextcloud` (nginx listens on 80); 9980 → route `collabora` | html pool, database fast, backups fast                               | as listed           | html, backups                                 |
 
 Nextcloud: `config/` carries the nginx and php-fpm files as today; `TRUSTED_PROXIES` is the pod's gateway address as seen from pasta (determined on the test VM and set through `service.config`); `NEXTCLOUD_TRUSTED_DOMAINS` from the route; cron via timer; `hooks.after_change` runs, as `www-data` in `nextcloud-app` after it is healthy: `php occ maintenance:mode --off`, `php occ db:add-missing-columns`, `db:add-missing-indices`, `db:add-missing-primary-keys`, `maintenance:repair --include-expensive`. The image runs `occ upgrade` itself on a version change. Collabora reads its credentials from env-type secrets.
 
@@ -85,3 +85,16 @@ Database dumps: `<name>-dump.timer` daily before the snapshot time, `<name>-dump
 ## 7. Operator items this phase creates
 
 Unknown secret values become placeholders in the storagebaby secrets files: paperless database password and secret key, nextcloud database password, collabora credentials, immich database password, and the `kopia-clients` set. Databases must be migrated with their existing passwords or recreated. Snapraid's remote snapshot plugins are untouched (they talk to another host).
+
+## 8. Amendments
+
+Recorded as implemented, in the order they were decided. Each one supersedes what the
+section above it says; nothing above has been rewritten.
+
+- **openarchiver publishes 3001, not 3000** (task 4). yuzukam already has 3000 on every host both are placed on; the app still listens on 3000 inside the pod and only the `PublishPort=` line sees both numbers. The §3 table is corrected in place.
+- **Kopia serves its own TLS and Traefik re-encrypts to it** (task 3). A repository client speaks gRPC, so the backend has to be HTTP/2, which Traefik only speaks to a TLS backend. §4 carries the reasoning; routes gained `scheme` and `insecure_skip_verify` for it.
+- **Collabora keeps its own TLS as well** (task 6). Its image is distroless — no shell, no HTTP client — so an `openssl s_client` handshake is the only probe left in it, and with TLS off there is no probe at all. Its `routes[]` entry therefore carries `scheme: https` and `insecure_skip_verify: true` like kopia's.
+- **A pod's containers are dropped from the restart list when the pod restarts** (task 6). Quadlet binds them to the pod's unit, so restarting each of them again seconds later killed first starts halfway through — a half-applied paperless migration, an unreadable meilisearch index, a Nextcloud tree copied but never installed.
+- **An after-change hook waits up to 600 s for its container's health check** (task 6), not 300 s: that is the longest `HealthStartPeriod` in the repo (nextcloud's app), and a shorter wait would fail the play on exactly the converge that needed it.
+- **`AddHost=<fqdn>:host-gateway` is the role's job, for every route name placed on the host** (task 6b), rendered into a Quadlet drop-in rather than written by a template. Measured: under pasta a container cannot reach the host's own LAN address at all, so every cross-service hop needed it, not only the backup sidecar's. Amended in place in §3.
+- **Test hosts override `paperless-upload`'s `paperless_url`** through `service_config` (task 6b), so the platform's one real cross-service call is exercised against the VM's own Paperless instead of the production name.

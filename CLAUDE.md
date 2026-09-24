@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Git-driven configuration for a home NAS/media server ("StorageBaby") running Arch Linux. It covers the full stack: physical disk management, parity/redundancy, file sharing, and media services as rootless Podman containers. A host is set up once with `bootstrap.sh` and converges itself from this repository after that; nothing is changed on a host by hand. Design: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design.md`.
 
-Migrated so far: traefik (shared), and on storagebaby yuzukam, stirling-pdf, jellyfin, paperless-upload and kopia. The `docker-compose.yml` directories still at the repo root are the not-yet-migrated remainder: `nextcloud/` and `paperless/` are tracked Phase 3 inputs, `immich/` and `openarchiver/` are untracked working copies of the same phase, and `samba/` and `snapraid/` are Phase 4. A new service goes under `hosts/`, never into one of them.
+Migrated: traefik (shared), and on storagebaby yuzukam, stirling-pdf, jellyfin, paperless-upload, kopia and the four multi-container stacks as pods — paperless, openarchiver, immich and nextcloud. Their `docker-compose.yml` directories are gone from the repo root; what is left there is `samba/` and `snapraid/`, Phase 4, still hand-stowed units and scripts. A new service goes under `hosts/`, never beside them.
 
 ## Managing services
 
@@ -16,12 +16,16 @@ Placement is the folder:
 - `hosts/<host>/services/<name>/` — a service that runs on that host only.
 - `hosts/shared/services/<name>/` — a service that runs on every host (traefik).
 - `hosts/<host>/secrets/<service>.sops.yaml` — optional per-host override of a service's secrets.
+- `hosts/<host>/secrets/<set>.sops.yaml` — a set of values two services on that host have to agree on, referenced from both sides as `host_secrets`. `kopia-clients` is the one that exists: one password per backup client, read by the Kopia server and by that service's sidecar.
 
 A service folder is a contract, not a script:
 
 ```
-service.yml        name, port (loopback), domain, volumes, binds, devices, groups, config, secrets, backup policy
-quadlet/*.j2       Podman Quadlet units, rendered per host (vars: volumes.<name>, binds, config_dir, port, fqdn, tz)
+service.yml        name, port (loopback) + domain or routes, volumes, binds, devices, groups, config,
+                   secrets, host_secrets, hooks, backup policy
+quadlet/*.j2       Podman Quadlet units (.pod, .container, .build), rendered per host
+                   (vars: volumes.<name>, binds, config_dir, port, routes, fqdn, hostname, tz)
+quadlet/*.timer.j2 plain systemd user units, with their *.service.j2 half — not Quadlet
 config/            copied to /etc/storagebaby/<name>/, read-only for the service user
 secrets.sops.yaml  sops+age encrypted key/value pairs
 ```
@@ -34,10 +38,20 @@ secrets.sops.yaml  sops+age encrypted key/value pairs
 - **`groups`** — extra host supplementary groups for the service user. Any `groups` or bind group sets `keep_groups`, which is what a template turns into `GroupAdd=keep-groups`. It carries the groups into the container's credentials, and it does **not** survive an image that switches user through s6 — see `hosts/storagebaby/services/jellyfin/README.md`.
 - **`config`** — free-form, readable in templates as `service.config.*`, and overridable per host through `service_config: { <service>: { ... } }` in `host.yml` (host wins, deep-merged in the playbook). That is how the test host gives kopia a filesystem repository while storagebaby uses S3.
 - **`port`** is optional, and required only when there is a `domain`. paperless-upload has neither.
+- **`routes`** — `[{domain, port}, ...]` when one service answers on several names (nextcloud: `nextcloud` and `collabora`); `domain:` + `port:` is the one-route shorthand. One Traefik file and one router per entry, `<name>-<domain>`. `route:` is a block of backend options for all of them, and a `routes[]` entry may override it: `scheme: https` + `insecure_skip_verify: true` is how Traefik reaches a backend that keeps its own TLS (kopia, because gRPC needs HTTP/2; collabora, because its distroless image has no plain-HTTP probe).
+- **`host_secrets`** — `<podman secret name>: <set>.<key>`, resolved against `hosts/<host>/secrets/<set>.sops.yaml`. One string, two services: the kopia server declares `client_paperless: kopia-clients.paperless`, paperless declares `kopia_password: kopia-clients.paperless`.
+- **`hooks.after_change`** — `podman exec` commands the role runs, in order, after it restarted the service's units, each waiting for its container's health check first (60 × 10 s). `when: unit_changed` (the default) makes a hook a deploy step and not a nightly one — a version bump runs nextcloud's five `occ` commands, the nightly no-op does not.
+- **`backup`** — consumed by the role, not by a template: it generates `<name>-backup.container` into the service's pod, mounts each named volume read-only at `/data/<volume>`, connects to `https://kopia.<domain>` as `<name>@<host>` and keeps a scheduler running. Hence `backup` requires a `<name>.pod.j2`. A database is dumped into a `backups` volume by a timer, never snapshotted as a data directory.
 
 Placing a storagebaby service on a test host is a symlink, never a copy — one folder, several hosts: `hosts/test-a/services/<name> -> ../../storagebaby/services/<name>`. There are two test hosts: `test-a` places everything and runs on the workstation, `test-ci` a subset that fits a GitHub runner. `MOLECULE_HOST` picks which one the integration scenario converges (default `test-a`).
 
-The generic `service` role in `ansible/roles/service/` turns that into a running service: system user `svc-<name>` with subids and linger, volume and bind directories, group memberships, `podman secret`s synced from sops, quadlets rendered into `/etc/containers/systemd/users/<uid>/`, a Traefik route file, then restarts only what changed.
+A multi-container service is one Podman pod. The conventions a template must meet, all of them enforced by `tests/static/`:
+
+- exactly one `<name>.pod.j2`, and every `*.container.j2` of that service carries `Pod=<name>.pod` and `ContainerName=<name>-<part>` (`-app`, `-database`, `-cache`, `-backup`, …);
+- every `PublishPort=` lives on the `.pod`, publishes a route port and starts `127.0.0.1:` — inside the pod the parts reach each other on `127.0.0.1:<upstream port>`;
+- no template writes `AddHost=<fqdn>:host-gateway`. The role does, into a Quadlet drop-in, for every route name placed on the host: rootless, pasta gives the container the host's own address, so a service reaching another one through Traefik needs the gateway address instead. `ansible/roles/service/README.md`, "Reaching another service through Traefik".
+
+The generic `service` role in `ansible/roles/service/` turns all of that into a running service: system user `svc-<name>` with subids and linger, volume and bind directories, group memberships, `podman secret`s synced from sops (own and host sets), quadlets and timer units rendered, the host-gateway drop-ins, the generated backup sidecar, one Traefik route file per route, then restarts only what changed and runs the after-change hooks. Restarting a pod is the only restart its containers need, so they are dropped from the restart list when it is in it.
 
 Work on the repo through the Makefile — everything runs in the `devtools` image, nothing is installed on the workstation:
 
@@ -61,6 +75,11 @@ make ps SERVICE=traefik      # systemctl --user -M svc-traefik@ status traefik.s
 make restart SERVICE=traefik # also: start, stop
 make logs SERVICE=traefik    # journalctl _SYSTEMD_USER_UNIT=traefik.service -f
 ```
+
+They are pod-aware: `SERVICE=<name>` resolves to `<name>-pod.service` when the service
+user's manager knows that unit and to `<name>.service` otherwise, so
+`make logs SERVICE=nextcloud` follows the pod. A single container of a pod is addressed
+by its own unit name (`nextcloud-collabora.service`).
 
 These five targets are the only ones meant to run on a host rather than in the
 devtools image. The raw forms they wrap:

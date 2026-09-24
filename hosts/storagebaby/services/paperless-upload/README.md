@@ -103,7 +103,8 @@ per-directory bit that nothing already on disk inherits, which is why it goes on
 through `find` and not as a single `chmod` on the share root. Until this
 runs the container restart-loops: its health check is `test -d /data/processed`, and
 the startup `mkdir -p` fails in a tree the service user may not write. That is
-operator step 4 in the root `README.md`.
+the shared-trees operator step in the root `README.md`, the one that runs after
+the first converge rather than before it.
 
 ### It writes as the service user
 

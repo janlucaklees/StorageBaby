@@ -152,6 +152,26 @@ therefore not in `backup.paths`; `backups` is. Snapshotting a running postgres
 data directory copies files mid-write and restores to a database that may not
 open at all.
 
+### Restoring one
+
+The old `paperless/Makefile` had `database_snapshot` and `database_restore` in
+`--format=tar`; the timer replaced the first and this replaces the second, in the
+custom format `pg_dump -Fc` writes. It runs as the service user, because the
+container belongs to that user's podman:
+
+```sh
+/usr/local/sbin/podman-as svc-paperless podman exec -i paperless-database \
+	pg_restore -U paperless -d paperless --no-owner < /path/to/paperless.dump
+```
+
+`-U` and `-d` are `config.database_user` and `config.database_name` in
+`service.yml`. `--no-owner` because the roles in the dump are the old stack's, not
+the ones this cluster initialised with. `pg_restore` does not empty what is already
+there, so restore into a freshly initialised cluster, or drop and recreate the
+database first with paperless stopped (`make stop SERVICE=paperless`). The file is
+either `/var/lib/storagebaby/fast/paperless/backups/paperless.dump` on the host or
+one restored out of a Kopia snapshot of the `backups` volume.
+
 ## Backups
 
 ```yaml
@@ -223,13 +243,17 @@ actually restarted something and not on the nightly no-op.
 
 `paperless/docker-compose.yml`'s four named volumes map onto this folder's five:
 
-| Old (rootful compose)                   | New                                                               |
-| --------------------------------------- | ----------------------------------------------------------------- |
-| `/pool/apps/paperless/volumes/data`     | `/pool/apps/paperless/data`                                       |
-| `/pool/apps/paperless/volumes/media`    | `/pool/apps/paperless/media`                                      |
-| `/pool/apps/paperless/volumes/database` | `/var/lib/storagebaby/fast/paperless/database`                    |
-| `/pool/apps/paperless/volumes/broker`   | — (a queue; start empty)                                          |
-| —                                       | `/var/lib/storagebaby/fast/paperless/backups` (new, for the dump) |
+| Old (rootful compose)        | New                                                               |
+| ---------------------------- | ----------------------------------------------------------------- |
+| `paperless_data` (named)     | `/pool/apps/paperless/data`                                       |
+| `paperless_media` (named)    | `/pool/apps/paperless/media`                                      |
+| `paperless_database` (named) | `/var/lib/storagebaby/fast/paperless/database`                    |
+| `paperless_broker` (named)   | — (a queue; start empty)                                          |
+| —                            | `/var/lib/storagebaby/fast/paperless/backups` (new, for the dump) |
+
+All four were ordinary Docker named volumes, not binds: rootful Docker keeps them
+under `/var/lib/docker/volumes/<name>/_data`, and `<name>` is the compose project
+(the directory the `docker-compose.yml` sat in) plus the volume's own name.
 
 The repo's root README has the recipe and the ownership rules. The paperless
 image runs the app as its own in-container user, so the moved trees have to be
