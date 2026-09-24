@@ -115,11 +115,25 @@ flag the unit file itself contributes, so the parent lands in `changed_units` an
 the daemon-reload plus restart it needs. Quadlet generates a unit from the unit file
 and its drop-ins together, so nothing less would reach a running container.
 
-Stale drop-ins are handled exactly as stale units are, which is to say not at all: a
-service removed from a host keeps its unit directory, and now its `<unit>.d/` with it,
-until someone clears `/etc/containers/systemd/users/<uid>/`. The case that matters is
-covered without cleanup — unplacing a service shortens the list, which changes the
-drop-in of every service still placed, which restarts them.
+A drop-in of a unit this service no longer carries is removed. `units.yml` finds every
+`10-storagebaby-hosts.conf` under the unit directory after rendering and deletes the
+`.d/` of any whose parent unit is not in the carrier list; a removal reloads the user
+manager exactly as a render does, and finding nothing to remove is the normal case, so
+the run stays idempotent.
+
+That is a deliberate exception to the platform's "stale files stay" rule, because a
+stale drop-in is not the harmless thing a stale unit file is: an orphaned unit is inert,
+it generates a unit nobody starts, while an orphaned `<unit>.d/` attaches to a unit that
+still exists and changes what it does. The case is this repo's own migration path — a
+service that gains a `<name>.pod.j2` stops carrying the drop-in on its containers, and
+the `<stem>.container.d/` left behind would make podman refuse to start that container
+("extra host entries must be specified on the pod: network cannot be configured when it
+is shared with a pod") on that converge and on every nightly deploy after it, until
+someone logged into the host and deleted a file by hand. Unplacing a whole _service_
+still leaves its unit directory behind, as every other stale file does — but those units
+belong to a service nobody starts any more, and the list itself needs no cleanup:
+unplacing a service shortens it, which changes the drop-in of every service still
+placed, which restarts them.
 
 ## Host secrets
 
@@ -180,10 +194,14 @@ for cron-like commands; they address containers by name, e.g.
 
 A service with a `backup` block gets `<name>-backup.container` generated from the role's
 own `kopia-client.container.j2` — it is not in the service folder. The sidecar joins the
-service's pod (hence the contract: `backup` requires a `<name>.pod.j2`), mounts every
-volume in `backup.paths` read-only at `/data/<volume>`, connects to `https://kopia.<domain>`
-as `<name>@<host>` with the `kopia_password` host secret, applies the retention policy and
-then runs a Kopia server so the scheduler takes the snapshots at `backup.schedule`.
+service's pod (hence the contract: `backup` requires a `<name>.pod.j2` — and hence, too,
+how the sidecar gets its `kopia.<domain>` mapping: the host-gateway drop-in is carried by
+the templates in the service folder, never by the generated sidecar, so the pod's drop-in
+is the only thing that resolves the one name the sidecar cannot work without), mounts
+every volume in `backup.paths` read-only at `/data/<volume>`, connects to
+`https://kopia.<domain>` as `<name>@<host>` with the `kopia_password` host secret, applies
+the retention policy and then runs a Kopia server so the scheduler takes the snapshots at
+`backup.schedule`.
 
 `kopia_password` reaches the sidecar as an **env-type** podman secret
 (`Secret=kopia_password,type=env,target=KOPIA_PASSWORD`) rather than as a file under

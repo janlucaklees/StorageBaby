@@ -75,6 +75,31 @@
   loop: '{{ hosts_dropin_units }}'
   register: hosts_dropin_render
 
+# A stale drop-in is not the harmless thing a stale unit file is. An orphaned unit is
+# inert -- it generates a unit nobody starts; an orphaned `<unit>.d/` attaches to a unit
+# that still exists and changes what it does. The case is this repo's own migration
+# path: a service that gains a `<name>.pod.j2` stops carrying the drop-in on its
+# containers, and a `<stem>.container.d/` left behind would make podman refuse to start
+# that container ("extra host entries must be specified on the pod") on this converge
+# and on every nightly one after it, until someone deleted a file by hand on the host.
+# Only the file the role itself writes is looked for, and only its directory removed.
+- name: Find every host-gateway drop-in on disk
+  ansible.builtin.find:
+    paths: '{{ unit_dir }}'
+    patterns: 10-storagebaby-hosts.conf
+    recurse: true
+  register: hosts_dropin_present
+
+- name: Remove the drop-ins of units this service no longer carries
+  ansible.builtin.file:
+    path: '{{ item.path | dirname }}'
+    state: absent
+  loop: '{{ hosts_dropin_present.files }}'
+  loop_control:
+    label: '{{ item.path | dirname | basename }}'
+  when: (item.path | dirname | basename | regex_replace('\.d$', '')) not in hosts_dropin_units
+  register: hosts_dropin_cleanup
+
 # A changed drop-in is a changed unit. Quadlet generates the unit from the unit file
 # and its drop-ins together, so a new `AddHost` set only reaches a running container
 # through the same daemon-reload-plus-restart a changed unit file gets. The mapping
@@ -170,7 +195,7 @@
 
 - name: Reload the user manager
   ansible.builtin.command: systemctl --user -M {{ svc_user }}@ daemon-reload
-  when: quadlet_render.changed or backup_render.changed or hosts_dropin_render.changed
+  when: quadlet_render.changed or backup_render.changed or hosts_dropin_render.changed or hosts_dropin_cleanup.changed
   changed_when: true
 
 - name: Restart changed units

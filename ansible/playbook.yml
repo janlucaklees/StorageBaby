@@ -68,12 +68,16 @@
 
     # Sorted and de-duplicated so the rendered drop-in is byte-stable: the role
     # restarts a unit whose drop-in changed, and a list that came back in a different
-    # order every run would restart every service on every converge.
+    # order every run would restart every service on every converge. Sorted *after*
+    # the suffix is joined on, because that is the string the static test asserts the
+    # rendered file against -- and the two orders differ as soon as one route name is
+    # another plus a suffix: `-` sorts before `.`, so `paperless`/`paperless-upload`
+    # come out the other way round when the bare names are sorted first.
     - name: The host's route fqdns, in a stable order
       ansible.builtin.set_fact:
         placed_fqdns: >-
-          {{ _placed_route_domains | default([]) | unique | sort
-             | product(['.' ~ domain]) | map('join') | list }}
+          {{ _placed_route_domains | default([]) | unique
+             | product(['.' ~ domain]) | map('join') | sort | list }}
   roles:
     # `| bool`: ansible-core rejects a non-boolean conditional, and an
     # `-e render_only=...` on the command line arrives as a string.
