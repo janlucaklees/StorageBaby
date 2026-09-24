@@ -77,14 +77,27 @@
     # nothing about which service it is writing for, and it should stay that way.
     # Hex is also URL-safe, which matters where a password is a field inside a
     # connection URL (openarchiver's DATABASE_URL).
+    #
+    # Kept, not rewritten, when the file already there is encrypted to *this* host's
+    # age key. A second `prepare` on a live VM is the operator's iteration loop, and
+    # regenerating the values there breaks exactly the services that keep state: kopia
+    # restart-loops on "invalid repository password" against the repository the first
+    # run created, and a postgres data directory keeps the password it was initialised
+    # with. The recipient check is what keeps a *fresh* VM correct — bootstrap makes a
+    # new age key, the leftover files from the previous VM are addressed to the old
+    # one, and nothing on the new host could decrypt them, so those are rewritten.
     - name: Write and encrypt one secrets file per service
       ansible.builtin.shell: |
         set -euo pipefail
+        if [ -f "$OUT" ] && grep -q '{{ storagebaby_age_pub }}' "$OUT"; then
+          echo keeping
+          exit 0
+        fi
         rm -f "$TMP"
         {% for key in (lookup('file', item) | from_yaml).secrets %}
         printf '%s: "%s"\n' '{{ key }}' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$TMP"
         {% endfor %}
-        sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "{{ _hosts_root }}/{{ inventory_hostname }}/secrets/{{ item | dirname | basename }}.sops.yaml"
+        sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "$OUT"
         rm -f "$TMP"
       args:
         executable: /bin/bash
@@ -94,12 +107,14 @@
         chdir: /tmp
       environment:
         TMP: '/tmp/{{ inventory_hostname }}-{{ item | dirname | basename }}-secrets.yaml'
+        OUT: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/{{ item | dirname | basename }}.sops.yaml'
       loop: '{{ _placed }}'
       loop_control:
         label: '{{ item | dirname | basename }}'
       when: (lookup('file', item) | from_yaml).secrets | length > 0
       delegate_to: localhost
-      changed_when: true
+      register: _service_secret
+      changed_when: _service_secret.stdout != 'keeping'
 
     # `host_secrets` are the other half: values shared between services of one host,
     # living in `hosts/<host>/secrets/<set>.sops.yaml` rather than in a service folder.
@@ -126,14 +141,20 @@
     # one value per client. On a host that places no pod the list is empty and the task
     # is a no-op -- which is what it has to be, rather than writing an empty file or
     # failing on one.
+    # Kept on a re-run for the same reason as the per-service files above: a client
+    # password that changed under a connected sidecar is state the VM cannot repair.
     - name: Write and encrypt one file per referenced host secret set
       ansible.builtin.shell: |
         set -euo pipefail
+        if [ -f "$OUT" ] && grep -q '{{ storagebaby_age_pub }}' "$OUT"; then
+          echo keeping
+          exit 0
+        fi
         rm -f "$TMP"
         {% for key in (_refs | select('match', item ~ '\.') | map('regex_replace', '^[^.]*\.', '') | unique | sort | list) %}
         printf '%s: "%s"\n' '{{ key }}' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$TMP"
         {% endfor %}
-        sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "{{ _hosts_root }}/{{ inventory_hostname }}/secrets/{{ item }}.sops.yaml"
+        sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "$OUT"
         rm -f "$TMP"
       args:
         executable: /bin/bash
@@ -142,11 +163,13 @@
         chdir: /tmp
       environment:
         TMP: '/tmp/{{ inventory_hostname }}-set-{{ item }}.yaml'
+        OUT: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/{{ item }}.sops.yaml'
       loop: '{{ _set_names }}'
       loop_control:
         label: '{{ item }}'
       delegate_to: localhost
-      changed_when: true
+      register: _set_secret
+      changed_when: _set_secret.stdout != 'keeping'
 
 # Stands in for GitHub: the deploy unit that bootstrap installed already points at
 # /srv/storagebaby.git, so seeding a bare repo there is all it takes to make
