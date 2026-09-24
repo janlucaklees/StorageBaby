@@ -42,12 +42,13 @@ and two services cannot share a loopback port. So the route's port — the one i
 `service.yml` and in the Traefik file — is 3001, and the pod's publish line is
 the only place the two numbers meet.
 
-### `AddHost=kopia.<domain>:host-gateway`
+### `AddHost=` — the pod has to be able to reach Traefik
 
-On the pod, for the backup sidecar: it connects to the Kopia server the way every
-other client does, through Traefik on the host (`https://kopia.<domain>`), and
-inside the pod there is no DNS that answers for that name. Harmless on a host
-where DNS does answer.
+Nothing in `quadlet/` writes these lines; the `service` role does, into a Quadlet
+drop-in on the pod, for **every** route name placed on the host — `kopia.<domain>`,
+which the backup sidecar connects to, along with everything else the host serves.
+`ansible/roles/service/README.md`, "Reaching another service through Traefik", has the
+mechanism.
 
 ## Secrets, and why three of them are shaped differently
 

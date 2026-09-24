@@ -36,12 +36,13 @@ are interchangeable within their major and ride `AutoUpdate=registry` with the
 service user's `podman-auto-update.timer`, which rolls back an image that fails
 its health check.
 
-### `AddHost=kopia.<domain>:host-gateway`
+### `AddHost=` — the pod has to be able to reach Traefik
 
-On the pod, for the backup sidecar: it connects to the Kopia server the way every
-other client does, through Traefik on the host (`https://kopia.<domain>`), and
-inside the pod there is no DNS that answers for that name. Harmless on a host
-where DNS does answer.
+Nothing in `quadlet/` writes these lines; the `service` role does, into a Quadlet
+drop-in on the pod, for **every** route name placed on the host — `kopia.<domain>`,
+which the backup sidecar connects to, along with everything else the host serves.
+`ansible/roles/service/README.md`, "Reaching another service through Traefik", has the
+mechanism.
 
 ## Health checks
 
