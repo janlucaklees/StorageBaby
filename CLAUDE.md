@@ -143,6 +143,8 @@ Traefik runs rootless as `svc-traefik` with `Network=host` and is the only proce
 
 Traefik's only provider is the file provider: the `service` role renders one route file per placed service into `/etc/storagebaby/traefik/dynamic.d/<name>.yml`, pointing at `http://127.0.0.1:<port>`. No labels, no Docker socket, no shared container network — rootless containers of different users cannot reach each other's loopback, so cross-service traffic goes through Traefik and the public FQDN.
 
+That FQDN is never resolved by DNS from inside a container: pasta copies the host's own address onto the container's interface, so a name pointing at the host resolves to the container, where nothing listens on 443. The role therefore renders `AddHost=<fqdn>:host-gateway` for **every** route name placed on the host into a Quadlet drop-in — `<name>.pod.d/` for a pod service, `<stem>.container.d/` otherwise — and a static test keeps those lines out of the service templates. Details in `ansible/roles/service/README.md`, "Reaching another service through Traefik".
+
 TLS: with `acme: true` in `host.yml`, Traefik itself issues the wildcard cert for the host's domain via the Porkbun DNS challenge, state in the `letsencrypt` volume. `acme: false` (test hosts) serves Traefik's default certificate. Details in `hosts/shared/services/traefik/README.md`.
 
 Updates are Podman's: floating tag plus `AutoUpdate=registry` and the user's `podman-auto-update.timer`, or a pinned tag bumped in git.

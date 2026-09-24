@@ -51,6 +51,39 @@
   when: backup_enabled | bool
   register: backup_render
 
+# Quadlet reads `<unit>.d/*.conf` beside a unit file exactly as systemd does, and
+# merges them into the unit before generating it -- verified on the podman the test VM
+# runs (6.1.2), for `<stem>.pod.d` and `<stem>.container.d` alike. That is what lets
+# the role give every service the same `AddHost` block without a line in any service's
+# template: the list is the host's placement, not the service's business.
+- name: Host-gateway drop-in directories
+  ansible.builtin.file:
+    path: '{{ unit_dir }}/{{ item }}.d'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: '{{ hosts_dropin_units }}'
+
+- name: Render the host-gateway drop-ins
+  ansible.builtin.template:
+    src: storagebaby-hosts.conf.j2
+    dest: '{{ unit_dir }}/{{ item }}.d/10-storagebaby-hosts.conf'
+    owner: root
+    group: root
+    mode: '0644'
+  loop: '{{ hosts_dropin_units }}'
+  register: hosts_dropin_render
+
+# A changed drop-in is a changed unit. Quadlet generates the unit from the unit file
+# and its drop-ins together, so a new `AddHost` set only reaches a running container
+# through the same daemon-reload-plus-restart a changed unit file gets. The mapping
+# below therefore reads this list beside `item.changed`, keyed by the parent unit's
+# file name -- which is exactly what the loop items are.
+- name: Note which units have a changed drop-in
+  ansible.builtin.set_fact:
+    changed_dropin_units: "{{ hosts_dropin_render.results | default([]) | selectattr('changed') | map(attribute='item') | list }}"
+
 # One file and one router per route: two routes of a service would otherwise
 # overwrite each other's file.
 - name: Render traefik routes
@@ -72,7 +105,8 @@
 
 - name: Map rendered files to systemd unit names
   ansible.builtin.set_fact:
-    mapped_units: "{{ mapped_units + [{'unit': unit_name, 'kind': _ext, 'changed': item.changed}] }}"
+    mapped_units: "{{ mapped_units + [{'unit': unit_name, 'kind': _ext,
+      'changed': item.changed or (_base in changed_dropin_units)}] }}"
   vars:
     _base: '{{ item.dest | basename }}'
     _stem: '{{ (_base | splitext)[0] }}'
@@ -136,7 +170,7 @@
 
 - name: Reload the user manager
   ansible.builtin.command: systemctl --user -M {{ svc_user }}@ daemon-reload
-  when: quadlet_render.changed or backup_render.changed
+  when: quadlet_render.changed or backup_render.changed or hosts_dropin_render.changed
   changed_when: true
 
 - name: Restart changed units

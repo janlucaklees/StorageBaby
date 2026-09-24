@@ -6,17 +6,3 @@ PodName=nextcloud
    inside the pod for the `nextcloud` route, collabora on 9980 for its own. #}
 PublishPort=127.0.0.1:8280:80
 PublishPort=127.0.0.1:9980:9980
-{# The backup sidecar joins this pod and talks to the kopia server through Traefik on
-   the host, so the pod has to be able to resolve the server's own name to the host.
-   Harmless where DNS already answers for it. #}
-AddHost=kopia.{{ domain }}:host-gateway
-{# And this service's own two names, for the same reason. Collabora is a two-way
-   server-to-server protocol: the app fetches `https://collabora.<domain>/hosting/discovery`
-   and Collabora fetches back the WOPISrc the app builds from `OVERWRITEHOST` on the
-   nextcloud name. Both hops leave the pod and have to come back through Traefik, and
-   under rootless podman pasta copies the host's own address onto the pod's interface --
-   so without these two lines those names resolve *inside* the pod, where nothing
-   listens on 443. Traefik lives in the host's network namespace; `host-gateway` is the
-   address that reaches it. #}
-AddHost=nextcloud.{{ domain }}:host-gateway
-AddHost=collabora.{{ domain }}:host-gateway

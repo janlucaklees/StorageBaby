@@ -66,23 +66,20 @@ the TLS it serves itself — and that is what the per-entry `scheme` and
 
 ### `AddHost=` — the pod has to be able to reach Traefik
 
-```
-AddHost=kopia.<domain>:host-gateway
-AddHost=nextcloud.<domain>:host-gateway
-AddHost=collabora.<domain>:host-gateway
-```
+Nothing in `quadlet/` writes these lines; the `service` role does, into a Quadlet
+drop-in on the pod, for **every** route name placed on the host — so this pod gets
+`kopia.<domain>`, `nextcloud.<domain>` and `collabora.<domain>` along with everything
+else the host serves. `ansible/roles/service/README.md`, "Reaching another service
+through Traefik", has the mechanism.
 
-The first is for the backup sidecar: it connects to the Kopia server the way every
-other client does, through Traefik on the host (`https://kopia.<domain>`), and
-inside the pod there is no DNS that answers for that name.
-
-The other two are this service's own route names, and the **WOPI pair** needs them
-for exactly the same reason. Collabora is a two-way server-to-server protocol and
-both directions leave the pod and come back in through Traefik on the public name:
-`nextcloud-app` fetches `https://collabora.<domain>/hosting/discovery` server-side
-(richdocuments does this on every settings save and caches the result), and
-`nextcloud-collabora` then fetches the `WOPISrc` URL back, which Nextcloud builds
+Nextcloud is why that became the role's job. Collabora is a two-way server-to-server
+protocol and both directions leave the pod and come back in through Traefik on the
+public name: `nextcloud-app` fetches `https://collabora.<domain>/hosting/discovery`
+server-side (richdocuments does this on every settings save and caches the result),
+and `nextcloud-collabora` then fetches the `WOPISrc` URL back, which Nextcloud builds
 from `OVERWRITEHOST` — `https://nextcloud.<domain>/index.php/apps/richdocuments/…`.
+The backup sidecar needs `kopia.<domain>` for the same reason, and it is the same
+reason any service calling any other one has it.
 
 Rootless, the pod's network namespace is pasta's, and pasta copies the **host's own
 address** onto the namespace's interface. So a name that resolves to the host
@@ -92,10 +89,8 @@ is the one address podman maps back out to it. This is the repo rule
 ("cross-service traffic goes through Traefik and the public FQDN") spelled out: it
 only works from a pod that can resolve that FQDN to the host gateway. The old
 compose stack never met it — a bridged container reaches the host's LAN address
-directly.
-
-All three lines are harmless on a host where DNS already answers for the name; they
-make the answer deterministic.
+directly, which a rootless one cannot: measured on the test VM, a connect from
+inside a container to the host's own LAN address is refused.
 
 ## `config/`
 
@@ -604,7 +599,7 @@ pod stops short of it: Collabora's own health check is a TLS handshake against
 is actually there for is `coolforkit-ns`/`coolmount` building a chroot jail **per
 document** — nested namespaces and device nodes inside an already-unprivileged user
 namespace — and that code only runs when a document is opened. It is also the flow
-the three `AddHost=` lines exist for, so a failure here is either the jail or the
+the pod's `AddHost=` drop-in exists for, so a failure here is either the jail or the
 WOPI round trip.
 
 Look for `coolforkit`, `coolmount` or `mount` in the errors: a jail that cannot be

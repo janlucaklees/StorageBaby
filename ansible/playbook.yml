@@ -46,6 +46,34 @@
         placed_services: >-
           {{ (_shared_specs.files | map(attribute='path') | sort)
              + (_host_specs.files | map(attribute='path') | sort) }}
+
+    # Every route name placed on this host, collected here and not in the role: the
+    # role runs once per service and can only see its own spec, while what each
+    # service needs is the *host's* whole list. The `service` role renders it into a
+    # Quadlet drop-in per service so those names resolve to the host gateway from
+    # inside a container -- `ansible/roles/service/README.md`, "Reaching another
+    # service through Traefik", has the why.
+    - name: Collect the route names of every placed service
+      ansible.builtin.set_fact:
+        _placed_route_domains: >-
+          {{ (_placed_route_domains | default([]))
+             + (_spec.routes | default([]) | map(attribute='domain') | list)
+             + ([_spec.domain] if _spec.domain is defined else []) }}
+      vars:
+        _spec: "{{ lookup('file', placed_service) | from_yaml }}"
+      loop: '{{ placed_services }}'
+      loop_control:
+        loop_var: placed_service
+        label: '{{ placed_service | dirname | basename }}'
+
+    # Sorted and de-duplicated so the rendered drop-in is byte-stable: the role
+    # restarts a unit whose drop-in changed, and a list that came back in a different
+    # order every run would restart every service on every converge.
+    - name: The host's route fqdns, in a stable order
+      ansible.builtin.set_fact:
+        placed_fqdns: >-
+          {{ _placed_route_domains | default([]) | unique | sort
+             | product(['.' ~ domain]) | map('join') | list }}
   roles:
     # `| bool`: ansible-core rejects a non-boolean conditional, and an
     # `-e render_only=...` on the command line arrives as a string.

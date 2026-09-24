@@ -51,6 +51,20 @@
     routes: '{{ routes_out }}'
     fqdn: "{{ (routes_out | first).fqdn if routes_out | length > 0 else '' }}"
 
+# Which units carry the host-gateway drop-in: the pod when the service has one,
+# otherwise every container of the service. Podman refuses `--add-host` on a container
+# that joins a pod, so a pod service can only carry it on the pod -- which covers every
+# one of its containers, because `test_pod_publishes_exactly_the_route_ports` asserts
+# they are all in it, and the generated backup sidecar declares `Pod=` too. Derived
+# here rather than in units.yml because render.yml needs the same list.
+- name: Units that carry the host-gateway drop-in
+  ansible.builtin.set_fact:
+    hosts_dropin_units: '{{ _pods if _pods | length > 0 else _containers }}'
+  vars:
+    _quadlets: "{{ lookup('fileglob', service_dir ~ '/quadlet/*.j2', wantlist=True) | map('basename') | list }}"
+    _pods: "{{ _quadlets | select('search', '\\.pod\\.j2$') | map('regex_replace', '\\.j2$', '') | sort | list }}"
+    _containers: "{{ _quadlets | select('search', '\\.container\\.j2$') | map('regex_replace', '\\.j2$', '') | sort | list }}"
+
 # Added to `volumes` here, before host.yml creates the volume directories, so the
 # sidecar's two get created and owned like any other volume of the service.
 - name: Implicit backup volumes

@@ -73,6 +73,54 @@ keys: the server makes its own certificate, Traefik re-encrypts to it and skips 
 verification nothing could pass. `insecure_skip_verify` renders a Traefik
 `serversTransport` named after the route and attaches it to that route's loadBalancer.
 
+## Reaching another service through Traefik
+
+A template never writes an `AddHost=<name>:host-gateway` line, and a static test says
+so. The role writes them, for **every** route name placed on the host, into a Quadlet
+drop-in — so a service that calls another one only has to use its public FQDN.
+
+```
+/etc/containers/systemd/users/<uid>/<name>.pod.d/10-storagebaby-hosts.conf
+/etc/containers/systemd/users/<uid>/<stem>.container.d/10-storagebaby-hosts.conf
+```
+
+The pod when the service has one, each `.container` when it has not. Podman refuses
+`--add-host` on a container that joins a pod ("extra host entries must be specified on
+the pod: network cannot be configured when it is shared with a pod"), so the pod is the
+only place it can go — and that covers every container of a pod service, because
+`test_pod_publishes_exactly_the_route_ports` asserts they all carry `Pod=`, generated
+sidecar included. On traefik's `Network=host` container the line is accepted and
+resolves to `127.0.0.1`, which in the host's own namespace _is_ the host, so it needs
+no exception.
+
+Why it is needed at all: rootless, a container's network namespace is pasta's, and
+pasta copies the **host's own address** onto that namespace's interface. A name that
+resolves to the host therefore resolves, from inside the container, to the container —
+where nothing listens on 443, because Traefik is the single listener on 80/443 in the
+host's network namespace. Measured on the test VM: a connect from inside
+`paperless-upload` and from inside `paperless-app` to the VM's own `192.168.122.53:443`
+is refused, `127.0.0.1:443` is refused, and only `169.254.1.2:443` — podman's
+`host-gateway` — answers. It is not a test-host quirk: the LAN address is unreachable
+from a container on any rootless host, DNS or no DNS.
+
+The list is the **host's**, not the service's, which is why it is a drop-in and why
+`placed_fqdns` is computed in `ansible/playbook.yml` beside `placed_services` rather
+than in the role: the role runs once per service and sees only its own spec. It is
+sorted and de-duplicated so the rendered file is byte-stable — an unstable order would
+restart every service on every converge.
+
+A changed drop-in is a changed unit. `units.yml` registers the drop-in render, maps
+each changed one back to its parent unit's file name and ORs that into the `changed`
+flag the unit file itself contributes, so the parent lands in `changed_units` and gets
+the daemon-reload plus restart it needs. Quadlet generates a unit from the unit file
+and its drop-ins together, so nothing less would reach a running container.
+
+Stale drop-ins are handled exactly as stale units are, which is to say not at all: a
+service removed from a host keeps its unit directory, and now its `<unit>.d/` with it,
+until someone clears `/etc/containers/systemd/users/<uid>/`. The case that matters is
+covered without cleanup — unplacing a service shortens the list, which changes the
+drop-in of every service still placed, which restarts them.
+
 ## Host secrets
 
 `secrets:` are the service's own, from its folder. `host_secrets:` are values shared

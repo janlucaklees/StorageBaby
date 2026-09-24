@@ -36,6 +36,23 @@
     mode: '0644'
   when: backup_enabled | bool
 
+# Rendered here too, and into the same layout as the host's unit directory, so the
+# `quadlet -dryrun` in `tests/static/test_render.py` reads them the way Quadlet on a
+# host does. They are directories, which is why the test's file listing still matches.
+- name: Host-gateway drop-in directories
+  ansible.builtin.file:
+    path: '{{ render_output }}/{{ service.name }}/{{ item }}.d'
+    state: directory
+    mode: '0755'
+  loop: '{{ hosts_dropin_units }}'
+
+- name: Render the host-gateway drop-ins
+  ansible.builtin.template:
+    src: storagebaby-hosts.conf.j2
+    dest: '{{ render_output }}/{{ service.name }}/{{ item }}.d/10-storagebaby-hosts.conf'
+    mode: '0644'
+  loop: '{{ hosts_dropin_units }}'
+
 - name: Render traefik routes
   ansible.builtin.template:
     src: traefik-route.yml.j2

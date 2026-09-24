@@ -1,0 +1,24 @@
+{# Written by the `service` role into `<unit>.d/`, once per unit that owns a network
+   namespace. It maps every route name placed on this host to podman's `host-gateway`.
+
+   Rootless, a container's network namespace is pasta's, and pasta copies the host's
+   *own* address onto the namespace's interface -- so a name that resolves to the host
+   address resolves, from inside the container, to the container, where nothing listens
+   on 443. Measured on the test VM: a connect from a container to the VM's own
+   192.168.122.53:443 is refused, and only 169.254.1.2 (`host-gateway`) reaches Traefik,
+   which is the single listener on 80/443 in the host's network namespace.
+
+   A drop-in and not a line in each service's own template, because the list is a
+   property of the host's placement rather than of the service: every service needs the
+   same one, and it changes when another service is placed or unplaced.
+
+   `[Pod]` for a pod: podman refuses `--add-host` on a container that joins a pod
+   ("extra host entries must be specified on the pod: network cannot be configured when
+   it is shared with a pod"), so the pod is the only place it can go -- and that is
+   every container of the service, since they all join it. On a `Network=host` container
+   (traefik) the line is accepted and resolves to 127.0.0.1, which in the host's own
+   namespace is the host: correct, so it needs no exception. #}
+[{{ 'Pod' if item.endswith('.pod') else 'Container' }}]
+{% for name in placed_fqdns %}
+AddHost={{ name }}:host-gateway
+{% endfor %}
