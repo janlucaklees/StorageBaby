@@ -19,10 +19,7 @@ host_secrets:
   kopia_password: kopia-clients.paperless
 hooks:
   after_change:
-    - {
-        container: paperless-app,
-        command: 'touch /usr/src/paperless/data/.hook-ran'
-      }
+    - { container: paperless-app, command: 'touch /tmp/.hook-ran' }
 backup:
   paths: [data, media, backups]
   schedule: '03:00'

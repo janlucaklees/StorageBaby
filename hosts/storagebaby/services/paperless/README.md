@@ -208,19 +208,30 @@ paperless@test-a:/data/backups
 ```yaml
 hooks:
   after_change:
-    - {
-        container: paperless-app,
-        command: 'touch /usr/src/paperless/data/.hook-ran'
-      }
+    - { container: paperless-app, command: 'touch /tmp/.hook-ran' }
 ```
 
 A marker, not a maintenance command: paperless needs no post-upgrade step of its
 own (the image runs its migrations from the entrypoint). It is here because the
-hook mechanism needs something observable from outside the container to be
-testable at all, and `touch` is the one hook shape the integration suite can
-check — the harness deletes `<data volume>/.hook-ran`, pushes a change to the app
-unit, deploys, and asserts the marker came back. Nextcloud's hooks, which do real
-work, ride the same machinery.
+hook mechanism needs something observable to be testable at all, and `touch` is
+the one hook shape the integration suite can check — the harness removes
+`/tmp/.hook-ran` with `podman exec`, pushes a change to the app unit, deploys,
+and asserts the marker came back. Nextcloud's hooks, which do real work, ride the
+same machinery.
+
+`/tmp` **inside the container**, not a path under a volume, and both halves of
+that matter. A marker under `data/` would be a stray file in one of the three
+trees the Kopia sidecar snapshots — backed up nightly, restored with the data,
+forever. And container-local is the stronger claim for the harness: `/tmp` is
+gone when the container is recreated, so a marker found after a deploy that
+restarted the app can only have been written after that restart.
+
+What it costs on storagebaby is the health wait: **any** hook attaches one to its
+service's converge. Before running a hook the role waits for
+`podman healthcheck run paperless-app` to succeed, up to ten minutes, so every
+converge that restarts this pod also waits for paperless to report healthy before
+it moves on. A pod that never gets there skips its hooks and is named in the
+failure the playbook raises at the end — the other services still converge.
 
 `when` is left at its default `unit_changed`, so the hook runs on a converge that
 actually restarted something and not on the nightly no-op.

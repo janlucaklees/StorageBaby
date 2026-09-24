@@ -14,8 +14,8 @@ import re
 from pathlib import Path
 
 import pytest
+from conftest import run_as
 from test_service import (
-    HOSTS,
     SPECS,
     container_name,
     hosts_file_map,
@@ -23,7 +23,6 @@ from test_service import (
     pod_unit,
     quadlets,
     unit_stem,
-    volume_path,
 )
 
 DEPLOY = "timeout 900 systemctl start storagebaby-deploy.service"
@@ -217,16 +216,16 @@ def touching_hook(host):
     return None
 
 
-def marker_candidates(hostvars, spec, target: str) -> list[str]:
-    """Where a container path such as `/usr/src/paperless/data/.hook-ran` lands on the host.
+def marker_exists(host, user: str, container: str, target: str) -> bool:
+    """Is the hook's marker there, inside the container it was touched in?
 
-    Which volume the hook's path sits in is known only to the unit that mounts it, so
-    every volume of the service is a candidate and the marker is looked for in all of
-    them. That carries the claim -- gone before the deploy, back after it -- without a
-    second copy of the mount table living in this test.
+    Read with `podman exec`, not off the host, because the marker is deliberately
+    container-local: a path under a volume would be a stray file in a tree the Kopia
+    sidecar snapshots. `/tmp` in the container is gone when the container is recreated,
+    which makes this a stronger claim than a persisted file could be -- a marker present
+    after a deploy that restarted the container can only have been written after it.
     """
-    name = target.rsplit("/", 1)[-1]
-    return [f"{volume_path(hostvars, spec, v)}/{name}" for v in spec["volumes"] or {}]
+    return run_as(host, user, f"podman exec {container} test -f {target}").rc == 0
 
 
 def app_unit_template(spec_path, container: str):
@@ -251,15 +250,14 @@ def test_deploy_runs_after_change_hooks(host):
     if not found:
         pytest.skip("no placed service declares a `touch` after_change hook")
     spec_path, spec, hook, target = found
-    hostname = host.check_output("uname -n")
-    hostvars = load_spec(HOSTS / hostname / "host.yml")
     template = app_unit_template(spec_path, hook["container"])
     assert template, f"{spec['name']}: no container unit declares ContainerName={hook['container']}"
 
-    markers = marker_candidates(hostvars, spec, target)
-    for marker in markers:
-        host.run(f"rm -f {marker}")
-    assert not any(host.file(m).exists for m in markers), f"{target} survived its own removal"
+    user = f"svc-{spec['name']}"
+    container = hook["container"]
+    r = run_as(host, user, f"podman exec {container} rm -f {target}")
+    assert r.rc == 0, r.stderr
+    assert not marker_exists(host, user, container, target), f"{target} survived its own removal"
 
     # Appended to the unit template, not to the spec: the role restarts on any rendered
     # difference, and a trailing comment is the smallest one that cannot change what the
@@ -272,6 +270,6 @@ def test_deploy_runs_after_change_hooks(host):
     assert r.rc == 0, r.stderr
     r = host.run(DEPLOY)
     assert r.rc == 0, host.run(JOURNAL).stdout
-    assert any(host.file(m).exists for m in markers), (
-        f"the hook `{hook['command']}` left no marker in any of {markers}\n{host.run(JOURNAL).stdout}"
+    assert marker_exists(host, user, container, target), (
+        f"the hook `{hook['command']}` left no {target} in {container}\n{host.run(JOURNAL).stdout}"
     )
