@@ -71,8 +71,14 @@
         mkisofs -output {{ images_dir }}/{{ item.name }}-seed.iso -volid cidata -joliet -rock
         {{ molecule_ephemeral_directory }}/seed-{{ item.name }}/user-data
         {{ molecule_ephemeral_directory }}/seed-{{ item.name }}/meta-data
-      args:
-        creates: '{{ images_dir }}/{{ item.name }}-seed.iso'
+      # No `creates:` guard on purpose. The seed carries the scenario's SSH public
+      # key, which is regenerated whenever the ephemeral directory is wiped (`make
+      # test-clean`), while the ISO lives on in the libvirt images directory -- and
+      # `destroy` only removes the one belonging to the platform it ran for, so the
+      # other MOLECULE_HOST's ISO survives. Reusing one meant booting a VM whose
+      # cloud-init installed a key nobody has any more: `Permission denied
+      # (publickey)` at prepare. The ISO is a few hundred KiB; rebuild it always.
+      changed_when: true
       loop: '{{ molecule_yml.platforms }}'
       loop_control:
         label: '{{ item.name }}'
