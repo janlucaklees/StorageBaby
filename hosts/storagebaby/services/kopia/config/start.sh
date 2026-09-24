@@ -94,6 +94,20 @@ for f in /run/secrets/client_*; do
 	[ -e "$f" ] || continue
 	name="${f##*/client_}"
 	user="$name@$KOPIA_CLIENT_HOSTS"
+	# The one placeholder on this platform that would otherwise *work*. A client
+	# password is a free choice -- it only has to match on both sides -- so leaving it
+	# at REPLACE_ME registers a real account, the sidecar connects with the same
+	# string, backups run, and nothing anywhere reports a problem. The repository
+	# endpoint is public at https://kopia.<domain>, so that is an internet-reachable
+	# account whose password is printed in this repository. Refusing here is what makes
+	# it as loud as every other REPLACE_ME: the server does not come up.
+	client_password="$(cat "$f")"
+	if [ "$client_password" = "REPLACE_ME" ]; then
+		echo "kopia: the client password for $user is still the REPLACE_ME placeholder." >&2
+		echo "kopia: fill hosts/<host>/secrets/kopia-clients.sops.yaml (make sops FILE=...)" >&2
+		echo "kopia: with the same value on the client's side; refusing to register it." >&2
+		exit 1
+	fi
 	# kopia 0.23.1 has no --user-password-file: `server users add|set` accept only
 	# --user-password, --user-password-hash and the interactive --ask-password
 	# (cli/command_user_add_set.go). So the value goes through argv, where it is
@@ -101,7 +115,7 @@ for f in /run/secrets/client_*; do
 	# owned by svc-kopia's subuid -- readable by root and by svc-kopia, both of which
 	# already hold the value in the podman secret store. Hashing it first does not
 	# help: `server users hash-password` takes the password through argv too.
-	if out="$(kopia server users add "$user" --user-password="$(cat "$f")" 2>&1)"; then
+	if out="$(kopia server users add "$user" --user-password="$client_password" 2>&1)"; then
 		echo "kopia: registered client $user" >&2
 	else
 		case "$out" in
@@ -113,7 +127,7 @@ for f in /run/secrets/client_*; do
 			# prints what kopia said and takes the container down with it,
 			# because a server whose clients cannot authenticate is not up.
 			*'user already exists'*)
-				kopia server users set "$user" --user-password="$(cat "$f")"
+				kopia server users set "$user" --user-password="$client_password"
 				echo "kopia: updated client $user" >&2
 				;;
 			*)

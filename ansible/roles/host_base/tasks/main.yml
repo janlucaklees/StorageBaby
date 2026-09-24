@@ -113,6 +113,24 @@
     mode: '0644'
   when: not (acme | bool)
 
+# The other direction: a host that *gains* ACME. Traefik's unit stops mounting the
+# certs directory the moment `acme: true` (the template has the `if`), so a surviving
+# `00-default-certificate.yml` would point `tls.stores.default` at
+# /etc/traefik/certs/default.crt inside a container that no longer has it -- Traefik
+# logs the missing file and falls back to a generated certificate, beside a perfectly
+# good Let's Encrypt one. The certificate and its key go with it: nothing reads them on
+# this host any more, and a private key left lying at 0644 is not a thing to keep.
+# This is the same deliberate exception the service role makes for stale route files
+# and drop-ins -- a stale *configuration* file is not the inert thing a stale unit is.
+- name: No default certificate on a host with ACME
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: absent
+  loop:
+    - /etc/storagebaby/traefik/dynamic.d/00-default-certificate.yml
+    - /etc/storagebaby/traefik/certs
+  when: acme | bool
+
 # Everything below this point writes into the storage roots, and `file: state=directory`
 # creates every missing parent on the way -- so on a host whose pool is not mounted it
 # would recreate /pool/apps and every volume under it on the root filesystem, empty,
