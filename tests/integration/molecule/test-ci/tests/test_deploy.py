@@ -29,6 +29,8 @@ DEPLOY = "timeout 900 systemctl start storagebaby-deploy.service"
 # The working tree prepare seeded the bare remote from; pushing to it is what a real
 # commit to `stable` looks like from a host's point of view.
 SEEDED = "/srv/src"
+# The checkout `ansible-pull` clones into and re-uses; the deploy unit names it.
+PULLED = "/var/lib/storagebaby/repo"
 JOURNAL = "journalctl -u storagebaby-deploy.service --no-pager | tail -80"
 DASHBOARD = "curl -sk -o /dev/null -w '%{http_code}' -H 'Host: traefik.test.local' https://127.0.0.1/dashboard/"
 
@@ -58,6 +60,40 @@ def other_placed_service(host) -> tuple[str, str] | None:
         if name != "traefik" and owner in ("shared", hostname):
             return name, pod_unit(spec_path) or f"{name}.service"
     return None
+
+
+# The pre-flight an operator runs against the live NAS before pushing: the same playbook,
+# the same checkout, the same inventory, with `--check --diff`. It has to reach the end of
+# the run, because what it exists to show -- the storage role's diff and its remount
+# warning -- is printed by roles that come first, and a traceback further down would leave
+# the operator reading half a report and guessing about the rest.
+CHECK = (
+    f"cd {PULLED} && timeout 900 ansible-playbook -i ansible/inventory/hosts.yml "
+    "--limit $(uname -n) --check --diff ansible/playbook.yml"
+)
+
+
+@pytest.mark.order(-1)
+def test_the_whole_playbook_runs_clean_in_check_mode(host):
+    """`--check --diff` over the whole playbook ends `failed=0`, on the converged host.
+
+    The failure this catches is not a wrong diff but an aborted one: a registered
+    `command` whose `stdout` a later `set_fact` reads is *skipped* under check mode, and
+    the skipped result carries no `stdout` at all -- so the run dies with a `from_json` or
+    an attribute error somewhere in the middle and says nothing about the change the
+    operator was asking about. Every such probe carries `check_mode: false`; this is what
+    says so for the whole playbook rather than for one role.
+
+    Run against the checkout `ansible-pull` maintains, with the inventory the deploy unit
+    names, so a pass here is a statement about the command an operator actually types.
+    """
+    r = host.run(CHECK)
+    assert r.rc == 0, r.stdout[-6000:] + r.stderr[-4000:]
+    recap = [ln for ln in r.stdout.splitlines() if "failed=" in ln]
+    assert recap, r.stdout[-6000:]
+    for line in recap:
+        assert "failed=0" in line, line
+        assert "unreachable=0" in line, line
 
 
 @pytest.mark.order(-1)

@@ -131,13 +131,14 @@ result is still there for the conditional that reads it, and every step that ins
 something is skipped, so a `--check` run reports what it would install and installs
 nothing. Read the whole role's diff and the warning task from that run.
 
-**What the rest of the playbook does under `--check` is a different matter, and the run
-does not finish green today.** The `service` role has the idiom this role was fixed for —
-`service/tasks/secrets.yml` registers a `sops --decrypt` command and parses its `stdout`,
-and check mode skips a `command` — so the run aborts at the first service's secrets with a
-`from_json` error, **after** the storage diff has been printed. That failure says nothing
-about storage. Until the `service` role carries `check_mode: false` too, read the pre-flight
-for what it shows above that point and do not expect `failed=0`.
+**The whole playbook is check-mode clean, not just this role.** The `service` role had the
+same idiom in five places — a registered `command` whose `stdout` or `rc` a later
+`set_fact`, `until` or `when` reads, where check mode skips the command and leaves behind a
+result with neither — so every one of them carries `check_mode: false` now, and a
+`--check --diff` run of the whole `ansible/playbook.yml` ends `failed=0`. A test on the VM
+converges the playbook in check mode the way `ansible-pull` does and asserts exactly that
+(`tests/integration/molecule/test-ci/tests/test_deploy.py`). So the pre-flight really is
+one: run it, read the whole diff, then push.
 
 **This applies to storagebaby's very first converge, and it remounts more than the pool.**
 None of the five rendered units can be byte-identical to the hand-stowed ones they replace:

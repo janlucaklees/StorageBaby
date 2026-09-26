@@ -38,6 +38,13 @@
   ansible.builtin.command: systemctl --user -M {{ svc_user }}@ is-enabled {{ item }}
   loop: '{{ timer_units }}'
   register: _timer_enabled
+  # `check_mode: false`: a read-only probe whose registered result the tasks below read.
+  # `command` reports itself skipped under `--check`, and a skipped result carries no
+  # `rc` and no `stdout` at all -- so without this the very next `when:` or `set_fact`
+  # dies on a dict with no such attribute and takes the whole `--check --diff`
+  # pre-flight down. A pre-flight against the live NAS is the operator's only way to see
+  # what a push would do, so it has to reach the end of the playbook.
+  check_mode: false
   changed_when: false
   failed_when: false
 
