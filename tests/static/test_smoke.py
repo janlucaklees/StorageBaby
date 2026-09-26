@@ -16,6 +16,9 @@ def test_tooling_present():
         "qemu-img",
         "mkisofs",
         "systemd-analyze",
+        # Built from upstream's tarball in devtools/Dockerfile: `test_storage.py` syncs a
+        # stub array with the rendered snapraid.conf, which is what proves it parses.
+        "snapraid",
     ]
     for tool in tools:
         assert shutil.which(tool), f"{tool} missing from devtools image"
