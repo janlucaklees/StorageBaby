@@ -98,6 +98,61 @@
               destroy.yml together.
             quiet: true
 
+        # Identity, not position. `create.yml` gives each virtual disk the serial
+        # `storage<n>`, so the guest publishes it as /dev/disk/by-id/virtio-storage<n> and
+        # this play names the disk the harness created. Addressing `/dev/vdb`..`/dev/vde`
+        # by the index of the entry in host.yml instead put nothing at all between
+        # `parted -s ... mklabel gpt` and the root disk except the hope that guest virtio
+        # enumeration follows the order the domain XML lists the disks in.
+        #
+        # The probe reports what the disk is before anything writes to it, and the assert
+        # below refuses on anything unexpected -- so the one place in this repository that
+        # is allowed to format a device says out loud which device it means.
+        - name: Probe each virtual disk before anything writes to it
+          ansible.builtin.shell: |
+            set -euo pipefail
+            dev="/dev/disk/by-id/virtio-storage$((IDX + 1))"
+            root_src="$(findmnt -no SOURCE / | sed 's/\[.*\]$//')"
+            printf '{"dev":"%s","real":"%s","root":"/dev/%s","pttype":"%s","labelled":%s}\n' \
+              "$dev" \
+              "$(readlink -f "$dev" 2> /dev/null || true)" \
+              "$(lsblk -nso PKNAME "$root_src" | head -n1)" \
+              "$(blkid -p -s PTTYPE -o value "$dev" 2> /dev/null || true)" \
+              "$([ -e "/dev/disk/by-partlabel/$NAME" ] && echo true || echo false)"
+          args:
+            executable: /bin/bash
+          environment:
+            IDX: '{{ idx }}'
+            NAME: '{{ item.name }}'
+          loop: '{{ _declared }}'
+          loop_control:
+            index_var: idx
+            label: '{{ item.name }}'
+          changed_when: false
+          register: _disk_probe
+
+        - name: Every disk about to be formatted is one of the harness's own, and empty
+          ansible.builtin.assert:
+            that:
+              - _p.real | length > 0
+              - _p.real != _p.root
+              - _p.pttype | length == 0
+            fail_msg: >-
+              Refusing to format {{ _p.dev }} for {{ item.item.name }}: it resolves to
+              "{{ _p.real }}", the disk behind / is {{ _p.root }}, and the partition table
+              already on it is "{{ _p.pttype }}". A disk this play partitions has to be one
+              of the four create.yml attached, and has to carry no partition table yet.
+            quiet: true
+          vars:
+            _p: '{{ item.stdout | from_json }}'
+          loop: '{{ _disk_probe.results }}'
+          loop_control:
+            label: '{{ item.item.name }}'
+          # A second `prepare` on a live VM finds the label it wrote the first time, keeps
+          # the data and formats nothing -- so the "carries no partition table" half of the
+          # assert applies only to a disk that is actually about to be partitioned.
+          when: not (item.stdout | from_json).labelled
+
         # This is the hand step the role refuses to take, done once per VM: a GPT label,
         # one partition spanning the disk, *named* after the declared disk -- which is
         # what makes the `/dev/disk/by-partlabel/<name>` in the tracked host.yml resolve
@@ -106,18 +161,21 @@
         - name: Partition, label and format each disk
           ansible.builtin.shell: |
             set -euo pipefail
-            dev="/dev/vd{{ 'bcdefghi'[idx | int] }}"
-            if [ -e "/dev/disk/by-partlabel/{{ item.name }}" ]; then
+            dev="/dev/disk/by-id/virtio-storage$((IDX + 1))"
+            if [ -e "/dev/disk/by-partlabel/$NAME" ]; then
               echo keeping
               exit 0
             fi
-            parted -s "$dev" mklabel gpt mkpart {{ item.name }} ext4 1MiB 100%
+            parted -s "$dev" mklabel gpt mkpart "$NAME" ext4 1MiB 100%
             udevadm settle
-            mkfs.ext4 -q -F -L {{ item.name }} "${dev}1"
+            mkfs.ext4 -q -F -L "$NAME" "${dev}-part1"
             udevadm settle
             echo created
           args:
             executable: /bin/bash
+          environment:
+            IDX: '{{ idx }}'
+            NAME: '{{ item.name }}'
           loop: '{{ _declared }}'
           loop_control:
             index_var: idx

@@ -7,6 +7,12 @@ REQUIRED = {
     "acme",
     "acme_email",
     "tz",
+    # Required, not optional, although the playbook skips the role on a host that declares
+    # none: every test in `test_storage.py` is parametrized over the hosts that have a
+    # `storage` block, so a host that dropped it would take its whole storage suite with it
+    # silently -- and the converge would then recreate `/pool/apps` on the root filesystem,
+    # which is the one failure this contract exists to prevent.
+    "storage",
     "storage_roots",
     "volume_overrides",
     "deploy_timer",
