@@ -1,0 +1,137 @@
+# Build and install one AUR package on the host. Takes `aur_package`, `aur_commit` (the
+# pin) and `aur_version` (the `pkgver-pkgrel` that commit produces).
+#
+# For a package that is in neither Arch's official repositories nor Chaotic-AUR. The
+# whole file is one block under one condition -- the pinned version is not the installed
+# version -- so a converged host does no clone, no compile and no network at all, and the
+# nightly deploy timer reports no change.
+#
+# The build user gets **no** sudo or doas rights, deliberately: `makepkg -s` would need
+# to run pacman as root, and a NOPASSWD pacman rule for a service account is a
+# root-equivalent grant that outlives the build. Instead the dependencies are read out of
+# the pinned `.SRCINFO` and installed by this play, which is already root, and `makepkg`
+# runs without `-s`.
+- name: Look for an installed copy of {{ aur_package }}
+  ansible.builtin.command: pacman -Q {{ aur_package }}
+  register: _aur_installed
+  changed_when: false
+  failed_when: false
+
+- name: Build from the AUR unless the pinned version is installed -- {{ aur_package }}
+  when: _aur_installed.stdout | trim != aur_package ~ ' ' ~ aur_version
+  block:
+    - name: Resolve the clone directory of {{ aur_package }}
+      ansible.builtin.set_fact:
+        _aur_dir: '{{ aur_build_home }}/{{ aur_build_user }}/{{ aur_package }}'
+
+    - name: Build tools
+      community.general.pacman:
+        name: [base-devel, git]
+        state: present
+
+    - name: The build users' root
+      ansible.builtin.file:
+        path: '{{ aur_build_home }}'
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: A build user that owns the clones and can log in nowhere
+      ansible.builtin.user:
+        name: '{{ aur_build_user }}'
+        system: true
+        home: '{{ aur_build_home }}/{{ aur_build_user }}'
+        create_home: true
+        shell: /usr/bin/nologin
+        password: '!'
+
+    # Every git command runs *as* the build user, never as root: git refuses to operate
+    # in a repository owned by somebody else ("detected dubious ownership"), and a
+    # system-wide `safe.directory` entry is a worse thing to leave behind than a clone
+    # nothing but this file touches. `fetch` only when the pinned commit is not already
+    # there, so a re-run after a failed build costs nothing.
+    - name: Clone at the pinned AUR commit -- {{ aur_package }}
+      ansible.builtin.shell: |
+        set -euo pipefail
+        as_builder() { runuser -u "$BUILD_USER" -- "$@"; }
+        if [ -d "$DIR/.git" ]; then
+          before="$(as_builder git -C "$DIR" rev-parse HEAD)"
+        else
+          rm -rf "$DIR"
+          install -d -o "$BUILD_USER" -g "$BUILD_USER" -m 0755 "$DIR"
+          as_builder git clone -q "https://aur.archlinux.org/${PACKAGE}.git" "$DIR"
+          before=none
+        fi
+        if ! as_builder git -C "$DIR" cat-file -e "${COMMIT}^{commit}" 2> /dev/null; then
+          as_builder git -C "$DIR" fetch -q origin
+        fi
+        as_builder git -C "$DIR" checkout -q --detach "$COMMIT"
+        as_builder git -C "$DIR" clean -qxdf
+        if [ "$before" = "$(as_builder git -C "$DIR" rev-parse HEAD)" ]; then
+          echo unchanged
+        else
+          echo checked-out
+        fi
+      args:
+        executable: /bin/bash
+      environment:
+        BUILD_USER: '{{ aur_build_user }}'
+        DIR: '{{ _aur_dir }}'
+        PACKAGE: '{{ aur_package }}'
+        COMMIT: '{{ aur_commit }}'
+      register: _aur_clone
+      changed_when: _aur_clone.stdout | trim == 'checked-out'
+
+    - name: The pinned recipe's own metadata
+      ansible.builtin.slurp:
+        src: '{{ _aur_dir }}/.SRCINFO'
+      register: _aur_srcinfo
+
+    - name: What it needs, and what it says it produces
+      ansible.builtin.set_fact:
+        # Version constraints stripped: pacman takes `name>=1.2` on a command line but
+        # the module wants plain names, and the constraint is upstream's business.
+        # `checkdepends` are left out on purpose -- the build runs with `--nocheck`.
+        _aur_deps: >-
+          {{ _srcinfo | regex_findall('(?m)^\s*(?:make)?depends(?:_x86_64)? = (.+)$')
+             | map('regex_replace', '[<>=].*$', '') | map('trim') | unique | list }}
+        _aur_built_version: >-
+          {{ (_srcinfo | regex_search('(?m)^\s*pkgver = (.+)$', '\1') | first | trim) ~ '-'
+             ~ (_srcinfo | regex_search('(?m)^\s*pkgrel = (.+)$', '\1') | first | trim) }}
+      vars:
+        _srcinfo: '{{ _aur_srcinfo.content | b64decode }}'
+
+    # The pin's two halves have to agree, or the guard at the top of this file never
+    # matches and the package is rebuilt and reinstalled on every converge -- nightly,
+    # from the deploy timer, silently.
+    - name: The pinned commit builds the declared version
+      ansible.builtin.assert:
+        that: _aur_built_version == aur_version
+        fail_msg: >-
+          {{ aur_package }}: the role pins AUR commit {{ aur_commit }}, which builds
+          {{ _aur_built_version }}, but declares {{ aur_version }}. Bump the commit and
+          the version together.
+        quiet: true
+
+    - name: Install, as root, the build dependencies of {{ aur_package }}
+      community.general.pacman:
+        name: '{{ _aur_deps }}'
+        state: present
+
+    # `--nocheck`: a package's `check()` runs upstream's own test suite (snapraid's is a
+    # multi-minute regression run), and re-testing a release on the NAS every time a pin
+    # moves is not what this build is for.
+    - name: Run makepkg and install the built package -- {{ aur_package }}
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd "$DIR"
+        rm -f ./*.pkg.tar.*
+        runuser -u "$BUILD_USER" -- makepkg --noconfirm --nocheck --clean
+        pacman -U --noconfirm ./*.pkg.tar.*
+      args:
+        executable: /bin/bash
+      environment:
+        BUILD_USER: '{{ aur_build_user }}'
+        DIR: '{{ _aur_dir }}'
+      changed_when: true

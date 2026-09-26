@@ -26,6 +26,71 @@
       ansible.builtin.set_fact:
         storagebaby_age_pub: '{{ (_age_pub.content | b64decode).strip() }}'
 
+# Runs after bootstrap, so pacman's databases are already synced and upgraded -- a
+# `-Sy parted` before it would be a partial upgrade -- and before the converge, which is
+# the first thing that needs the partitions to exist.
+- name: Partition the VM's storage disks the way an operator prepares a new disk
+  hosts: all
+  gather_facts: false
+  vars:
+    storagebaby_repo_root: /repo
+  tasks:
+    - name: Load the host's declaration
+      ansible.builtin.include_vars:
+        file: '{{ storagebaby_repo_root }}/hosts/{{ inventory_hostname }}/host.yml'
+
+    # Two packages the *harness* needs, neither of which belongs to a role: parted, for
+    # the one thing no role in this repo is allowed to do, and attr, for the verifier
+    # that reads mergerfs's running configuration off its control file's extended
+    # attributes.
+    - name: Packages the harness needs and no role may have
+      community.general.pacman:
+        name: [parted, attr]
+        state: present
+
+    - name: Prepare the declared disks
+      when: storage is defined
+      block:
+        - name: The disks this host declares, in order
+          ansible.builtin.set_fact:
+            _declared: '{{ storage.disks + storage.parity }}'
+
+        - name: One virtual disk per declared disk
+          ansible.builtin.assert:
+            that: _declared | length == 4
+            fail_msg: >-
+              {{ inventory_hostname }} declares {{ _declared | length }} disks and
+              create.yml attaches 4. Change storage_disk_count in create.yml and
+              destroy.yml together.
+            quiet: true
+
+        # This is the hand step the role refuses to take, done once per VM: a GPT label,
+        # one partition spanning the disk, *named* after the declared disk -- which is
+        # what makes the `/dev/disk/by-partlabel/<name>` in the tracked host.yml resolve
+        # -- and ext4 on it. Guarded on the label already existing so a second `prepare`
+        # on a live VM keeps the data, exactly like the secret generation below it.
+        - name: Partition, label and format each disk
+          ansible.builtin.shell: |
+            set -euo pipefail
+            dev="/dev/vd{{ 'bcdefghi'[idx | int] }}"
+            if [ -e "/dev/disk/by-partlabel/{{ item.name }}" ]; then
+              echo keeping
+              exit 0
+            fi
+            parted -s "$dev" mklabel gpt mkpart {{ item.name }} ext4 1MiB 100%
+            udevadm settle
+            mkfs.ext4 -q -F -L {{ item.name }} "${dev}1"
+            udevadm settle
+            echo created
+          args:
+            executable: /bin/bash
+          loop: '{{ _declared }}'
+          loop_control:
+            index_var: idx
+            label: '{{ item.name }} -> {{ item.device }}'
+          register: _partitioned
+          changed_when: _partitioned.stdout == 'created'
+
 - name: Generate throwaway secrets for every placed service, encrypted to the host key
   hosts: all
   gather_facts: false

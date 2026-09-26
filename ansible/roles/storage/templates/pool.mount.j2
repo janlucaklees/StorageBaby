@@ -1,0 +1,22 @@
+{# The mergerfs union over every data disk. Parity is *not* a branch -- it carries the
+   parity file -- but it is required, because a pool that outlives its parity disk hides
+   that the array is unprotected. The unit names are the naive escape of the mount paths,
+   which is systemd's own only because a declared path is restricted to lowercase
+   letters, digits and slashes (`tests/static/test_storage.py`). #}
+{%- set required_units = [] -%}
+{%- for m in storage_devices -%}
+{%- set _ = required_units.append(m.mount | regex_replace('^/', '') | regex_replace('/', '-') ~ '.mount') -%}
+{%- endfor -%}
+[Unit]
+Description=mergerfs pool ({{ storage.pool.mount }})
+Requires={{ required_units | join(' ') }}
+After={{ required_units | join(' ') }}
+
+[Mount]
+What={{ storage.disks | map(attribute='mount') | join(':') }}
+Where={{ storage.pool.mount }}
+Type=fuse.mergerfs
+Options={{ storage.pool.options }}
+
+[Install]
+RequiredBy=local-fs.target

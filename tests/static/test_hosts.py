@@ -8,7 +8,6 @@ REQUIRED = {
     "acme_email",
     "tz",
     "storage_roots",
-    "mountpoints",
     "volume_overrides",
     "deploy_timer",
     "gpu",
@@ -28,10 +27,6 @@ def test_host_contract(host):
     assert isinstance(cfg["gpu"], bool)
     assert set(cfg["storage_roots"]) == CLASSES
     assert all(isinstance(v, str) and v.startswith("/") for v in cfg["storage_roots"].values())
-    # A list and not a bool or a path: host_base refuses to converge unless every entry
-    # is a real mountpoint, so an empty list is a host that declares it needs none.
-    assert isinstance(cfg["mountpoints"], list)
-    assert all(isinstance(m, str) and m.startswith("/") for m in cfg["mountpoints"]), cfg["mountpoints"]
     assert isinstance(cfg["volume_overrides"], dict)
     assert all(isinstance(v, str) and v.startswith("/") for v in cfg["volume_overrides"].values())
     assert isinstance(cfg["packages"], list) and all(isinstance(p, str) for p in cfg["packages"])
@@ -39,3 +34,12 @@ def test_host_contract(host):
     placed = {p.name for p in placements() if p.host == host}
     unknown = set(cfg["service_config"]) - placed
     assert not unknown, f"{host}: service_config for services not placed here: {unknown}"
+
+
+@pytest.mark.parametrize("host", host_names())
+def test_mountpoints_is_retired(host):
+    cfg = load_yaml(HOSTS / host / "host.yml")
+    assert "mountpoints" not in cfg, (
+        f"{host}: `mountpoints` is Phase 3's hand-written list. The `storage` role "
+        "asserts every mount it declares itself; declare `storage` instead."
+    )

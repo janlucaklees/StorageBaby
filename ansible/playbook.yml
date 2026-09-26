@@ -79,6 +79,12 @@
           {{ _placed_route_domains | default([]) | unique
              | product(['.' ~ domain]) | map('join') | sort | list }}
   roles:
+    # Before host_base, which creates the storage class roots *below* the pool: nothing
+    # may write there until the pool is mounted, and asserting that is what this role
+    # replaced `mountpoints` with. Skipped on a host that declares no `storage` -- the
+    # role converges a declaration, it is not a requirement every host has to meet.
+    - role: storage
+      when: storage is defined
     # `| bool`: ansible-core rejects a non-boolean conditional, and an
     # `-e render_only=...` on the command line arrives as a string.
     - role: host_base

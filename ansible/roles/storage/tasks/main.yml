@@ -1,0 +1,21 @@
+# The role runs only on a host whose host.yml declares `storage` -- the playbook's
+# `when:` -- so everything below may read `storage` unguarded.
+- name: Derive storage facts
+  ansible.builtin.set_fact:
+    # Parity is part of the set the role mounts and requires, and *not* part of the
+    # union: it carries the parity file, and a pool over it would hand mergerfs its own
+    # redundancy to spread around.
+    storage_devices: '{{ storage.disks + (storage.parity | default([])) }}'
+    pool_unit: "{{ storage.pool.mount | regex_replace('^/', '') | regex_replace('/', '-') }}.mount"
+
+- name: Render only
+  ansible.builtin.include_tasks: render.yml
+  when: render_only | bool
+
+- name: Tools the pool and the array need
+  ansible.builtin.include_tasks: tools.yml
+  when: not (render_only | bool)
+
+- name: Mounts and the pool
+  ansible.builtin.include_tasks: mounts.yml
+  when: not (render_only | bool)

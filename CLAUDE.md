@@ -12,7 +12,7 @@ Migrated: traefik (shared), and on storagebaby yuzukam, stirling-pdf, jellyfin, 
 
 Placement is the folder:
 
-- `hosts/<host>/host.yml` — everything host-specific (domain, ACME, storage roots, `mountpoints`, volume overrides, deploy timer, `gpu`, `packages`, `service_config`). `mountpoints` is a list of absolute paths that must already be mounted: `host_base` checks each with `mountpoint -q` and aborts the converge otherwise, so an unmounted pool cannot be silently recreated as empty directories on the root filesystem by the nightly deploy timer. storagebaby declares `[/pool]`; the test host, one filesystem, declares `[]`.
+- `hosts/<host>/host.yml` — everything host-specific (domain, ACME, storage roots, `storage`, volume overrides, deploy timer, `gpu`, `packages`, `service_config`). `storage` declares the filesystems the host is made of — `disks`, `parity` and the mergerfs `pool` — and the `storage` role mounts exactly those, before `host_base`, and aborts the converge when a declared device is missing or a declared path is not a mount point, so an unmounted pool cannot be silently recreated as empty directories on the root filesystem by the nightly deploy timer. It never partitions, formats or wipes: `ansible/roles/storage/README.md`. (It replaced the `mountpoints` list, which is gone and is rejected by a test.)
 - `hosts/<host>/services/<name>/` — a service that runs on that host only.
 - `hosts/shared/services/<name>/` — a service that runs on every host (traefik).
 - `hosts/<host>/secrets/<service>.sops.yaml` — optional per-host override of a service's secrets.

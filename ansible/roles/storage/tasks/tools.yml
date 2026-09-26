@@ -1,0 +1,77 @@
+# mergerfs comes from Chaotic-AUR, a signed binary repository of AUR builds. The whole
+# key dance is gated on one cheap check: once `chaotic-keyring` is installed it owns the
+# repository's keys, so importing and locally signing the bootstrap key has nothing left
+# to do and a second converge reports no change.
+- name: Is Chaotic-AUR already set up on this host?
+  ansible.builtin.command: pacman -Qq chaotic-keyring chaotic-mirrorlist
+  register: _chaotic_pkgs
+  changed_when: false
+  failed_when: false
+
+- name: Receive and locally sign the Chaotic-AUR signing key
+  ansible.builtin.command: '{{ item }}'
+  loop:
+    - pacman-key --recv-key {{ chaotic_key_id }} --keyserver {{ chaotic_keyserver }}
+    - pacman-key --lsign-key {{ chaotic_key_id }}
+  when: _chaotic_pkgs.rc != 0
+  changed_when: true
+
+# Not `community.general.pacman`: that module installs repository packages by name, and
+# these two are the packages that make the repository exist.
+- name: Install the Chaotic-AUR keyring and mirrorlist
+  ansible.builtin.command: pacman -U --noconfirm {{ chaotic_packages | join(' ') }}
+  when: _chaotic_pkgs.rc != 0
+  changed_when: true
+
+- name: The [chaotic-aur] repository in pacman.conf
+  ansible.builtin.blockinfile:
+    path: /etc/pacman.conf
+    marker: '# {mark} ANSIBLE MANAGED chaotic-aur'
+    block: |
+      [chaotic-aur]
+      Include = /etc/pacman.d/chaotic-mirrorlist
+  register: _chaotic_conf
+
+# Only on a change. A `-Sy` on every converge would report changed forever, and this
+# runs nightly from the deploy timer.
+- name: Refresh the package databases when the repository list changed
+  community.general.pacman:
+    update_cache: true
+  when: _chaotic_conf.changed
+
+# `state: present`, never `latest`: storagebaby already has mergerfs from its own AUR
+# build, and a converge is not the place to swap a running union filesystem's binary.
+- name: Install mergerfs from Chaotic-AUR
+  community.general.pacman:
+    name: [mergerfs]
+    state: present
+
+- name: Look for mergerfs's own mount helper
+  ansible.builtin.stat:
+    path: /usr/bin/mount.mergerfs
+  register: _mergerfs_helper
+
+- name: Look for a mount helper under the fuse subtype name
+  ansible.builtin.stat:
+    path: /usr/bin/mount.fuse.mergerfs
+  register: _fuse_helper
+
+# `Type=fuse.mergerfs` in the pool unit makes mount(8) look for a `mount.fuse.mergerfs`
+# helper; the package ships the helper as `mount.mergerfs`. mergerfs parses the helper's
+# argv and does not care which name it was called under, so one link settles it. Linked
+# only when absent, so nothing is ever laid over a path a package owns.
+- name: Link mergerfs's mount helper under the fuse subtype name
+  ansible.builtin.file:
+    src: /usr/bin/mount.mergerfs
+    dest: /usr/bin/mount.fuse.mergerfs
+    state: link
+  when:
+    - _mergerfs_helper.stat.exists
+    - not _fuse_helper.stat.exists
+
+- name: Build snapraid from the AUR
+  ansible.builtin.include_tasks: aur_build.yml
+  vars:
+    aur_package: snapraid
+    aur_commit: '{{ snapraid_aur_commit }}'
+    aur_version: '{{ snapraid_version }}'

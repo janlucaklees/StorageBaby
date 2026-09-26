@@ -1,0 +1,125 @@
+- name: Mount point directories
+  ansible.builtin.file:
+    path: '{{ item.mount }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: '{{ storage_devices + [storage.pool] }}'
+  loop_control:
+    label: '{{ item.mount }}'
+
+# The precondition the role exists to check. A device that is not there is a disk that
+# has been pulled, renamed or has failed to enumerate -- and mounting *nothing* there
+# and carrying on is how a pool comes up short a branch and a converge writes service
+# data onto the root filesystem.
+- name: Look for every declared device
+  ansible.builtin.stat:
+    path: '{{ item.device }}'
+    follow: true
+  loop: '{{ storage_devices }}'
+  loop_control:
+    label: '{{ item.name }} -> {{ item.device }}'
+  register: _declared_devices
+
+- name: Every declared device is present
+  ansible.builtin.assert:
+    that: item.stat.exists
+    fail_msg: >-
+      Disk {{ item.item.name }} is declared in hosts/{{ inventory_hostname }}/host.yml
+      with device {{ item.item.device }}, and nothing is there. Refusing to converge:
+      the role does not create, partition or format a disk. Attach it, check
+      `lsblk -o NAME,SIZE,PARTUUID,PARTLABEL`, then converge again.
+    quiet: true
+  loop: '{{ _declared_devices.results }}'
+  loop_control:
+    label: '{{ item.item.name }}'
+
+- name: Render the disk and parity mount units
+  ansible.builtin.template:
+    src: disk.mount.j2
+    dest: "/etc/systemd/system/{{ item.mount | regex_replace('^/', '') | regex_replace('/', '-') }}.mount"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: '{{ storage_devices }}'
+  loop_control:
+    label: '{{ item.name }}'
+  register: disk_units
+
+- name: Render the pool mount unit
+  ansible.builtin.template:
+    src: pool.mount.j2
+    dest: '/etc/systemd/system/{{ pool_unit }}'
+    owner: root
+    group: root
+    mode: '0644'
+  register: pool_unit_render
+
+- name: Reload systemd for changed mount units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: disk_units.changed or pool_unit_render.changed
+
+# Loud, and before anything is remounted rather than after it: remounting the union drops
+# every bind mount a running container holds under it, so the services on this host come
+# back reading an empty directory until they are restarted. The README says to run the
+# playbook with `--check --diff` before pushing a pool option change.
+- name: Warn that the pool is about to be remounted
+  ansible.builtin.debug:
+    msg: >-
+      {{ pool_unit }} or one of its branches changed and will be remounted. Every
+      service with a pool-class volume loses its bind mount across this and has to be
+      restarted afterwards -- `make stop SERVICE=<name>` before, `make start
+      SERVICE=<name>` after.
+  when: disk_units.changed or pool_unit_render.changed
+
+# A branch cannot be unmounted while mergerfs holds it open, so a changed disk unit means
+# the pool comes down first. A no-op on the first converge, where the pool is not up yet.
+- name: Take the pool down before a changed branch is remounted
+  ansible.builtin.systemd:
+    name: '{{ pool_unit }}'
+    state: stopped
+  when: disk_units.changed
+
+# One task, not "start" plus "restart the changed ones": on a first converge every unit
+# is changed and is not mounted, and `restarted` starts an inactive mount unit -- so the
+# two cases collapse into one and nothing is mounted twice.
+- name: Disk and parity mounts enabled and mounted
+  ansible.builtin.systemd:
+    name: "{{ item.item.mount | regex_replace('^/', '') | regex_replace('/', '-') }}.mount"
+    enabled: true
+    state: "{{ 'restarted' if item.changed else 'started' }}"
+  loop: '{{ disk_units.results }}'
+  loop_control:
+    label: '{{ item.item.name }}'
+
+- name: The pool enabled and mounted
+  ansible.builtin.systemd:
+    name: '{{ pool_unit }}'
+    enabled: true
+    state: "{{ 'restarted' if (disk_units.changed or pool_unit_render.changed) else 'started' }}"
+
+# `state: started` above already fails when it cannot mount, so this is the second half:
+# that what is there is really a mount point and not a directory that happens to exist.
+# It is what replaces `host_base`'s `mountpoints` list, and it runs before that role
+# creates the storage class roots below the pool.
+- name: Check every declared mount
+  ansible.builtin.command: mountpoint -q -- {{ item }}
+  loop: "{{ (storage_devices | map(attribute='mount') | list) + [storage.pool.mount] }}"
+  register: _mounted
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Require every declared mount to be mounted
+  ansible.builtin.assert:
+    that: item.rc == 0
+    fail_msg: >-
+      {{ item.item }} is declared in hosts/{{ inventory_hostname }}/host.yml under
+      `storage` but nothing is mounted there. Refusing to converge: the storage roots
+      below it would be created on the root filesystem instead.
+    quiet: true
+  loop: '{{ _mounted.results }}'
+  loop_control:
+    label: '{{ item.item }}'

@@ -8,6 +8,11 @@
     base_image_url: https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2
     base_image: '{{ images_dir }}/arch-cloudimg.qcow2'
     ssh_key: '{{ molecule_ephemeral_directory }}/id_ed25519'
+    # The storage role's disks. Four, because that is what every test host's `storage`
+    # block declares -- three data disks and one parity -- and `prepare` asserts the two
+    # numbers agree. Change this and destroy.yml's copy together.
+    storage_disk_count: 4
+    storage_disk_size: 1G
   tasks:
     - name: Images directory
       ansible.builtin.file:
@@ -38,6 +43,20 @@
       loop: '{{ molecule_yml.platforms }}'
       loop_control:
         label: '{{ item.name }}'
+
+    # Plain qcow2, no backing file: these are the storage role's disks, partitioned and
+    # formatted by `prepare`. 1 GB each is enough for a real mergerfs union, a real
+    # snapraid parity file and a maintenance run, and being sparse they cost what they
+    # hold rather than 4 GB up front.
+    - name: Storage disks
+      ansible.builtin.command: >-
+        qemu-img create -f qcow2
+        {{ images_dir }}/{{ item.0.name }}-storage{{ item.1 }}.qcow2 {{ storage_disk_size }}
+      args:
+        creates: '{{ images_dir }}/{{ item.0.name }}-storage{{ item.1 }}.qcow2'
+      loop: '{{ molecule_yml.platforms | product(range(1, storage_disk_count + 1) | list) | list }}'
+      loop_control:
+        label: '{{ item.0.name }}-storage{{ item.1 }}'
 
     - name: Seed directories
       ansible.builtin.file:

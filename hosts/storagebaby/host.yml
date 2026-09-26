@@ -5,11 +5,44 @@ tz: Europe/Berlin
 storage_roots:
   pool: /pool/apps
   fast: /var/lib/storagebaby/fast
-# Filesystems that must be mounted before anything is written below them.
-# `host_base` checks these and refuses to converge otherwise -- without it an
-# unmounted pool would let the nightly deploy timer recreate /pool/apps and every
-# volume under it on the root filesystem, silently and empty.
-mountpoints: [/pool]
+# The filesystems this host is made of. The `storage` role mounts exactly these and
+# refuses to converge when one of them is missing -- which is what `mountpoints` used
+# to do by hand. It never partitions, formats or wipes: a new disk is prepared once by
+# hand (the role README, "Adding a disk") and then declared here.
+#
+# The partuuids and the parity `by-id` path are the ones the hand-stowed units this
+# phase retires carry (`snapraid/config/etc/systemd/system/*.mount`), and the names are
+# what `snapraid.conf` already calls the disks.
+storage:
+  disks:
+    - {
+        name: d1,
+        device: /dev/disk/by-partuuid/a36d7f0a-aa65-4214-98e0-f3818954a494,
+        mount: /mnt/data/data1,
+        fstype: ext4
+      }
+    - {
+        name: d2,
+        device: /dev/disk/by-partuuid/243e4d8c-d018-4b9a-af9d-dcd3626138d4,
+        mount: /mnt/data/data2,
+        fstype: ext4
+      }
+    - {
+        name: d3,
+        device: /dev/disk/by-partuuid/d3b1a8bb-3da9-48dc-a082-2603cf186444,
+        mount: /mnt/data/data3,
+        fstype: ext4
+      }
+  parity:
+    - {
+        name: parity1,
+        device: /dev/disk/by-id/ata-WDC_WD40EFRX-68N32N0_WD-WCC7K2EYYVV1-part1,
+        mount: /mnt/parity/parity1,
+        fstype: ext4
+      }
+  pool:
+    mount: /pool
+    options: defaults,allow_other,use_ino,category.create=pfrd,moveonenospc=true,minfreespace=20G,fsname=mergerfsPool,cache.writeback=false,cache.symlinks=false,cache.readdir=false,async_read=true,threads=4
 volume_overrides: {}
 deploy_timer: true
 gpu: true

@@ -1,6 +1,8 @@
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[2]
@@ -59,3 +61,52 @@ def route_ports(spec: dict) -> list[int]:
     if "routes" in spec:
         return [r["port"] for r in spec["routes"]]
     return [spec["port"]] if "port" in spec else []
+
+
+def host_cfg(host: str) -> dict:
+    return load_yaml(HOSTS / host / "host.yml")
+
+
+def storage_of(host: str) -> dict | None:
+    """The host's `storage` block, or None on a host that declares none."""
+    return host_cfg(host).get("storage")
+
+
+def mount_unit(path: str) -> str:
+    """The systemd unit name of a mount point, the way systemd-escape spells it.
+
+    The naive escape is exact only because `test_storage` restricts a declared mount
+    path to lowercase letters, digits and slashes: a `-`, `.` or `_` in the path would
+    need `\\x2d`-style escaping and this would silently produce the wrong unit name.
+    """
+    return path.lstrip("/").replace("/", "-") + ".mount"
+
+
+@pytest.fixture(scope="session")
+def rendered(tmp_path_factory) -> Path:
+    """Every host's playbook output, rendered once per session.
+
+    Lives here rather than beside its first consumer: `from conftest import ...` does not
+    carry fixtures, and both `test_render.py` and `test_storage.py` read this tree.
+    """
+    out = tmp_path_factory.mktemp("render")
+    for host in host_names():
+        subprocess.run(
+            [
+                "ansible-playbook",
+                "-i",
+                f"{host},",
+                "-c",
+                "local",
+                "ansible/playbook.yml",
+                "-e",
+                "render_only=true",
+                "-e",
+                f"render_output={out / host}",
+                "-e",
+                "ansible_become=false",
+            ],
+            check=True,
+            cwd=str(REPO),
+        )
+    return out

@@ -10,10 +10,46 @@ acme: false
 acme_email: test@test.local
 tz: Europe/Berlin
 storage_roots:
-  pool: /srv/pool
+  pool: /pool/apps
   fast: /srv/fast
-# The test VM has one filesystem; both storage roots are ordinary directories on it.
-mountpoints: []
+# Four 1 GB virtual disks the Molecule harness attaches, partitions and labels: the
+# device paths are GPT partition labels it writes from these very `name`s, so the
+# tracked file names the disks and the harness makes those names exist. It has to be a
+# stable name in the repository rather than a generated inventory variable --
+# `test_deploy.py` converges through `ansible-pull`, which sees no Molecule inventory,
+# and a different `What=` on that run would remount /pool under the running services'
+# bind mounts. `minfreespace` is the one option that cannot be storagebaby's: 20G on a
+# 1 GB branch means every create fails.
+storage:
+  disks:
+    - {
+        name: d1,
+        device: /dev/disk/by-partlabel/d1,
+        mount: /mnt/data/data1,
+        fstype: ext4
+      }
+    - {
+        name: d2,
+        device: /dev/disk/by-partlabel/d2,
+        mount: /mnt/data/data2,
+        fstype: ext4
+      }
+    - {
+        name: d3,
+        device: /dev/disk/by-partlabel/d3,
+        mount: /mnt/data/data3,
+        fstype: ext4
+      }
+  parity:
+    - {
+        name: parity1,
+        device: /dev/disk/by-partlabel/parity1,
+        mount: /mnt/parity/parity1,
+        fstype: ext4
+      }
+  pool:
+    mount: /pool
+    options: defaults,allow_other,use_ino,category.create=pfrd,moveonenospc=true,minfreespace=100M,fsname=mergerfsPool,cache.writeback=false,cache.symlinks=false,cache.readdir=false,async_read=true,threads=2
 volume_overrides: {}
 deploy_timer: false
 gpu: false

@@ -1,0 +1,13 @@
+{# One per entry of `storage.disks` and `storage.parity`. The role mounts what the
+   host declares and nothing else: it never partitions, formats or wipes a device. #}
+[Unit]
+Description={{ item.name }} ({{ item.mount }})
+
+[Mount]
+What={{ item.device }}
+Where={{ item.mount }}
+Type={{ item.fstype }}
+Options=defaults
+
+[Install]
+RequiredBy=local-fs.target

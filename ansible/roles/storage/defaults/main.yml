@@ -1,0 +1,21 @@
+# Where the storage tools come from, pinned here and bumped deliberately, exactly like a
+# container image tag.
+#
+# mergerfs is not in Arch's official repositories. It *is* in Chaotic-AUR, a signed
+# binary repository of AUR builds, so the role configures that repository the project's
+# own documented way and installs the package -- no compiler, no AUR helper, no upstream
+# tarball unpacked under /opt.
+chaotic_key_id: 3056513887B78AEB
+chaotic_keyserver: keyserver.ubuntu.com
+chaotic_packages:
+  - https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst
+  - https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst
+
+# snapraid is in neither, so `aur_build.yml` builds it from the AUR on the host. The
+# commit is the pin; the version is what that commit produces, and the role asserts the
+# two agree before it builds -- so a bumped commit with a stale version fails loudly
+# instead of rebuilding the same package every night. Both are bumped together.
+aur_build_user: aurbuild
+aur_build_home: /var/lib/aurbuild
+snapraid_aur_commit: 94c51545d0ce36dee0402dc19c1b3cc4336b3ae9
+snapraid_version: 14.9-1

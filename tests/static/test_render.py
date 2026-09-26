@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO, host_names, placed_fqdns, placements, routes_of
+from conftest import placed_fqdns, placements, routes_of
 
 # A timer and its service unit are plain systemd user units, not Quadlet ones: the role
 # renders them beside the Quadlet units, into `timers/` of the render output.
@@ -35,31 +35,6 @@ def expected_units(p) -> list[str]:
     if p.spec["backup"] != "none":
         units.append(f"{p.name}-backup.container")
     return sorted(units)
-
-
-@pytest.fixture(scope="session")
-def rendered(tmp_path_factory) -> Path:
-    out = tmp_path_factory.mktemp("render")
-    for host in host_names():
-        subprocess.run(
-            [
-                "ansible-playbook",
-                "-i",
-                f"{host},",
-                "-c",
-                "local",
-                "ansible/playbook.yml",
-                "-e",
-                "render_only=true",
-                "-e",
-                f"render_output={out / host}",
-                "-e",
-                "ansible_become=false",
-            ],
-            check=True,
-            cwd=str(REPO),
-        )
-    return out
 
 
 @pytest.mark.parametrize("p", placements(), ids=lambda p: f"{p.host}/{p.name}")

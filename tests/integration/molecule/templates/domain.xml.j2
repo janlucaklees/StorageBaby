@@ -13,6 +13,13 @@
       <source file="{{ images_dir }}/{{ item.name }}.qcow2"/>
       <target dev="vda" bus="virtio"/>
     </disk>
+{% for n in range(1, storage_disk_count + 1) %}
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2"/>
+      <source file="{{ images_dir }}/{{ item.name }}-storage{{ n }}.qcow2"/>
+      <target dev="vd{{ 'bcdefghi'[n - 1] }}" bus="virtio"/>
+    </disk>
+{% endfor %}
     <disk type="file" device="cdrom">
       <driver name="qemu" type="raw"/>
       <source file="{{ images_dir }}/{{ item.name }}-seed.iso"/>

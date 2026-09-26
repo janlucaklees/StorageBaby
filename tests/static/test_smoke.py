@@ -15,6 +15,7 @@ def test_tooling_present():
         "virsh",
         "qemu-img",
         "mkisofs",
+        "systemd-analyze",
     ]
     for tool in tools:
         assert shutil.which(tool), f"{tool} missing from devtools image"

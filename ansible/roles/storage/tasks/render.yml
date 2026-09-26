@@ -1,0 +1,23 @@
+# The render-only path: the same templates, into `<render_output>/storage/`, with nothing
+# installed, mounted or asserted. It is what `tests/static/test_storage.py` runs
+# `systemd-analyze verify` over.
+- name: Render output dir
+  ansible.builtin.file:
+    path: '{{ render_output }}/storage'
+    state: directory
+    mode: '0755'
+
+- name: Render the disk and parity mount units
+  ansible.builtin.template:
+    src: disk.mount.j2
+    dest: "{{ render_output }}/storage/{{ item.mount | regex_replace('^/', '') | regex_replace('/', '-') }}.mount"
+    mode: '0644'
+  loop: '{{ storage_devices }}'
+  loop_control:
+    label: '{{ item.name }}'
+
+- name: Render the pool mount unit
+  ansible.builtin.template:
+    src: pool.mount.j2
+    dest: '{{ render_output }}/storage/{{ pool_unit }}'
+    mode: '0644'
