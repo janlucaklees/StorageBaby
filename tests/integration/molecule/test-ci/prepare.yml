@@ -17,6 +17,40 @@
       ansible.builtin.command: /usr/local/sbin/storagebaby-bootstrap --local --repo /srv/storagebaby.git
       changed_when: true
 
+    # bootstrap does a full `pacman -Syu`, and the cached cloud image lags the repositories
+    # by however long it has been cached -- so that upgrade regularly replaces the kernel.
+    # `/lib/modules` then holds the *new* kernel's modules only, and the kernel that is
+    # actually running can no longer load a module it has not already loaded. The symptom
+    # is not obviously a kernel problem: every `mount -t overlay` fails with "no such
+    # device", podman reports that as "kernel does not support overlay fs: 'overlay' is not
+    # supported over btrfs", the converge dies in `service : Sync secrets into podman` on
+    # the first service, and a pod's infra container fails with "userxattr: no such
+    # device".
+    #
+    # A real host reboots on its own schedule and its operator deals with this; a VM that
+    # is created, bootstrapped and converged in one sequence has to do it here. Compared
+    # rather than rebooted unconditionally, so a run against a freshly downloaded image
+    # does not pay for a boot it does not need.
+    - name: The kernel that is installed, and the one that is running
+      ansible.builtin.command: '{{ item }}'
+      loop:
+        - pacman -Q linux
+        - uname -r
+      register: _kernels
+      changed_when: false
+
+    # `pacman -Q` says "linux 7.2.7.arch1-1" and `uname -r` says "7.2.7-arch1-1": the same
+    # version spelled with a different separator, so both are reduced to digits and dots
+    # before they are compared.
+    - name: Reboot when bootstrap's upgrade stranded the running kernel
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+        msg: storagebaby test harness, kernel upgraded by bootstrap
+      vars:
+        _installed: "{{ _kernels.results[0].stdout.split()[1] | regex_replace('[^0-9.]', '.') }}"
+        _running: "{{ _kernels.results[1].stdout | trim | regex_replace('[^0-9.]', '.') }}"
+      when: _installed != _running
+
     - name: Read the host's age public key
       ansible.builtin.slurp:
         src: /etc/storagebaby/age.pub
