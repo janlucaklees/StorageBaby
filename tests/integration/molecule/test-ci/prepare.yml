@@ -39,20 +39,13 @@
       ansible.builtin.include_vars:
         file: '{{ storagebaby_repo_root }}/hosts/{{ inventory_hostname }}/host.yml'
 
-    # Three packages the *harness* needs, none of which belongs to a role:
-    #  - parted, for the one thing no role in this repo is allowed to do.
-    #  - attr, for the verifier that reads mergerfs's running configuration off its
-    #    control file's extended attributes.
-    #  - fuse-overlayfs, because the Arch cloud image's root filesystem is btrfs and
-    #    podman 6.1 refuses to configure overlay storage over btrfs at all -- "kernel
-    #    does not support overlay fs", rootless and as root alike. It is podman's own
-    #    optional dependency for exactly this case, and with it installed rootless
-    #    podman comes up on the overlay driver again. It belongs to the VM's image and
-    #    not to the platform -- a real host's root filesystem is ext4 -- which is why it
-    #    is installed here and not in `host_base`.
+    # Two packages the *harness* needs, neither of which belongs to a role: parted, for
+    # the one thing no role in this repo is allowed to do, and attr, for the verifier
+    # that reads mergerfs's running configuration off its control file's extended
+    # attributes.
     - name: Packages the harness needs and no role may have
       community.general.pacman:
-        name: [parted, attr, fuse-overlayfs]
+        name: [parted, attr]
         state: present
 
     - name: Prepare the declared disks
