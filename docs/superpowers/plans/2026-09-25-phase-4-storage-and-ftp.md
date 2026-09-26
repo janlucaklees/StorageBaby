@@ -6,7 +6,7 @@
 
 **Architecture:** One new role, `ansible/roles/storage`, included by the playbook **before** `host_base` and skipped on a host whose `host.yml` declares no `storage` block. It renders `.mount` units from the declaration, mounts the mergerfs pool over them, writes `/etc/snapraid.conf`, installs the maintenance scripts under `/opt/storagebaby/maintenance/` with a timer, and configures `msmtp` from the host's `mail` secret. It **never** partitions, formats or wipes. The `service` role gains one feature: `tcp_ports`, a per-service list of plain-TCP ports Traefik listens on and forwards to loopback, which is what carries FTP. Paperless gains a `paperless-ftp` part and a `consume` volume; `paperless-upload` goes.
 
-**Tech Stack:** As before. New: systemd `.mount` units, mergerfs (upstream static build), snapraid (upstream Arch package), msmtp, Traefik TCP entrypoints and routers, `pure-ftpd` in the paperless pod.
+**Tech Stack:** As before. New: systemd `.mount` units, mergerfs (Chaotic-AUR), snapraid and `mergerfs-tools-git` (built from the AUR by the role, pinned by AUR commit), msmtp, Traefik TCP entrypoints and routers, `pure-ftpd` in the paperless pod.
 
 **Spec:** `docs/superpowers/specs/2026-09-25-phase-4-storage-and-ftp-design.md`
 
@@ -38,7 +38,7 @@ Spec §2, §3 (1–4), §6 harness, §7 step 1. Mounts and pool only — snaprai
 
 - Create: `tests/static/test_storage.py`
 - Modify: `tests/static/conftest.py` (host-config helpers), `tests/static/test_hosts.py` (`mountpoints` retired), `tests/static/test_render.py` (the storage render output)
-- Create: `ansible/roles/storage/defaults/main.yml`, `ansible/roles/storage/tasks/{main,tools,mounts,render}.yml`, `ansible/roles/storage/templates/{disk.mount.j2,pool.mount.j2}`, `ansible/roles/storage/README.md`
+- Create: `ansible/roles/storage/defaults/main.yml`, `ansible/roles/storage/tasks/{main,tools,aur_build,mounts,render}.yml`, `ansible/roles/storage/templates/{disk.mount.j2,pool.mount.j2}`, `ansible/roles/storage/README.md`
 - Modify: `ansible/playbook.yml` (include the role before `host_base`)
 - Modify: `ansible/roles/host_base/tasks/main.yml` (drop the `mountpoints` check)
 - Modify: `hosts/storagebaby/host.yml`, `hosts/test-a/host.yml`, `hosts/test-ci/host.yml`
@@ -278,16 +278,38 @@ The device path has to be resolvable by a converge the harness is not driving: `
 
 `ansible/roles/storage/defaults/main.yml`:
 
+> **Amended 2026-09-26 (JLK's ruling, ledger).** Neither mergerfs nor snapraid comes
+> from an upstream artefact unpacked under `/opt`. mergerfs comes from **Chaotic-AUR**, a
+> signed binary repository of AUR builds that the role configures the project's own
+> documented way. Packages Chaotic-AUR does not carry — `snapraid`, and
+> `mergerfs-tools-git` in Task 2 — are **built from the AUR by the role**: a system build
+> user, `base-devel`, one clone at a pinned AUR commit, `makepkg`, `pacman -U`. The
+> reusable task file is `tasks/aur_build.yml` (`aur_package`, `aur_commit`,
+> `aur_version`). The blocks below are the amended ones; the plan's original
+> static-build/`pacman -U`-a-release text is superseded.
+
 ```yaml
-# Pinned, and bumped deliberately, exactly like a container image tag. mergerfs and
-# snapraid are not in Arch's official repositories (both are AUR), and a converge must
-# not depend on an AUR helper, a compiler or a build user -- so the role installs the
-# upstream project's own artefacts: snapraid ships an Arch package, mergerfs a static
-# build, and `mergerfs.balance` is one python script, pinned by commit.
-mergerfs_version: 2.42.0
-mergerfs_sha256: 0cf8692e1687c8a1140c714966c6f5f4b498a1537f1a0bef5665082ecb35fc12
-snapraid_version: 14.9
-snapraid_package_url: https://github.com/amadvance/snapraid/releases/download/v14.9/snapraid-14.9-1-x86_64.pkg.tar.zst
+# Where the storage tools come from, pinned and bumped deliberately, exactly like a
+# container image tag.
+#
+# mergerfs is not in Arch's official repositories. It *is* in Chaotic-AUR, a signed
+# binary repository of AUR builds, so the role configures that repository the project's
+# documented way and installs the package -- no compiler, no AUR helper, no upstream
+# tarball unpacked under /opt.
+chaotic_key_id: 3056513887B78AEB
+chaotic_keyserver: keyserver.ubuntu.com
+chaotic_packages:
+  - https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst
+  - https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst
+
+# snapraid is in neither, so `aur_build.yml` builds it from the AUR. The commit is the
+# pin; the version is what that commit produces, and the role asserts the two agree
+# before it builds -- so a bumped commit with a stale version fails loudly instead of
+# reinstalling the same package every night.
+aur_build_user: aurbuild
+aur_build_home: /var/lib/aurbuild
+snapraid_aur_commit: 94c51545d0ce36dee0402dc19c1b3cc4336b3ae9
+snapraid_version: 14.9-1
 # Rendered into msmtprc when nothing decrypted a real one -- the render-only path the
 # static tests use. A converge always overwrites it from hosts/<host>/secrets/mail.sops.yaml.
 smtp_password: REPLACE_ME
@@ -316,64 +338,78 @@ smtp_password: REPLACE_ME
 
 `ansible/roles/storage/tasks/tools.yml`:
 
+Amended: Chaotic-AUR for mergerfs, `aur_build.yml` for snapraid. Every step is guarded so
+a second converge reports no change, and `state: present` (never `latest`) is what makes a
+host that already has mergerfs or snapraid from its own AUR builds keep them.
+
 ```yaml
-# `creates:`/`stat` guards throughout: a host that already has mergerfs or snapraid from
-# its package manager (storagebaby has both from the AUR) keeps them, and the role's own
-# copies are never laid over a file pacman owns.
-- name: Is mergerfs already provided by a package?
-  ansible.builtin.stat:
-    path: /usr/bin/mergerfs
-  register: _pkg_mergerfs
+# The whole Chaotic-AUR dance is gated on one cheap check: once `chaotic-keyring` is
+# installed it owns the repository's keys, so the key import has nothing left to do.
+- name: Is Chaotic-AUR already set up on this host?
+  ansible.builtin.command: pacman -Qq chaotic-keyring chaotic-mirrorlist
+  register: _chaotic_pkgs
+  changed_when: false
+  failed_when: false
 
-- name: Staging directory for the upstream mergerfs build
+- name: Receive and locally sign the Chaotic-AUR signing key
+  ansible.builtin.command: '{{ item }}'
+  loop:
+    - pacman-key --recv-key {{ chaotic_key_id }} --keyserver {{ chaotic_keyserver }}
+    - pacman-key --lsign-key {{ chaotic_key_id }}
+  when: _chaotic_pkgs.rc != 0
+  changed_when: true
+
+- name: Install the Chaotic-AUR keyring and mirrorlist
+  ansible.builtin.command: pacman -U --noconfirm {{ chaotic_packages | join(' ') }}
+  when: _chaotic_pkgs.rc != 0
+  changed_when: true
+
+- name: The [chaotic-aur] repository in pacman.conf
+  ansible.builtin.blockinfile:
+    path: /etc/pacman.conf
+    marker: '# {mark} ANSIBLE MANAGED chaotic-aur'
+    block: |
+      [chaotic-aur]
+      Include = /etc/pacman.d/chaotic-mirrorlist
+  register: _chaotic_conf
+
+- name: Refresh the package databases when the repository list changed
+  community.general.pacman:
+    update_cache: true
+  when: _chaotic_conf.changed
+
+- name: mergerfs, from Chaotic-AUR
+  community.general.pacman:
+    name: [mergerfs]
+    state: present
+
+# mergerfs ships its own mount helper as `mount.mergerfs`; `Type=fuse.mergerfs` makes
+# mount(8) look for `mount.fuse.mergerfs` first. Linked only when absent, so nothing is
+# laid over a path a package may come to own -- and mergerfs parses the helper argv
+# under either name.
+- name: Link mergerfs's mount helper under the subtype name
   ansible.builtin.file:
-    path: /opt/storagebaby/mergerfs-{{ mergerfs_version }}
-    state: directory
-    owner: root
-    group: root
-    mode: '0755'
-  when: not _pkg_mergerfs.stat.exists
-
-- name: Fetch and unpack the pinned mergerfs static build
-  ansible.builtin.unarchive:
-    src: https://github.com/trapexit/mergerfs/releases/download/{{ mergerfs_version }}/mergerfs-{{ mergerfs_version }}-static-linux_amd64.tar.gz
-    dest: /opt/storagebaby/mergerfs-{{ mergerfs_version }}
-    remote_src: true
-    creates: /opt/storagebaby/mergerfs-{{ mergerfs_version }}/usr/local/bin/mergerfs
-  when: not _pkg_mergerfs.stat.exists
-
-- name: Verify the unpacked mergerfs is the pinned one
-  ansible.builtin.stat:
-    path: /opt/storagebaby/mergerfs-{{ mergerfs_version }}/usr/local/bin/mergerfs
-    checksum_algorithm: sha256
-  register: _mergerfs_bin
-  when: not _pkg_mergerfs.stat.exists
-
-- name: mergerfs on PATH
-  ansible.builtin.file:
-    src: /opt/storagebaby/mergerfs-{{ mergerfs_version }}/usr/local/bin/{{ item }}
-    dest: /usr/local/bin/{{ item }}
+    src: /usr/bin/mount.mergerfs
+    dest: /usr/bin/mount.fuse.mergerfs
     state: link
-  loop: [mergerfs, mergerfs-fusermount]
-  when: not _pkg_mergerfs.stat.exists
+  when: not _fuse_helper.stat.exists
 
-# `mount(8)` looks for a type helper in /sbin only -- on Arch that is /usr/bin -- and for
-# `Type=fuse.mergerfs` it tries `mount.fuse.mergerfs` before falling back to `mount.fuse`
-# from the fuse2 package, which this host does not have to have. mergerfs is its own
-# mount helper: called under either name it parses the helper's argv.
-- name: The mount helper for Type=fuse.mergerfs
-  ansible.builtin.file:
-    src: /opt/storagebaby/mergerfs-{{ mergerfs_version }}/usr/local/bin/mergerfs
-    dest: /usr/bin/{{ item }}
-    state: link
-  loop: [mount.mergerfs, mount.fuse.mergerfs]
-  when: not _pkg_mergerfs.stat.exists
-
-- name: Install the upstream snapraid package
-  ansible.builtin.command:
-    cmd: pacman -U --noconfirm {{ snapraid_package_url }}
-    creates: /usr/bin/snapraid
+- name: snapraid, built from the AUR
+  ansible.builtin.include_tasks: aur_build.yml
+  vars:
+    aur_package: snapraid
+    aur_commit: '{{ snapraid_aur_commit }}'
+    aur_version: '{{ snapraid_version }}'
 ```
+
+`ansible/roles/storage/tasks/aur_build.yml` — one AUR package, built on the host. The
+whole file is one `block` under `when: the pinned version is not installed`, so a
+converged host does no git, no `makepkg` and no network. The build user gets **no** sudo
+or doas rights: `makepkg -s` would need pacman as root, and a NOPASSWD pacman rule for a
+service account is a root-equivalent grant that outlives the build — so the dependencies
+are read out of `.SRCINFO` and installed by the play, which is already root, and
+`makepkg` runs without `-s`. Every git command runs _as_ the build user, so root never
+touches a repository it does not own (`detected dubious ownership`).
 
 `ansible/roles/storage/tasks/mounts.yml`:
 
@@ -780,7 +816,7 @@ def test_a_file_written_to_the_pool_lands_on_exactly_one_branch(host):
 
 - [ ] **Step 8: Role README and run**
 
-`ansible/roles/storage/README.md`: the contract, what the role refuses to do, why the mount unit name is a naive escape, why the tools come from upstream artefacts rather than the AUR, and the `--check --diff` rule before a pool option change.
+`ansible/roles/storage/README.md`: the contract, what the role refuses to do, why the mount unit name is a naive escape, where the tools come from (Chaotic-AUR for mergerfs, an in-role `makepkg` build for what Chaotic-AUR does not carry) and how a pin is bumped, that the first converge on storagebaby remounts `/pool`, and the `--check --diff` rule before a pool option change.
 
 ```bash
 make test-static                            # green, storage tests included
@@ -980,16 +1016,23 @@ def _stubbed(conf: str, root) -> str:
 
 and the test runs `subprocess.run(["snapraid", "-c", str(stub_conf), "sync"])`, asserting `returncode == 0` and that each `snapraid.content` and the `snapraid.parity` exist under the stub root.
 
-`devtools/Dockerfile` — snapraid for that check, from the same upstream Arch package the role installs (one source of truth for the version):
+`devtools/Dockerfile` — snapraid for that check. **Amended (2026-09-26), and this one
+still has a choice in it.** The plan's
+`https://github.com/amadvance/snapraid/releases/download/v14.9/snapraid-14.9-1-x86_64.pkg.tar.zst`
+does not exist: upstream ships a source tarball, not an Arch package. Chaotic-AUR does not
+carry snapraid either — verified against `chaotic-aur.db`, whose 3166 packages include
+`mergerfs-2.42.0-2` and no `snapraid` and no `mergerfs-tools-git`. So the tooling image has
+to build it. Two honest routes, to be decided in Task 2:
 
-```dockerfile
-# snapraid is not in Arch's repositories; the static suite parses a rendered
-# snapraid.conf by running a real sync against a stub tree, so the tooling image needs
-# the same upstream package `ansible/roles/storage/defaults/main.yml` pins.
-RUN pacman -U --noconfirm \
-	https://github.com/amadvance/snapraid/releases/download/v14.9/snapraid-14.9-1-x86_64.pkg.tar.zst \
-	&& pacman -Scc --noconfirm
-```
+1. `./configure && make install` of the pinned source tarball, whose URL **and sha256** are
+   in the AUR clone's `.SRCINFO` at `snapraid_aur_commit` (14.9:
+   `40c216979d9d9853248060497341f74feaa07c8ae15927b6b14972c4f9d143d5`). No `makepkg`, no
+   build user, no `base-devel` in the image — it is four lines and a checksum.
+2. `makepkg` at the same pinned commit as a throwaway build user, which keeps one source
+   of truth with the role at the cost of `base-devel` in the tooling image.
+
+Either way the version comes from `ansible/roles/storage/defaults/main.yml`'s
+`snapraid_version` / `snapraid_aur_commit`, so the image and the host agree by construction.
 
 and `tests/static/test_smoke.py::test_tooling_present` gains `"snapraid"` and `"systemd-analyze"`.
 
@@ -1083,27 +1126,25 @@ echo -e "$message\n\nLog Content:\n$(cat "$LOG_FILE")" \
     name: [smartmontools, msmtp, mutt, python]
     state: present
 
-# One python script, pinned by the commit that last touched it and verified by its
-# checksum. mergerfs-tools is AUR-only and a `git` clone at converge time would be an
-# unpinned dependency on a moving branch; this is the same pin a container tag is.
-- name: mergerfs.balance, pinned
-  ansible.builtin.get_url:
-    url: https://raw.githubusercontent.com/trapexit/mergerfs-tools/{{ mergerfs_balance_commit }}/src/mergerfs.balance
-    dest: /opt/storagebaby/maintenance/bin/mergerfs.balance
-    checksum: 'sha256:{{ mergerfs_balance_sha256 }}'
-    owner: root
-    group: root
-    mode: '0755'
+# Amended 2026-09-26 (JLK's ruling): mergerfs-tools is not in Chaotic-AUR either
+# (verified against chaotic-aur.db), so it is built from the AUR by the same task file
+# snapraid uses. The pin is the AUR commit; note that the AUR package is a `-git` one,
+# so the commit pins the *recipe*, not the upstream source it checks out.
+- name: mergerfs-tools, built from the AUR (mergerfs.balance)
+  ansible.builtin.include_tasks: aur_build.yml
+  vars:
+    aur_package: mergerfs-tools-git
+    aur_commit: '{{ mergerfs_tools_aur_commit }}'
+    aur_version: '{{ mergerfs_tools_version }}'
 ```
 
-with `defaults/main.yml` gaining:
+with `defaults/main.yml` gaining `mergerfs_tools_aur_commit`
+(`098c987faa2690271c09b879dc49c8995e1558f7` is the AUR head as of 2026-09-26; Task 2 reads
+the `pkgver`/`pkgrel` that commit produces and pins `mergerfs_tools_version` to it).
 
-```yaml
-mergerfs_balance_commit: f55902271e3e6fe9d945dc1848bd1f7ecc7163ae
-mergerfs_balance_sha256: 5fb2f98b1d1bdd1528523bf4f880a6ee6f8beddcaa232558053b5b5b8c1b75df
-```
-
-(the `bin/` directory is created by `maintenance.yml`, which therefore has to be included before `tools.yml`'s `get_url` — simplest is to create `/opt/storagebaby/maintenance/bin` in `tools.yml` itself, right above it).
+`balance_disks.sh.j2` then calls `mergerfs.balance` from `/usr/bin` like any other
+installed tool, and the `/opt/storagebaby/maintenance/bin/` directory the original plan
+invented for one downloaded script is not needed.
 
 `ansible/roles/storage/tasks/snapraid.yml`:
 
@@ -2336,7 +2377,7 @@ git commit -m "Retire samba and the stowed snapraid tree, and document the stora
 2. **The harness supplies the device by writing a GPT partition label, not by generating an inventory variable.** `test_deploy.py` converges through `ansible-pull`, which sees no Molecule inventory; a device path that existed only there would render a different `.mount` on that run and remount `/pool` under the running services.
 3. **`snapraid.maintenance.stop_services` replaces a hand-copied `plugins/jellyfin/`.** `test-ci` does not place jellyfin, and a verbatim plugin would stop a service that is not there and fail every maintenance run on that host. It also retires the `samba` plugin by construction.
 4. **`mail` gains optional `tls` and `auth`.** With `auth on` and no TLS, msmtp considers only SCRAM — against the test sink it would never authenticate. Both default to the production values (`tls: true`, `auth: on`), so storagebaby's block is the spec's.
-5. **`mergerfs`, `snapraid` and `mergerfs.balance` come from upstream artefacts, not from pacman.** All three are AUR-only; a converge must not need an AUR helper or a compiler. Versions and checksums are pinned in the role's defaults and bumped like an image tag, and a host that already has them from its package manager keeps them.
+5. **~~`mergerfs`, `snapraid` and `mergerfs.balance` come from upstream artefacts, not from pacman.~~ Superseded 2026-09-26 by JLK's ruling (ledger):** they come from pacman after all — `mergerfs` from Chaotic-AUR, which the role configures the project's documented way, and `snapraid` and `mergerfs-tools-git`, which Chaotic-AUR does not carry, built from the AUR by the role itself (`tasks/aur_build.yml`: build user, `base-devel`, one clone at a pinned AUR commit, `makepkg`, `pacman -U`). Pins live in the role's defaults and are bumped like an image tag, `state: present` never upgrades, and a host that already has these packages keeps them. Verified 2026-09-26 against `chaotic-aur.db`: 3166 packages, `mergerfs-2.42.0-2` present, no `snapraid`, no `mergerfs-tools-git`. The plan's unverified `mergerfs_sha256` and its snapraid release-package URL are both gone; the snapraid AUR pin is commit `94c51545d0ce36dee0402dc19c1b3cc4336b3ae9` = 14.9-1.
 6. **The FTP integration test counts documents in the database rather than through `/api/documents/`.** The API needs a user and a token; inventing a superuser on a test host to read a count is a production hazard for a fact the database states plainly.
 
 **Names, consistent across the tasks:** `storage.disks[].name`, `storage.pool.mount`, `storage_devices`, `pool_unit`, `mount_unit()` (python) / the `regex_replace` pair (Jinja), `storage.snapraid.maintenance.stop_services`, `storage.mail.smtp_password` (in `mail.sops.yaml`), `/opt/storagebaby/maintenance/`, `tcp_ports`, `tcp_enabled`, `placed_tcp_ports`, entrypoint `tcp-<port>`, route file `<name>-tcp.yml`, router `<name>-tcp-<port>`, `paperless-ftp`, volume `consume`, `config.ftp_user`, `config.ftp_public_address`, secret `ftp_password`, `placed_tcp_entries()` (integration), `conftest.tcp_ports()` / `host_cfg()` / `storage_of()` (static).
