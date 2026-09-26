@@ -15,6 +15,9 @@ from conftest import REPO, host_cfg, host_names, mount_unit, storage_of
 
 STORAGE_KEYS = {"disks", "parity", "pool", "snapraid", "mail"}
 DISK_KEYS = {"name", "device", "mount", "fstype"}
+# Optional, and defaulted by the template to `defaults`: a disk that wants `noatime` or
+# `nofail` says so in `host.yml` instead of making every disk on every host carry it.
+DISK_OPTIONAL_KEYS = {"options"}
 POOL_KEYS = {"mount", "options"}
 NAME_RE = re.compile(r"^[a-z][a-z0-9]*$")
 # Lowercase letters, digits and slashes only: `mount_unit` escapes a path by replacing
@@ -38,7 +41,11 @@ def test_storage_block_shape(host):
     assert set(storage) <= STORAGE_KEYS, f"{host}: unknown storage keys {set(storage) - STORAGE_KEYS}"
     assert storage["disks"], f"{host}: a storage block needs at least one disk"
     for e in entries(storage):
-        assert set(e) == DISK_KEYS, f"{host}/{e.get('name')}: a disk needs exactly {sorted(DISK_KEYS)}"
+        assert DISK_KEYS <= set(e), f"{host}/{e.get('name')}: a disk needs {sorted(DISK_KEYS)}"
+        unknown = set(e) - DISK_KEYS - DISK_OPTIONAL_KEYS
+        assert not unknown, f"{host}/{e['name']}: unknown disk keys {sorted(unknown)}"
+        options = e.get("options", "defaults")
+        assert isinstance(options, str) and options.strip(), f"{host}/{e['name']}: options must be a mount option string"
         assert NAME_RE.match(e["name"]), f"{host}: invalid disk name {e['name']!r}"
         assert e["device"].startswith("/dev/"), f"{host}/{e['name']}: device must be under /dev"
         assert MOUNT_RE.match(e["mount"]), f"{host}/{e['name']}: {e['mount']!r} is not a plain lowercase path"
@@ -108,7 +115,8 @@ def test_disk_units_name_the_declared_device(rendered, host):
 
     `Where=` has to be the path the unit name escapes -- systemd refuses a unit where the
     two disagree, which is what `verify` above catches -- and `What=` has to be the
-    device the tracked file declares, not a guess derived from the mount point.
+    device the tracked file declares, not a guess derived from the mount point. `Options=`
+    is the optional per-entry `options`, or `defaults` when the entry declares none.
     """
     storage = host_cfg(host)["storage"]
     for e in entries(storage):
@@ -116,3 +124,4 @@ def test_disk_units_name_the_declared_device(rendered, host):
         assert f"What={e['device']}" in text, text
         assert f"Where={e['mount']}" in text, text
         assert f"Type={e['fstype']}" in text, text
+        assert f"Options={e.get('options', 'defaults')}" in text, text

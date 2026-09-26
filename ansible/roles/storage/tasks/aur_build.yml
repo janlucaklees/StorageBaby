@@ -11,14 +11,24 @@
 # root-equivalent grant that outlives the build. Instead the dependencies are read out of
 # the pinned `.SRCINFO` and installed by this play, which is already root, and `makepkg`
 # runs without `-s`.
+# `check_mode: false` on the probe and `not ansible_check_mode` on the block are two halves
+# of one thing: a `--check --diff` run is the pre-flight an operator makes against the live
+# NAS before pushing a pool change, and it has to reach the mount templates. `command` does
+# not support check mode, so without the first line the probe is skipped and its registered
+# result has no `stdout` for the block's `when:` to read; without the second, a host whose
+# snapraid is not already the pinned version would clone, compile and install from a run
+# that promised to change nothing.
 - name: Look for an installed copy of {{ aur_package }}
   ansible.builtin.command: pacman -Q {{ aur_package }}
   register: _aur_installed
   changed_when: false
   failed_when: false
+  check_mode: false
 
 - name: Build from the AUR unless the pinned version is installed -- {{ aur_package }}
-  when: _aur_installed.stdout | trim != aur_package ~ ' ' ~ aur_version
+  when:
+    - not ansible_check_mode
+    - _aur_installed.stdout | trim != aur_package ~ ' ' ~ aur_version
   block:
     - name: Resolve the clone directory of {{ aur_package }}
       ansible.builtin.set_fact:
@@ -122,13 +132,27 @@
     # `--nocheck`: a package's `check()` runs upstream's own test suite (snapraid's is a
     # multi-minute regression run), and re-testing a release on the NAS every time a pin
     # moves is not what this build is for.
+    #
+    # `pacman -U` is handed the exact files `makepkg --packagelist` names -- the same
+    # question makepkg answered when it decided where to write them -- and not a
+    # `./*.pkg.tar.*` glob: root would otherwise install whatever is in a directory owned
+    # by the build user. `--packagelist` has to run as that user too, because makepkg
+    # refuses to run as root at all.
     - name: Run makepkg and install the built package -- {{ aur_package }}
       ansible.builtin.shell: |
         set -euo pipefail
         cd "$DIR"
         rm -f ./*.pkg.tar.*
         runuser -u "$BUILD_USER" -- makepkg --noconfirm --nocheck --clean
-        pacman -U --noconfirm ./*.pkg.tar.*
+        mapfile -t built < <(runuser -u "$BUILD_USER" -- makepkg --packagelist)
+        # The first element rather than an array length: ansible-lint parses a shell body
+        # with the same argument splitter Ansible uses, which reads a dollar-brace-hash as
+        # the start of a comment and then calls the line an unbalanced quote.
+        [ -n "${built[0]:-}" ] || { echo 'makepkg --packagelist named no package' >&2; exit 1; }
+        for pkg in "${built[@]}"; do
+          [ -f "$pkg" ] || { echo "makepkg did not produce $pkg" >&2; exit 1; }
+        done
+        pacman -U --noconfirm "${built[@]}"
       args:
         executable: /bin/bash
       environment:

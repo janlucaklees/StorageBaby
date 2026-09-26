@@ -1,13 +1,29 @@
-- name: Mount point directories
-  ansible.builtin.file:
+# Created when absent and never touched again -- the same rule the `service` role follows
+# for a volume directory, and for the same reason with more at stake: on a converged host
+# these paths are not empty directories but the roots of mounted filesystems. `/mnt/data/dataN`
+# is an ext4 root and `/pool` is the union, where a mode or owner change propagates down
+# into every branch root and takes a running service's access away -- nightly, from the
+# deploy timer. What the mount point looked like before it carried a filesystem is the
+# filesystem's own business.
+- name: Look for the mount point directories
+  ansible.builtin.stat:
     path: '{{ item.mount }}'
+  loop: '{{ storage_devices + [storage.pool] }}'
+  loop_control:
+    label: '{{ item.mount }}'
+  register: _mount_dirs
+
+- name: Mount point directories, created only when absent
+  ansible.builtin.file:
+    path: '{{ item.item.mount }}'
     state: directory
     owner: root
     group: root
     mode: '0755'
-  loop: '{{ storage_devices + [storage.pool] }}'
+  loop: '{{ _mount_dirs.results }}'
   loop_control:
-    label: '{{ item.mount }}'
+    label: '{{ item.item.mount }}'
+  when: not item.stat.exists
 
 # The precondition the role exists to check. A device that is not there is a disk that
 # has been pulled, renamed or has failed to enumerate -- and mounting *nothing* there
@@ -61,10 +77,25 @@
     daemon_reload: true
   when: disk_units.changed or pool_unit_render.changed
 
+# Asked before anything is stopped or restarted, because that is the only moment the
+# answer still means "is a bind mount about to be pulled out from under a container".
+# `check_mode: false`: a read-only query whose result gates the warning below, and under
+# `--check` a skipped command leaves no `stdout` for it to read.
+- name: Is the pool mounted right now?
+  ansible.builtin.command: systemctl is-active -- {{ pool_unit }}
+  register: _pool_active
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
 # Loud, and before anything is remounted rather than after it: remounting the union drops
 # every bind mount a running container holds under it, so the services on this host come
 # back reading an empty directory until they are restarted. The README says to run the
 # playbook with `--check --diff` before pushing a pool option change.
+#
+# Only when the pool is up: on a first converge every unit is new, nothing is mounted and
+# no bind mount can be lost, so the warning would be noise on the one run where the
+# operator has nothing to do about it.
 - name: Warn that the pool is about to be remounted
   ansible.builtin.debug:
     msg: >-
@@ -72,7 +103,9 @@
       service with a pool-class volume loses its bind mount across this and has to be
       restarted afterwards -- `make stop SERVICE=<name>` before, `make start
       SERVICE=<name>` after.
-  when: disk_units.changed or pool_unit_render.changed
+  when:
+    - disk_units.changed or pool_unit_render.changed
+    - _pool_active.stdout | trim == 'active'
 
 # A branch cannot be unmounted while mergerfs holds it open, so a changed disk unit means
 # the pool comes down first. A no-op on the first converge, where the pool is not up yet.

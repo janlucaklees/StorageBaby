@@ -2,25 +2,42 @@
 # key dance is gated on one cheap check: once `chaotic-keyring` is installed it owns the
 # repository's keys, so importing and locally signing the bootstrap key has nothing left
 # to do and a second converge reports no change.
+#
+# `check_mode: false` because this is a read-only query whose result the tasks below read:
+# `command` does not support check mode, so under `--check` it would be skipped and its
+# registered result would carry no `rc` at all -- and the next `when:` would fail on a
+# dict with no such attribute, taking the whole `--check --diff` pre-flight down before it
+# ever reaches the mount templates it exists to show. Every registered probe in this role
+# carries it for that reason.
 - name: Is Chaotic-AUR already set up on this host?
   ansible.builtin.command: pacman -Qq chaotic-keyring chaotic-mirrorlist
   register: _chaotic_pkgs
   changed_when: false
   failed_when: false
+  check_mode: false
 
+# Every step that installs something carries `not ansible_check_mode`, spelled out rather
+# than left to the modules: under `--check` the repository section below is only *shown* as
+# a diff and never written, so a pacman that resolved `mergerfs` against it would fail with
+# "target not found" on the very host the pre-flight is meant to describe. A `--check` run
+# reports what the role would install; it installs nothing.
 - name: Receive and locally sign the Chaotic-AUR signing key
   ansible.builtin.command: '{{ item }}'
   loop:
     - pacman-key --recv-key {{ chaotic_key_id }} --keyserver {{ chaotic_keyserver }}
     - pacman-key --lsign-key {{ chaotic_key_id }}
-  when: _chaotic_pkgs.rc != 0
+  when:
+    - not ansible_check_mode
+    - _chaotic_pkgs.rc != 0
   changed_when: true
 
 # Not `community.general.pacman`: that module installs repository packages by name, and
 # these two are the packages that make the repository exist.
 - name: Install the Chaotic-AUR keyring and mirrorlist
   ansible.builtin.command: pacman -U --noconfirm {{ chaotic_packages | join(' ') }}
-  when: _chaotic_pkgs.rc != 0
+  when:
+    - not ansible_check_mode
+    - _chaotic_pkgs.rc != 0
   changed_when: true
 
 - name: The [chaotic-aur] repository in pacman.conf
@@ -37,7 +54,9 @@
 - name: Refresh the package databases when the repository list changed
   community.general.pacman:
     update_cache: true
-  when: _chaotic_conf.changed
+  when:
+    - not ansible_check_mode
+    - _chaotic_conf.changed
 
 # `state: present`, never `latest`: storagebaby already has mergerfs from its own AUR
 # build, and a converge is not the place to swap a running union filesystem's binary.
@@ -45,6 +64,7 @@
   community.general.pacman:
     name: [mergerfs]
     state: present
+  when: not ansible_check_mode
 
 - name: Look for mergerfs's own mount helper
   ansible.builtin.stat:

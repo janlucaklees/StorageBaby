@@ -55,6 +55,10 @@ storage:
   writes so that `/dev/disk/by-partlabel/<name>` resolves.
 - **`device`** is a stable path under `/dev` — `by-partuuid` on storagebaby, `by-partlabel`
   on a test VM. Never `/dev/sdX`.
+- **`options`** is optional per entry and becomes the unit's `Options=`; left out, it is
+  `defaults`, which is what every disk declared today wants and what the hand-stowed units
+  carried. A disk that needs `noatime` or `nofail` says so here. Changing it rewrites that
+  disk's unit, so it is a remount — read "Change handling" below before pushing one.
 - **`parity` is required but is not a branch.** The pool unit `Requires=` it, because a
   pool that outlives its parity disk hides that the array is unprotected; the union is
   over the data disks only, or mergerfs would be handed its own redundancy to spread
@@ -122,11 +126,33 @@ pool-class volume loses its bind mount across this and has to be restarted after
 branch's `device`, `mount` or `fstype`.** If the diff shows `pool.mount` changing, stop the
 affected services first (`make stop SERVICE=<name>`) and start them after.
 
-**This applies to storagebaby's very first converge.** The rendered `pool.mount` cannot be
-byte-identical to the hand-stowed one it replaces: the stowed unit's `What=` is the glob
-`/mnt/data/*`, and the role renders the explicit branch list `/mnt/data/data1:…:data3`.
-The options are the deployed ones verbatim, `category.create=pfrd` included, but that one
-line differs — so the first converge **will** remount `/pool`. It is one planned outage,
-with the services stopped; the operator steps in Task 5's README cover it.
+This role is check-mode clean: every read-only probe carries `check_mode: false` so its
+result is still there for the conditional that reads it, and every step that installs
+something is skipped, so a `--check` run reports what it would install and installs
+nothing. Read the whole role's diff and the warning task from that run.
+
+**What the rest of the playbook does under `--check` is a different matter, and the run
+does not finish green today.** The `service` role has the idiom this role was fixed for —
+`service/tasks/secrets.yml` registers a `sops --decrypt` command and parses its `stdout`,
+and check mode skips a `command` — so the run aborts at the first service's secrets with a
+`from_json` error, **after** the storage diff has been printed. That failure says nothing
+about storage. Until the `service` role carries `check_mode: false` too, read the pre-flight
+for what it shows above that point and do not expect `failed=0`.
+
+**This applies to storagebaby's very first converge, and it remounts more than the pool.**
+None of the five rendered units can be byte-identical to the hand-stowed ones they replace:
+`pool.mount`'s `What=` is the explicit branch list `/mnt/data/data1:…:data3` where the
+stowed unit had the glob `/mnt/data/*`, and each of the four branch units gets a
+`Description=` of `d1 (/mnt/data/data1)` where the stowed one said `Data Disk 1 mount`. The
+options are the deployed ones verbatim, `category.create=pfrd` included, but those lines
+differ — so the first converge **will** remount all four branches **and** `/pool`, in one
+planned outage.
+
+Which means **stopping every pool-class service is not enough: `smb` and `nmb` have to be
+stopped too.** Taking a branch down takes the pool down first, and `systemctl stop
+pool.mount` is a plain `umount` — it fails with `EBUSY` while anything at all holds `/pool`
+open, and until Samba is retired (Task 5) `smbd` serves `/pool/shared/*` the whole time.
+So: stop every service with a pool-class volume, `systemctl stop smb nmb`, converge, then
+start them again. Task 5's operator steps carry the same list.
 
 Script and configuration changes need no restart.

@@ -7,7 +7,10 @@ Description={{ item.name }} ({{ item.mount }})
 What={{ item.device }}
 Where={{ item.mount }}
 Type={{ item.fstype }}
-Options=defaults
+{# `options` is optional per entry and defaults to what every disk declared today wants:
+   a plain `defaults`, which is what the hand-stowed units carried. A disk that needs
+   `noatime` or `nofail` declares it in `host.yml` rather than forcing a template change. #}
+Options={{ item.options | default('defaults') }}
 
 [Install]
 RequiredBy=local-fs.target
