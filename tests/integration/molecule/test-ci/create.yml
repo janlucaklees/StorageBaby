@@ -12,7 +12,7 @@
     # block declares -- three data disks and one parity -- and `prepare` asserts the two
     # numbers agree. Change this and destroy.yml's copy together.
     storage_disk_count: 4
-    storage_disk_size: 1G
+    storage_disk_size: 4G
   tasks:
     - name: Images directory
       ansible.builtin.file:
@@ -45,9 +45,13 @@
         label: '{{ item.name }}'
 
     # Plain qcow2, no backing file: these are the storage role's disks, partitioned and
-    # formatted by `prepare`. 1 GB each is enough for a real mergerfs union, a real
-    # snapraid parity file and a maintenance run, and being sparse they cost what they
-    # hold rather than 4 GB up front.
+    # formatted by `prepare`. Being sparse they cost what they hold, not what they
+    # declare, so the size is set by the most demanding thing placed on the union rather
+    # than by what the workstation can spare: Jellyfin refuses to start at all with less
+    # than 2 GiB free under its data directory, and four 1 GB disks made a 2.9 GB union
+    # with ~1.9 GB left once the rest of the placement was on it. At 4 GB each the union
+    # is roughly 11 GB, which clears that floor with room for the parity file and a
+    # maintenance run.
     - name: Storage disks
       ansible.builtin.command: >-
         qemu-img create -f qcow2
