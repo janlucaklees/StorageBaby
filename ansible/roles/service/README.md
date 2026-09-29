@@ -260,6 +260,62 @@ test enforces all four. They are contract, not style: the integration verifier r
 `podman healthcheck run <ContainerName>` for every container of every placed service, so a
 unit without a health command or without its own name fails the suite.
 
+## Images are pulled before units change
+
+`units.yml` begins by pulling every image this service's units name, before it writes a
+unit file, reloads the user manager, restarts anything or starts anything.
+
+Without it a first start **is** the pull. Podman fetches the image from inside
+`systemctl start`, a container unit inherits the user manager's default
+`TimeoutStartSec=90s`, and podman only holds that window open while the transfer keeps
+reporting progress — so a large image over an ordinary link has its start job killed
+mid-pull. Measured on the test host: `immich-server` and `immich-machine-learning` both
+died at 4m15s, `apache/tika` sat on docker.io for 25 minutes without a byte. Each came
+back by itself seconds later on `Restart=always`; the casualty was the converge, which
+had already failed at "Start units that are not up" and took every service behind it
+down with it.
+
+So the pull is play time now, and systemd's **default start timeout stays** — no
+`TimeoutStartSec=` is rendered anywhere. A service that needs more than 90 s to _start_,
+with its image already local, is a service worth looking at. The same holds for a
+version bump: the image is on disk before the restart, so the downtime is the restart
+and nothing else.
+
+The list comes from `lookup('template')` on the service's own `*.container.j2` and
+`*.build.j2` plus the generated sidecar, not from the files the role is about to render.
+That is what makes a failed pull harmless: nothing on the host has been touched, so the
+next converge renders, reloads and restarts normally. Rendering first and failing after
+would leave a unit file on disk that `template` calls unchanged from then on — the
+reload and the restart that carry it into the running container would never happen
+again, and the deploy after the failed one would go green over a service still running
+the old image.
+
+**Skipped:** an `Image=` that names another unit (`<stem>.build`, `<stem>.image`), a
+value equal to an `ImageTag=` one of this service's `.build` units produces, and
+anything under `localhost/`. None of them exists in a registry, and none of them needs
+this: Quadlet writes a `.build` as `Type=oneshot`, which systemd starts with **no**
+timeout, so whatever its Containerfile pulls cannot hit the wall above.
+
+**Already local is left alone.** Each image is probed with `podman image exists` first
+and pulled only when it is missing — pull policy `missing`, spelled out. That is
+deliberate for the `AutoUpdate=registry` services: a floating tag is moved by the
+service user's own `podman-auto-update.timer`, on its schedule and with its own restart.
+Re-pulling a tag that is already there would fetch a newer digest behind auto-update's
+back and restart the service from a converge that was meant to change nothing. This role
+only guarantees that the reference a unit names exists locally before that unit starts.
+
+The probe is also how `changed` is decided: `podman pull` prints an image ID whether it
+fetched anything or not, so "it was not there, and now it is" is the honest reading, and
+it is made against podman's own lookup rather than against progress lines podman is free
+to reword.
+
+**Retries:** three, thirty seconds apart, each attempt wrapped in `timeout -k 30 600`.
+The timeout is the program and not the task's `timeout:` keyword, because ansible-core
+raises a task timeout as a `BaseException` that bypasses the `until` loop — a stalled
+pull would then fail the converge instead of being retried, and a stall is the case this
+defends against. A pull that still cannot be done after that fails the converge, naming
+the image, with every service on the host still running.
+
 ## Unit names and order
 
 `<stem>.container` → `<stem>.service`, `<stem>.pod` → `<stem>-pod.service`, `<stem>.build` →

@@ -1,3 +1,4 @@
+import re
 import subprocess
 from pathlib import Path
 
@@ -90,6 +91,56 @@ def test_host_gateway_dropin_rendered(rendered, p):
         lines = conf.read_text().splitlines()
         assert lines[0] == ("[Pod]" if unit.endswith(".pod") else "[Container]"), lines[0]
         assert [ln for ln in lines if ln.startswith("AddHost=")] == expected
+
+
+# `Image=` may name another Quadlet unit instead of a registry reference: `<stem>.build`
+# for an image the host builds, `<stem>.image` for a `.image` unit. Those are not pulled
+# and are not checked here.
+UNIT_REF = re.compile(r"^[A-Za-z0-9._-]+\.(build|image)$")
+
+# registry/namespace…/name, then a tag, a digest, or both. The registry half has to be
+# recognisable as one -- a dotted name, optionally with a port, or literally `localhost`
+# -- because that is exactly what podman uses to decide whether a reference is qualified
+# at all: a name without it is completed from `unqualified-search-registries`, which is
+# host configuration this repo does not set and does not want to depend on.
+IMAGE_REF = re.compile(
+    r"^(localhost|[a-z0-9-]+(\.[a-z0-9-]+)+)(:\d+)?"
+    r"/[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*"
+    r"(?P<tag>:[\w][\w.-]*)?(?P<digest>@sha256:[0-9a-f]{64})?$"
+)
+
+
+@pytest.mark.parametrize("p", placements(), ids=lambda p: f"{p.host}/{p.name}")
+def test_rendered_images_are_pullable_references(rendered, p):
+    """Every rendered `Image=` is a fully qualified reference with a tag or a digest.
+
+    The role pulls these before it touches a unit (`ansible/roles/service/README.md`,
+    "Images are pulled before units change"), so an ambiguous one is not a style
+    complaint: `podman pull nginx:alpine` resolves through the host's
+    `unqualified-search-registries`, which means the image a converge fetches would
+    depend on a file outside this repository -- and an untagged reference silently means
+    `:latest`, which is a different image on the NAS than on the test VM.
+
+    Checked on the *rendered* unit and not on the template, because two of them build the
+    reference out of `service.config.version`.
+    """
+    unit_dir = rendered / p.host / p.name
+    if not quadlet_templates(p):
+        pytest.skip("no quadlet templates yet")
+    units = sorted(unit_dir.glob("*.container"))
+    assert units, f"{unit_dir} rendered no container unit"
+    for unit in units:
+        images = [ln.split("=", 1)[1].strip() for ln in unit.read_text().splitlines() if ln.startswith("Image=")]
+        # Exactly one: Quadlet takes the last `Image=` it reads, so a second one is a
+        # unit that runs something other than what it appears to, and it would also make
+        # "the image the role pulled" and "the image the container starts" two things.
+        assert len(images) == 1, f"{p.host}/{unit.name}: Image= lines {images}"
+        image = images[0]
+        if UNIT_REF.match(image):
+            continue
+        match = IMAGE_REF.match(image)
+        assert match, f"{p.host}/{unit.name}: Image={image} is not a fully qualified reference"
+        assert match["tag"] or match["digest"], f"{p.host}/{unit.name}: Image={image} names no tag and no digest"
 
 
 @pytest.mark.parametrize("p", [p for p in placements() if routes_of(p.spec)], ids=lambda p: f"{p.host}/{p.name}")

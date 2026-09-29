@@ -256,6 +256,58 @@ def test_build_unit_succeeded(host, owner, spec_path, template):
     assert r.rc == 0, f"{unit} reports success but image {tag} does not exist: {r.stderr}"
 
 
+def rendered_unit_images(host, user: str) -> dict[str, str]:
+    """`<unit file name>` → the `Image=` it names, read off the host's own unit directory.
+
+    Read from `/etc/containers/systemd/users/<uid>/*.container` and not from the
+    templates in the repo, because two of them build the reference out of
+    `service.config.version` and nothing on the controller can resolve that. The
+    generated backup sidecar has no template in a service folder at all and only shows
+    up here.
+    """
+    uid = host.user(user).uid
+    found = host.run(f"find /etc/containers/systemd/users/{uid} -maxdepth 1 -name '*.container'")
+    assert found.rc == 0, found.stderr
+    images = {}
+    for path in sorted(found.stdout.split()):
+        lines = host.file(path).content_string.splitlines()
+        named = [ln.split("=", 1)[1].strip() for ln in lines if ln.startswith("Image=")]
+        assert len(named) == 1, f"{path}: Image= lines {named}"
+        images[path.rsplit("/", 1)[-1]] = named[0]
+    return images
+
+
+@service_case
+def test_every_image_a_unit_names_is_in_the_local_store(host, owner, spec_path):
+    """The role pulled every image before it started anything, so all of them are here.
+
+    This is the observable half of "Images are pulled before units change"
+    (`ansible/roles/service/README.md`). A running container proves its own image is
+    local, but the claim is about the whole set -- including the generated backup
+    sidecar's, and including a unit that is up for a reason other than this converge --
+    so the units are enumerated from the host's unit directory and each one's reference
+    is asked of podman.
+
+    An `Image=` that names a `.build` or an `.image` unit is skipped: it is not a
+    registry reference and is not pulled. `test_build_unit_succeeded` covers that one.
+    """
+    placed(host, owner)
+    user = f"svc-{load_spec(spec_path)['name']}"
+    images = rendered_unit_images(host, user)
+    assert images, f"{user} has no rendered container unit"
+    checked = 0
+    for unit, image in images.items():
+        if image.endswith((".build", ".image")):
+            continue
+        r = run_as(host, user, f"podman image exists {image}")
+        assert r.rc == 0, f"{unit} names {image}, which is not in {user}'s image store"
+        checked += 1
+    if not checked:
+        # paperless-upload is the one such service: its single container runs the image
+        # its own `.build` produces, so there is nothing for this case to look at.
+        pytest.skip(f"{user} pulls nothing: every unit names an image built on the host")
+
+
 @service_case
 def test_domain_answers_over_https(host, owner, spec_path):
     hostvars = placed(host, owner)

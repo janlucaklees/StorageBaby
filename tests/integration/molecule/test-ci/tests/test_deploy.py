@@ -192,6 +192,81 @@ def test_deploy_restores_a_drifted_host_gateway_dropin(host):
     )
 
 
+def container_template_of(name: str):
+    """The first `*.container.j2` of a placed service, by service name."""
+    for _, spec_path in SPECS:
+        if spec_path.parent.name == name:
+            return quadlets(spec_path, "container")[0]
+    return None
+
+
+@pytest.mark.order(-1)
+def test_an_unpullable_image_fails_the_deploy_without_stopping_anything(host):
+    """A tag that does not exist stops the converge at the pull, with the service still up.
+
+    This is the ordering claim of "Images are pulled before units change"
+    (`ansible/roles/service/README.md`) made from outside: the role pulls every image a
+    unit names *before* it writes a unit file, reloads the user manager or restarts
+    anything, so an image that cannot be fetched costs a red deploy and nothing else. Get
+    the order wrong and the first symptom is the opposite -- the unit is rewritten, the
+    container is stopped, and then the pull fails, leaving a service that was healthy a
+    minute ago down until someone notices.
+
+    A single-container service is used for the same reason the drop-in case uses one: its
+    unit is the only thing that would move, so "it did not move" is one timestamp rather
+    than a pod's worth of them.
+
+    The seeded remote *is* restored here, with a revert and a second deploy, because
+    every case declared after this one needs a tree that converges.
+    """
+    found = single_container_service(host)
+    if not found:
+        pytest.skip("no single-container service is placed on this host")
+    name, stem, unit, container = found
+    template = container_template_of(name)
+    user = f"svc-{name}"
+
+    # The reference the host is running now, read off the rendered unit: the template may
+    # build it out of `service.config.version`, and the tag has to be replaced with one
+    # that is certainly absent from both the registry and the local store.
+    uid = host.user(user).uid
+    rendered = host.file(f"/etc/containers/systemd/users/{uid}/{stem}.container").content_string
+    image = next(ln.split("=", 1)[1].strip() for ln in rendered.splitlines() if ln.startswith("Image="))
+    missing = f"{image.split('@')[0].rsplit(':', 1)[0]}:does-not-exist"
+    assert run_as(host, user, f"podman image exists {missing}").rc != 0, f"{missing} is in the store already"
+
+    unit_before = active_since(host, user, unit)
+    assert unit_before != "0", f"{unit} has no ActiveEnterTimestamp: is that the right unit name?"
+
+    relative = str(Path(template).relative_to("/repo"))
+    r = host.run(
+        f"cd {SEEDED} && sed -i 's|^Image=.*|Image={missing}|' {relative} "
+        "&& git -c user.name=t -c user.email=t@t commit -qam 'an image tag that does not exist' "
+        "&& git push -q origin stable"
+    )
+    assert r.rc == 0, r.stderr
+
+    r = host.run(DEPLOY)
+    journal = host.run("journalctl -u storagebaby-deploy.service --no-pager | tail -200").stdout
+    assert r.rc != 0, f"the converge survived {missing}\n{journal}"
+    assert missing in journal, f"the failure does not name the image it could not pull\n{journal}"
+    # Both halves of "nothing was touched": the unit was never restarted, and the
+    # container it owns is still the running one. A restart that failed would also leave
+    # the timestamp alone -- by leaving the unit down.
+    assert active_since(host, user, unit) == unit_before, f"{unit} was restarted before the pull failed"
+    assert host.run(f"systemctl --user -M {user}@ is-active {unit}").stdout.strip() == "active"
+    running = run_as(host, user, f"podman ps --quiet --filter name={container}")
+    assert running.stdout.strip(), f"{container} is not in `podman ps` any more: {running.stderr}"
+
+    r = host.run(
+        f"cd {SEEDED} && git -c user.name=t -c user.email=t@t revert --no-edit -q HEAD && git push -q origin stable"
+    )
+    assert r.rc == 0, r.stderr
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+    assert active_since(host, user, unit) == unit_before, f"{unit} was restarted by a revert that changed nothing"
+
+
 @pytest.mark.order(-1)
 def test_deploy_restarts_only_the_changed_service(host):
     """A change to traefik's `port` restarts traefik and leaves every other service alone.
