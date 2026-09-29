@@ -43,6 +43,53 @@ storage:
   pool:
     mount: /pool
     options: defaults,allow_other,use_ino,category.create=pfrd,moveonenospc=true,minfreespace=20G,fsname=mergerfsPool,cache.writeback=false,cache.symlinks=false,cache.readdir=false,async_read=true,threads=4
+  # The array. `excludes` are paths relative to a *disk's* root, which for a branch of this
+  # pool is the same as relative to /pool -- they are the deployed ones with the Nextcloud
+  # paths moved onto the platform's volume layout (`/apps/nextcloud/volumes/nextcloud/` ->
+  # `/apps/nextcloud/html/`, the `html` volume of the nextcloud service).
+  snapraid:
+    block_size: 256
+    excludes:
+      - '*.bak'
+      - '*.unrecoverable'
+      - /tmp/
+      - /lost+found/
+      - .AppleDouble
+      - ._AppleDouble
+      - .DS_Store
+      - .Thumbs.db
+      - .fseventsd
+      - .Spotlight-V100
+      - .TemporaryItems
+      - .Trashes
+      - .AppleDB
+      - /apps/nextcloud/html/apps/
+      - /apps/nextcloud/html/3rdparty/
+      - /apps/nextcloud/html/custom_apps/
+      - /apps/nextcloud/html/data/jlk/files/Projects/Kannji/_app_workspace/app/build/
+      - '*.tmp'
+      - '*.log'
+      - /cache/
+    maintenance:
+      on_calendar: '02:00'
+      balance_threshold: 5
+      scrub_percent: 8
+      scrub_older_days: 12
+      # Services stopped before the balance moves their files between branches and started
+      # again after the scrub -- and on failure, so a run that aborts never leaves one
+      # down. Every name has to be a service placed on this host.
+      stop_services: [jellyfin]
+  # Where the maintenance report goes. `smtp_host` and `smtp_user` are operator items: the
+  # deployed wrapper used whatever MTA the host happened to have, which this repository
+  # never captured, so the relay has to be filled in before the first converge --
+  # otherwise the mail step fails nightly while the run itself succeeds. The password is
+  # hosts/storagebaby/secrets/mail.sops.yaml, key `smtp_password`.
+  mail:
+    to: email@janlucaklees.de
+    from: storagebaby@janlucaklees.de
+    smtp_host: REPLACE_ME
+    smtp_port: 587
+    smtp_user: REPLACE_ME
 volume_overrides: {}
 deploy_timer: true
 gpu: true

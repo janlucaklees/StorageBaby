@@ -50,6 +50,54 @@ storage:
   pool:
     mount: /pool
     options: defaults,allow_other,use_ino,category.create=pfrd,moveonenospc=true,minfreespace=100M,fsname=mergerfsPool,cache.writeback=false,cache.symlinks=false,cache.readdir=false,async_read=true,threads=2
+  # The array. `excludes` are paths relative to a *disk's* root, which for a branch of this
+  # pool is the same as relative to /pool. storagebaby's list verbatim, so the rendered
+  # snapraid.conf a test host parses is the same shape as the real one.
+  snapraid:
+    block_size: 256
+    excludes:
+      - '*.bak'
+      - '*.unrecoverable'
+      - /tmp/
+      - /lost+found/
+      - .AppleDouble
+      - ._AppleDouble
+      - .DS_Store
+      - .Thumbs.db
+      - .fseventsd
+      - .Spotlight-V100
+      - .TemporaryItems
+      - .Trashes
+      - .AppleDB
+      - /apps/nextcloud/html/apps/
+      - /apps/nextcloud/html/3rdparty/
+      - /apps/nextcloud/html/custom_apps/
+      - /apps/nextcloud/html/data/jlk/files/Projects/Kannji/_app_workspace/app/build/
+      - '*.tmp'
+      - '*.log'
+      - /cache/
+    maintenance:
+      on_calendar: '02:00'
+      balance_threshold: 5
+      scrub_percent: 8
+      scrub_older_days: 12
+      # This host places no jellyfin, and a plugin for a service that is not here would
+      # fail every maintenance run. The list is the placement, not a copy of storagebaby's.
+      stop_services: []
+  # The throwaway SMTP sink `prepare.yml` installs on the VM, on the loopback. `tls: false`
+  # because nothing but the loopback is between the two ends, and `auth: plain` explicitly
+  # because msmtp's automatic choice considers only SCRAM without TLS -- against a sink that
+  # offers PLAIN it would fail to authenticate and never send, and the maintenance run would
+  # still be green. The password is generated into hosts/<host>/secrets/mail.sops.yaml by
+  # `prepare.yml`, like every other test secret.
+  mail:
+    to: root@test.local
+    from: storagebaby@test.local
+    smtp_host: 127.0.0.1
+    smtp_port: 2525
+    smtp_user: test
+    tls: false
+    auth: plain
 volume_overrides: {}
 deploy_timer: false
 gpu: false

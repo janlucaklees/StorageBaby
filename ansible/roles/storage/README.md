@@ -66,7 +66,8 @@ storage:
 - **`pool.options`** is the verbatim mergerfs option string. `storage_roots.pool` has to
   live under `pool.mount`, which `tests/static/test_storage.py` enforces.
 
-`storage.snapraid` and `storage.mail` belong to the same block and are Task 2's.
+`storage.snapraid` and `storage.mail` belong to the same block; "The array, the nightly run
+and its mail" below has them.
 
 ### Why the unit name is a naive escape
 
@@ -94,7 +95,7 @@ templates escape naively. Widen that regex and the escape has to become real.
   `/var/lib/aurbuild`, no login shell), asserts that the commit really produces
   `aur_version`, installs the recipe's `depends`/`makedepends` **as root**, and runs
   `makepkg --nocheck` as the build user before `pacman -U`ing the result. Task 1 uses it
-  for `snapraid`; Task 2 adds `mergerfs-tools-git`.
+  for `snapraid` and for `mergerfs-tools-git` -- whose pin works differently, see below.
 - **The build user has no sudo or doas rights, on purpose.** `makepkg -s` would need to run
   pacman as root, and a NOPASSWD pacman rule for a service account is a root-equivalent
   grant that outlives the build. The dependencies come from the pinned `.SRCINFO` and are
@@ -157,3 +158,90 @@ So: stop every service with a pool-class volume, `systemctl stop smb nmb`, conve
 start them again. Task 5's operator steps carry the same list.
 
 Script and configuration changes need no restart.
+
+## The array, the nightly run and its mail
+
+The same `storage` block carries the rest of it.
+
+```yaml
+storage:
+  snapraid:
+    block_size: 256
+    excludes: ['*.bak', /lost+found/, /apps/nextcloud/html/apps/, …]
+    maintenance:
+      on_calendar: '02:00'
+      balance_threshold: 5
+      scrub_percent: 8
+      scrub_older_days: 12
+      stop_services: [jellyfin]
+  mail:
+    to: email@janlucaklees.de
+    from: storagebaby@janlucaklees.de
+    smtp_host: smtp.example.org
+    smtp_port: 587
+    smtp_user: storagebaby@example.org
+    # tls: true   (default)
+    # auth: on    (default)
+```
+
+- **`/etc/snapraid.conf`** is rendered from `disks`, `parity` and `snapraid`: one `content`
+  line per data disk plus `/etc/snapraid.content` on the root filesystem, one parity line per
+  `parity` entry in list order (`parity`, `2-parity`, …), one `disk <name> <mount>/` per data
+  disk, the `excludes` and the `block_size`. Nothing restarts when it changes — snapraid is
+  run by a timer and reads the file every time.
+- **`snapraid.excludes` are paths relative to a _disk's_ root**, which for a branch of this
+  pool is the same as relative to `pool.mount`. That is why the Nextcloud entries are
+  `/apps/nextcloud/html/…`: the pool-class volume `html` of the `nextcloud` service.
+- **The disk `name` is snapraid's identity for that disk.** Renaming one makes snapraid treat
+  the whole disk as new, which is a full parity rewrite on the next sync.
+- **`/opt/storagebaby/maintenance/`** holds the orchestrator, `sync.sh`, `scrub.sh`,
+  `balance_disks.sh` and the unattended wrapper, all 0755 root, **copied byte for byte** from
+  the role's `files/maintenance/`. Logs go to `/var/log/storage-maintenance/` (the wrapper's
+  own, and the body of the mail) and `/var/log/snapraid/` (each snapraid command's).
+- **Parameters reach those scripts through one rendered file and only through it**:
+  `/opt/storagebaby/maintenance/maintenance.env`, which every script sources. No threshold,
+  percentage, pool path or address is rendered _into_ a script — so a change touches one
+  file, and running `bash /opt/storagebaby/maintenance/sync.sh` by hand behaves exactly like
+  the timer's run. A static test asserts that none of the shipped scripts contains a template
+  expression at all.
+- **`stop_services`** is the plugin set. It replaces the hand-written
+  `snapraid/storage-maintenance/plugins/` directory: the role creates
+  `plugins/<service>/` for each declared name and drops the same two scripts into it —
+  `on-before-balance.sh` (stop) and `on-after-scrub.sh` plus `on-failure.sh` (start). The
+  failure copy is the half that matters: a run that aborts after stopping a service must not
+  leave it down. Those scripts read the service name off **their own directory**, so they
+  carry no rendered value and are identical on every host, and they resolve
+  `<name>-pod.service` against `<name>.service` the way `make stop SERVICE=` does. A
+  directory for a service no longer in the list is **removed**: the orchestrator globs
+  `plugins/*/<hook>.sh` and would otherwise keep stopping it every night.
+- **The timer** is `storage-maintenance.timer`, `OnCalendar` from the block and
+  `Persistent=true`, enabled and started; the role restarts it when the unit changed, because
+  systemd keeps running the schedule it read at load time. `storage-maintenance.service` is a
+  oneshot that the role never starts — starting it _is_ the nightly run.
+- **`/etc/msmtprc`** is 0600 root and carries the relay from `mail` plus `smtp_password` out
+  of `hosts/<host>/secrets/mail.sops.yaml`, decrypted on the host under `no_log`. `tls`
+  defaults to on and `auth` to `on`; a test host points at a loopback sink and says
+  `tls: false, auth: plain`, because with `auth on` and no TLS msmtp considers only SCRAM and
+  would never authenticate. The wrapper composes with `mutt` and names msmtp explicitly as
+  its `sendmail` — the host runs no MTA, so mutt's default path does not exist.
+
+**Operator items on storagebaby:** `storage.mail.smtp_host` and `smtp_user` are `REPLACE_ME`,
+and `hosts/storagebaby/secrets/mail.sops.yaml` holds `smtp_password: REPLACE_ME`. The relay
+was never captured in this repository — the old wrapper used whatever MTA the host happened
+to have — so all three have to be filled in before the first converge. Until they are, the
+maintenance run succeeds and its mail step fails, nightly.
+
+### `mergerfs-tools`, and why its pin works differently
+
+`balance_disks.sh` calls `mergerfs.balance`, which ships in `mergerfs-tools` — in neither
+Arch's repositories nor Chaotic-AUR, so it is built by the same `aur_build.yml`. The AUR
+package is `mergerfs-tools-git`: a VCS recipe, whose `pkgver()` runs at build time and
+produces a version from whatever upstream commit it checked out. That version is never the
+one in `.SRCINFO`, so the "is the pinned version installed" guard could never match and the
+package would be rebuilt and reinstalled on every converge — nightly, from the deploy timer.
+
+So `aur_version: ''` says "this recipe versions itself", and the build is guarded on a stamp
+instead: `/var/lib/aurbuild/stamps/<package>`, written after a successful install, holding the
+AUR commit it was built from. Bumping `mergerfs_tools_aur_commit` is what rebuilds it.
+snapraid keeps the version guard, which is the stronger check — it also catches a pin bumped
+without its version.
