@@ -228,9 +228,11 @@ storage:
   `systemctl status` excerpt through the same msmtp. systemd triggers `OnFailure=` on a
   start job that failed on a dependency as well as on one that failed outright. The role
   renders and reloads it and then leaves it alone — nothing but the failing unit may start
-  it. A run that is _killed_ (a stop or a timeout mid-sync) fails the unit too, so there the
-  wrapper's own mail and the notifier both arrive; two mails about a bad night is the right
-  side to err on.
+  it. A run that is _killed_ — a systemd stop, or a timeout mid-sync — fails the unit too,
+  and there the wrapper is in the same cgroup and goes down with it, so it never reaches its
+  own `send_email` either: the notifier is the only mail that night in that case as well.
+  (The orchestrator's `on-failure` hooks still run: they are fired from its own
+  `trap … INT TERM`, which is what brings a stopped service back up.)
 - **`/etc/msmtprc`** is 0600 root and carries the relay from `mail` plus `smtp_password` out
   of `hosts/<host>/secrets/mail.sops.yaml`, decrypted on the host under `no_log`. `tls`
   defaults to on and `auth` to `on`; a test host points at a loopback sink and says

@@ -3,9 +3,9 @@
    array that did not come up into a start job that fails before ExecStart=, which is the
    one failure the run cannot report on its own.
 
-   It also fires when the run is killed -- a systemd stop or a timeout mid-sync -- in which
-   case the wrapper's own mail and this one both arrive. Two mails about a failed night is
-   the right side to err on. #}
+   It also fires when a started run is killed -- a systemd stop, or a timeout mid-sync. The
+   wrapper is in the same cgroup and goes down with it, so it never reaches its own
+   `send_email` either: this is the only mail that night there too. #}
 [Unit]
 Description=Report a storage maintenance run that could not start
 
