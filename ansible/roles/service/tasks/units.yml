@@ -82,8 +82,14 @@
   failed_when: false
 
 # Deliberately *without* `check_mode: false`: a pull writes to the image store, so
-# `--check` must not do one. `command` reports itself skipped under check mode, which
-# is exactly the behaviour wanted, and nothing below reads this result.
+# `--check` must not do one. The skip is spelled out in `when:` rather than left to the
+# module, because the two are not the same thing where an `until` is involved: a
+# conditional skip never enters the retry loop at all, while a module-level check-mode
+# skip produces a *result* that `until` then has to be able to read. This `command`
+# happens to return `rc: 0` with its "would have run" result, so it works either way on
+# ansible-core 2.21 -- but that is the module's business, not something a retry loop
+# should depend on, and it is the same class of bug as the `dest`-less `template`
+# result above.
 #
 # `timeout` the program, not the task's own `timeout:` keyword: ansible-core raises a
 # task timeout as a BaseException that bypasses the `until` loop, so a stalled pull
@@ -97,7 +103,7 @@
   loop: '{{ _image_present.results }}'
   loop_control:
     label: '{{ item.item }}'
-  when: item.rc != 0
+  when: item.rc != 0 and not ansible_check_mode
   register: _image_pull
   retries: 3
   delay: 30

@@ -309,7 +309,13 @@ fetched anything or not, so "it was not there, and now it is" is the honest read
 it is made against podman's own lookup rather than against progress lines podman is free
 to reword.
 
-**Retries:** three, thirty seconds apart, each attempt wrapped in `timeout -k 30 600`.
+**Under `--check` the probe runs and the pull does not.** The probe is read-only, and it
+is what makes a pre-flight before a version bump say which images a push would have to
+fetch. The pull is skipped by its own `when:` rather than by the module's check-mode
+handling, because a conditional skip never enters the retry loop, while a module-level
+skip produces a result the `until` then has to be able to read.
+
+**Retries:** three attempts, thirty seconds apart, each wrapped in `timeout -k 30 600`.
 The timeout is the program and not the task's `timeout:` keyword, because ansible-core
 raises a task timeout as a `BaseException` that bypasses the `until` loop — a stalled
 pull would then fail the converge instead of being retried, and a stall is the case this

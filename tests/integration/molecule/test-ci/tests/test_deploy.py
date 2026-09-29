@@ -143,6 +143,35 @@ def test_the_whole_playbook_runs_clean_in_check_mode(host):
         assert host.run(f"mv -f {backup} {path}").rc == 0
     assert "# harness: drift" not in host.file(path).content_string, f"{path} was not put back"
 
+    # And the third case, which is what an operator actually runs a pre-flight *for*: a
+    # version bump, where the checkout names an image the host does not have. The probe
+    # that decides whether to pull carries `check_mode: false` and so runs for real --
+    # that is what lets the report say which images a push would fetch -- but the pull
+    # behind it must not, and the run still has to reach the end. The bump is made in the
+    # pulled checkout rather than pushed to the remote, because nothing here is supposed
+    # to converge: `git checkout` takes it back without a deploy.
+    template = container_template_of(name)
+    relative = str(Path(template).relative_to("/repo"))
+    image = next(
+        ln.split("=", 1)[1].strip() for ln in host.file(path).content_string.splitlines() if ln.startswith("Image=")
+    )
+    missing = f"{image.split('@')[0].rsplit(':', 1)[0]}:does-not-exist"
+    assert run_as(host, f"svc-{name}", f"podman image exists {missing}").rc != 0, f"{missing} is in the store already"
+    assert host.run(f"cd {PULLED} && sed -i 's|^Image=.*|Image={missing}|' {relative}").rc == 0
+    try:
+        r = host.run(CHECK)
+        assert r.rc == 0, r.stdout[-6000:] + r.stderr[-4000:]
+        assert check_recap(r), r.stdout[-6000:]
+        # The claim that makes this more than a second copy of the case above: the
+        # pre-flight left the image store alone. A `--check` that pulled would be a
+        # `--check` that changed the host.
+        assert run_as(host, f"svc-{name}", f"podman image exists {missing}").rc != 0, (
+            f"--check fetched {missing}: the pull is not skipped in check mode"
+        )
+    finally:
+        assert host.run(f"cd {PULLED} && git checkout -- .").rc == 0
+    assert missing not in host.file(f"{PULLED}/{relative}").content_string, f"{relative} was not put back"
+
 
 def single_container_service(host):
     """(name, unit file stem, unit, container) of the first placed one-container service.
