@@ -33,7 +33,8 @@ function send_email() {
 
 	# msmtp is named explicitly: the host runs no MTA of its own, so mutt's default
 	# /usr/sbin/sendmail does not exist and a report would be lost with the run still
-	# green. The envelope sender has to be set too -- the relay rejects anything else.
+	# green. `set from` is named too, so the report carries the declared `From:` header;
+	# the envelope sender is msmtprc's own `from`, rendered from the same declaration.
 	echo -e "$message\n\nLog Content:\n$(cat "$LOG_FILE")" \
 		| mutt -e 'set sendmail="/usr/bin/msmtp"' -e "set from=\"${MAIL_FROM}\"" \
 			-s "$subject" -- "$EMAIL"

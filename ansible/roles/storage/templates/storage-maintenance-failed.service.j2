@@ -1,0 +1,14 @@
+{# The `OnFailure=` of storage-maintenance.service, and nothing else: one mail saying the
+   nightly run could not even start. It exists because `Requires={{ pool_unit }}` turns an
+   array that did not come up into a start job that fails before ExecStart=, which is the
+   one failure the run cannot report on its own.
+
+   It also fires when the run is killed -- a systemd stop or a timeout mid-sync -- in which
+   case the wrapper's own mail and this one both arrive. Two mails about a failed night is
+   the right side to err on. #}
+[Unit]
+Description=Report a storage maintenance run that could not start
+
+[Service]
+Type=oneshot
+ExecStart=/opt/storagebaby/maintenance/storage-maintenance-failed.sh storage-maintenance.service

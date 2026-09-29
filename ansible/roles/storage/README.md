@@ -218,12 +218,28 @@ storage:
   `Persistent=true`, enabled and started; the role restarts it when the unit changed, because
   systemd keeps running the schedule it read at load time. `storage-maintenance.service` is a
   oneshot that the role never starts — starting it _is_ the nightly run.
+- **`storage-maintenance-failed.service` is the mail a blocked run cannot send itself.**
+  The maintenance unit `Requires=` the pool, which is not negotiable: a `snapraid sync` over
+  a branch that is not mounted reads an empty directory and writes that into parity. The
+  price is that a pool which does not come up fails the unit's _start job_ — `ExecStart=`
+  never runs, so the wrapper never runs, so nothing arrives at 02:00 and the one failure
+  that matters most is the silent one. So the unit carries
+  `OnFailure=storage-maintenance-failed.service`: a oneshot that mails the unit name and a
+  `systemctl status` excerpt through the same msmtp. systemd triggers `OnFailure=` on a
+  start job that failed on a dependency as well as on one that failed outright. The role
+  renders and reloads it and then leaves it alone — nothing but the failing unit may start
+  it. A run that is _killed_ (a stop or a timeout mid-sync) fails the unit too, so there the
+  wrapper's own mail and the notifier both arrive; two mails about a bad night is the right
+  side to err on.
 - **`/etc/msmtprc`** is 0600 root and carries the relay from `mail` plus `smtp_password` out
   of `hosts/<host>/secrets/mail.sops.yaml`, decrypted on the host under `no_log`. `tls`
   defaults to on and `auth` to `on`; a test host points at a loopback sink and says
   `tls: false, auth: plain`, because with `auth on` and no TLS msmtp considers only SCRAM and
   would never authenticate. The wrapper composes with `mutt` and names msmtp explicitly as
   its `sendmail` — the host runs no MTA, so mutt's default path does not exist.
+- **msmtp logs to the journal** (`syslog LOG_MAIL`), not to a `logfile` of its own: that file
+  is created on the first send and then grows for the life of the host with nothing rotating
+  it. `journalctl -t msmtp` is where a refused relay or a rejected sender shows up.
 
 **Operator items on storagebaby:** `storage.mail.smtp_host` and `smtp_user` are `REPLACE_ME`,
 and `hosts/storagebaby/secrets/mail.sops.yaml` holds `smtp_password: REPLACE_ME`. The relay
@@ -245,3 +261,12 @@ instead: `/var/lib/aurbuild/stamps/<package>`, written after a successful instal
 AUR commit it was built from. Bumping `mergerfs_tools_aur_commit` is what rebuilds it.
 snapraid keeps the version guard, which is the stronger check — it also catches a pin bumped
 without its version.
+
+**So `mergerfs_tools_aur_commit` pins the recipe, not the source.** `pkgver()` checks out
+upstream `master` at build time, and the stamp records only the AUR commit — two rebuilds
+months apart can therefore install different `mergerfs.balance` code with the role reporting
+nothing. There is no versioned package to prefer instead: the AUR carries `mergerfs`,
+`mergerfs-bin`, `mergerfs-git` and `mergerfs-tools-git`, and no `mergerfs-tools`
+(checked through the AUR RPC, 2026-09-29). Upstream has cut no release of the tools either,
+which is why the recipe is a `-git` one at all. If that drift ever matters, the way out is
+the one `devtools/Dockerfile` takes for snapraid: build a pinned tarball instead of a recipe.

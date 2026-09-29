@@ -28,14 +28,13 @@
 # secret.
 - name: Render the configuration files
   ansible.builtin.template:
-    src: '{{ item.src }}'
-    dest: '{{ render_output }}/storage/{{ item.dest }}'
+    src: '{{ item }}.j2'
+    dest: '{{ render_output }}/storage/{{ item }}'
     mode: '0644'
   loop:
-    - { src: snapraid.conf.j2, dest: snapraid.conf }
-    - { src: msmtprc.j2, dest: msmtprc }
-    - { src: maintenance.env.j2, dest: maintenance.env }
-    - { src: storage-maintenance.service.j2, dest: storage-maintenance.service }
-    - { src: storage-maintenance.timer.j2, dest: storage-maintenance.timer }
-  loop_control:
-    label: '{{ item.dest }}'
+    - snapraid.conf
+    - msmtprc
+    - maintenance.env
+    - storage-maintenance.service
+    - storage-maintenance-failed.service
+    - storage-maintenance.timer

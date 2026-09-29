@@ -14,7 +14,11 @@ tls_trust_file /etc/ssl/certs/ca-certificates.crt
 {# Only for a host whose relay is on its own loopback -- a test VM's sink. #}
 tls off
 {% endif %}
-logfile /var/log/msmtp.log
+{# The journal, not a file of msmtp's own: a `logfile` is created on the first send and
+   then grows for the life of the host with nothing rotating it. The journal is already
+   rotated, already collected with everything else the maintenance run says, and
+   `journalctl -t msmtp` is where a refused relay is looked for anyway. #}
+syslog LOG_MAIL
 
 {# An account literally named `default` is the one msmtp uses when no account is asked
    for, which is how the wrapper's `mutt -e 'set sendmail=...msmtp'` reaches it. #}

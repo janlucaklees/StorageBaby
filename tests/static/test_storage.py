@@ -264,8 +264,12 @@ def test_msmtprc_renders_without_a_password(rendered, host):
         f"user {mail['smtp_user']}",
         f"auth {mail.get('auth', 'on')}",
         "tls on" if mail.get("tls", True) else "tls off",
+        # The journal, not a file msmtp creates on its first send and then grows forever
+        # with nothing rotating it.
+        "syslog LOG_MAIL",
     ]:
         assert expected in text, f"{host}: {expected!r} not in\n{text}"
+    assert "logfile" not in text, f"{host}: msmtp writes an unrotated log of its own\n{text}"
     # The render path has no age key and decrypts nothing; the placeholder is what says so.
     # A real value here would mean the static run had read a secret.
     assert "password REPLACE_ME" in text, text
@@ -322,11 +326,20 @@ def test_maintenance_units_verify(rendered, host):
     service = (unit_dir / "storage-maintenance.service").read_text()
     assert f"ExecStart={installed}/storage-maintenance-unattended.sh" in service, service
 
+    # The pool the run requires is also what can keep it from starting at all, in which case
+    # ExecStart= -- and the wrapper's own mail with it -- never runs. The notifier is the
+    # only thing that reports that night, so the unit has to name it and the notifier has to
+    # point at a script the role ships, under the name it will carry on a host.
+    assert "OnFailure=storage-maintenance-failed.service" in service, service
+    notifier = (unit_dir / "storage-maintenance-failed.service").read_text()
+    assert f"ExecStart={installed}/storage-maintenance-failed.sh" in notifier, notifier
+
     # The mount units come along: the service `Requires=` the pool, and verify reports a
     # requirement it cannot find as an error.
     units = [
         str(unit_dir / "storage-maintenance.timer"),
         str(unit_dir / "storage-maintenance.service"),
+        str(unit_dir / "storage-maintenance-failed.service"),
         str(unit_dir / mount_unit(storage["pool"]["mount"])),
         *(str(unit_dir / mount_unit(e["mount"])) for e in entries(storage)),
     ]

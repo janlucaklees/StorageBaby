@@ -153,6 +153,7 @@ def test_the_maintenance_scripts_are_installed_with_their_parameters(host):
     for script in [
         "storage-maintenance.sh",
         "storage-maintenance-unattended.sh",
+        "storage-maintenance-failed.sh",
         "sync.sh",
         "scrub.sh",
         "balance_disks.sh",
@@ -259,3 +260,38 @@ def test_the_maintenance_mail_reaches_the_sink(host):
     assert f"To: {s['mail']['to']}" in body, body[:2000]
     assert "SnapRAID Sync Report" in body, body[:2000]
     assert "=== Job Finished with Status: SUCCESS ===" in body, body[:4000]
+
+
+def test_a_run_that_cannot_start_still_mails(host):
+    """The `OnFailure=` notifier, which is the only report a blocked run can produce.
+
+    `storage-maintenance.service` `Requires=` the pool, and that has to stay -- a sync over
+    an unmounted branch writes an empty disk into parity. The price is that a pool which
+    does not come up fails the *start job*: ExecStart= never runs, so the wrapper never
+    runs, so the nightly mail never arrives and the one failure that matters most is the
+    silent one. `OnFailure=` is what breaks that silence.
+
+    Provoking it for real would mean taking a branch away from a host that has every
+    service's data on the union -- too destructive for a verifier that has to leave the VM
+    usable afterwards, and the missing-device refusal in `test_deploy.py` already covers
+    what an absent disk does to a converge. So the two halves are checked separately: that
+    the maintenance unit names the notifier, and that the notifier really puts a mail in
+    the sink naming the unit it is reporting about.
+    """
+    s = storage(host)
+    unit = host.file("/etc/systemd/system/storage-maintenance.service").content_string
+    assert "OnFailure=storage-maintenance-failed.service" in unit, unit
+
+    before = set(host.run("ls -1 /var/spool/test-mail").stdout.split())
+    r = host.run("systemctl start storage-maintenance-failed.service")
+    journal = host.run("journalctl -u storage-maintenance-failed.service --no-pager | tail -50").stdout
+    assert r.rc == 0, journal
+    new = sorted(set(host.run("ls -1 /var/spool/test-mail").stdout.split()) - before)
+    assert new, f"the notifier sent nothing\n{journal}"
+
+    body = host.file(f"/var/spool/test-mail/{new[-1]}").content_string
+    assert f"To: {s['mail']['to']}" in body, body[:2000]
+    assert "Storage maintenance could not start" in body, body[:2000]
+    # The report is about a named unit and carries its state, not just a subject line.
+    assert "storage-maintenance.service could not start." in body, body[:4000]
+    assert "systemctl status storage-maintenance.service" in body, body[:4000]

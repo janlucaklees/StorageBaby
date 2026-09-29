@@ -10,6 +10,12 @@ Description=Storage Maintenance
    mounted would look at empty directories and sync that. #}
 Requires={{ pool_unit }}
 After={{ pool_unit }}
+{# And because that dependency is not negotiable, the case it creates has to be loud: a
+   pool that cannot come up fails this unit's *start job*, so ExecStart= -- and with it the
+   wrapper's own mail -- never runs. systemd triggers OnFailure= on a start job that fails
+   on a dependency as well as on one that fails outright, so the notifier below is what
+   turns a missing nightly report into a mail that says why. #}
+OnFailure=storage-maintenance-failed.service
 
 [Service]
 Type=oneshot
