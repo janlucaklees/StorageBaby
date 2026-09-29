@@ -75,6 +75,15 @@ CHECK = (
 )
 
 
+def check_recap(result) -> list[str]:
+    """The run's recap lines, once each has been asserted to carry no failure."""
+    recap = [ln for ln in result.stdout.splitlines() if "failed=" in ln]
+    for line in recap:
+        assert "failed=0" in line, line
+        assert "unreachable=0" in line, line
+    return recap
+
+
 @pytest.mark.order(-1)
 def test_deploy_service_is_a_noop_when_nothing_changed(host):
     # The checkout renders byte for byte what the converge already put on the host, so
@@ -106,11 +115,33 @@ def test_the_whole_playbook_runs_clean_in_check_mode(host):
     assert host.file(f"{PULLED}/ansible/playbook.yml").exists, f"{PULLED} has not been pulled yet"
     r = host.run(CHECK)
     assert r.rc == 0, r.stdout[-6000:] + r.stderr[-4000:]
-    recap = [ln for ln in r.stdout.splitlines() if "failed=" in ln]
-    assert recap, r.stdout[-6000:]
-    for line in recap:
-        assert "failed=0" in line, line
-        assert "unreachable=0" in line, line
+    assert check_recap(r), r.stdout[-6000:]
+
+    # And on a host that has drifted, which is the case the pre-flight is actually run
+    # for -- nobody asks "what would this change" about a host they know matches. It is
+    # its own half because the two go down different code paths: in check mode
+    # `template` returns a result *without* `dest` for a file it *would* change, so a
+    # task that reads `item.dest` passes over an unchanged host and dies on a changed
+    # one. The drift is made on the VM and taken back immediately: a converge would
+    # repair it too, but the point here is that `--check` changed nothing.
+    found = single_container_service(host)
+    if not found:
+        pytest.skip("no single-container service is placed on this host")
+    name, stem, _, _ = found
+    path = f"/etc/containers/systemd/users/{host.user(f'svc-{name}').uid}/{stem}.container"
+    backup = f"{path}.harness-backup"
+    assert host.run(f"cp -a {path} {backup}").rc == 0
+    try:
+        assert host.run(f"printf '# harness: drift the rendered unit\\n' >> {path}").rc == 0
+        r = host.run(CHECK)
+        assert r.rc == 0, r.stdout[-6000:] + r.stderr[-4000:]
+        recap = check_recap(r)
+        assert recap, r.stdout[-6000:]
+        assert all("changed=0" not in line for line in recap), f"--check reported no change on a drifted host: {recap}"
+        assert path in r.stdout, f"the diff does not name {path}\n{r.stdout[-6000:]}"
+    finally:
+        assert host.run(f"mv -f {backup} {path}").rc == 0
+    assert "# harness: drift" not in host.file(path).content_string, f"{path} was not put back"
 
 
 def single_container_service(host):

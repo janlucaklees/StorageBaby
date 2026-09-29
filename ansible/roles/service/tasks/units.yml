@@ -231,14 +231,24 @@
     mapped_units: "{{ mapped_units + [{'unit': unit_name, 'kind': _ext,
       'changed': item.changed or (_base in changed_dropin_units)}] }}"
   vars:
-    _base: '{{ item.dest | basename }}'
+    # Not `item.dest`. Under `--check`, `template` returns a result *without* a `dest`
+    # for a file it would change, and reading it there takes the whole `--check --diff`
+    # pre-flight down with "object of type 'dict' has no attribute 'dest'" -- which is
+    # precisely the case the pre-flight exists for, a host that has drifted from the
+    # checkout. The destination does not have to be asked of the result: it is the
+    # source template's name minus `.j2`, which is how the render task above spells it,
+    # and the sidecar's is the role's own fixed name. `backup_render` is not a loop, so
+    # it carries no `item` -- that is what tells the two apart.
+    _base:
+      "{{ (item.item | basename | regex_replace('\\.j2$', '')) if item.item is defined
+      else (service.name ~ '-backup.container') }}"
     _stem: '{{ (_base | splitext)[0] }}'
     _ext: '{{ (_base | splitext)[1] }}'
     unit_name: "{{ _stem ~ {'.container': '.service', '.pod': '-pod.service', '.build': '-build.service'}[_ext] }}"
   loop: '{{ quadlet_render.results + ([backup_render] if backup_enabled | bool else []) }}'
   loop_control:
-    label: '{{ item.dest | basename }}'
-  when: (item.dest | basename | splitext)[1] in ['.container', '.pod', '.build']
+    label: '{{ _base }}'
+  when: _ext in ['.container', '.pod', '.build']
 
 # A .build has to run before the pod and the containers that use its image, and a
 # rebuilt image only reaches a container when that container is restarted too --
