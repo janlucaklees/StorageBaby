@@ -402,8 +402,10 @@ def test_a_pool_option_change_remounts_the_pool_exactly_once(host):
     Not re-runnable inside one VM: the `sed` below matches `threads=2`, which the first run
     has already turned into `threads=3`, so a second run commits nothing, `git commit` exits
     non-zero and the case fails on its own `rc == 0`. That is fine for `molecule test`, which
-    re-extracts `/srv/src` from the archive in `prepare.yml` every time -- but a bare
-    `molecule verify` twice over the same VM fails here rather than in the role.
+    re-extracts `/srv/src` from the archive in `prepare.yml` every time -- but a second
+    `verify` over a surviving VM fails here rather than in the role, and a `converge` in
+    between does not help: molecule reports `Skipping, instances already prepared` and never
+    runs the re-seed at all.
     (`test_deploy_restarts_only_the_changed_service` has the same shape, for the same reason.)
     """
     s = storage(host)
