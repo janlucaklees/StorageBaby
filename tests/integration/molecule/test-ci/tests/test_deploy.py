@@ -289,8 +289,10 @@ def test_an_unpullable_image_fails_the_deploy_without_stopping_anything(host):
     running = run_as(host, user, f"podman ps --quiet --filter name={container}")
     assert running.stdout.strip(), f"{container} is not in `podman ps` any more: {running.stderr}"
 
+    # `git revert` has no `-q`, unlike the `commit`s and `push`es elsewhere in this file:
+    # it exits 129 on one, which is a usage error and not a failed revert.
     r = host.run(
-        f"cd {SEEDED} && git -c user.name=t -c user.email=t@t revert --no-edit -q HEAD && git push -q origin stable"
+        f"cd {SEEDED} && git -c user.name=t -c user.email=t@t revert --no-edit HEAD && git push -q origin stable"
     )
     assert r.rc == 0, r.stderr
     r = host.run(DEPLOY)
