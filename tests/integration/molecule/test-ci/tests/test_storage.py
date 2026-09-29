@@ -166,6 +166,7 @@ def test_the_maintenance_scripts_are_installed_with_their_parameters(host):
     assert f"SCRUB_PERCENT={m['scrub_percent']}" in env, env
     assert f"SCRUB_OLDER_DAYS={m['scrub_older_days']}" in env, env
     assert f"MAINTENANCE_MAIL_TO={s['mail']['to']}" in env, env
+    assert f"MAINTENANCE_MAIL_FROM={s['mail']['from']}" in env, env
 
     # Exactly the declared set, no more: a directory left behind from a service this host no
     # longer stops would be run every night by a script nothing points at.
@@ -198,7 +199,19 @@ def test_maintenance_timer_is_enabled(host):
     assert f"OnCalendar={m['on_calendar']}" in unit, unit
     assert "Persistent=true" in unit, unit
     # And the service is *not* started by the converge: starting it is the nightly run.
-    assert host.run("systemctl is-active storage-maintenance.service").stdout.strip() != "active"
+    #
+    # `is-active` cannot say that: it reads `inactive` for a service that never ran and for
+    # one that ran and finished, and a full run on this array takes about six seconds while
+    # the verifier runs minutes after the converge. `ExecMainStartTimestamp` is empty until
+    # the service is started the first time and keeps its value afterwards, so it is the
+    # one thing that still answers the question after the case below has run a real run --
+    # which matters, because the timer is created `Persistent=true` and started in the same
+    # task run, and whether systemd back-fills a missed elapse on a first `start` is exactly
+    # what this is here to settle. The price is that this case is not re-runnable inside one
+    # VM either: the run the next case starts sets the timestamp for good, so a second
+    # `molecule verify` over the same machine fails here.
+    started = host.check_output("systemctl show storage-maintenance.service -p ExecMainStartTimestamp --value")
+    assert started == "", f"the converge started a maintenance run at {started}"
 
 
 def test_a_maintenance_run_is_clean(host):

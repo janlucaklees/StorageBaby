@@ -374,7 +374,10 @@ def test_deploy_refuses_to_converge_with_a_declared_device_missing(host):
     r = host.run(DEPLOY)
     journal = host.run("journalctl -u storagebaby-deploy.service --no-pager | tail -200").stdout
     assert r.rc != 0, f"the converge did not fail with {disk['name']} gone\n{journal}"
-    assert disk["name"] in journal or device in journal, journal
+    # The device path, not the disk's name: the declared names are `d1`, `d2`, `d3`, and
+    # `"d3" in journal` over two hundred lines of Ansible output is true whatever the role
+    # said. The path cannot collide, and it is what the role's failure message prints.
+    assert device in journal, journal
     assert active_since(host, "svc-traefik", "traefik.service") == traefik_before, "a service was restarted anyway"
 
     assert host.run("udevadm trigger --subsystem-match=block --action=change && udevadm settle").rc == 0
@@ -395,6 +398,13 @@ def test_a_pool_option_change_remounts_the_pool_exactly_once(host):
 
     Runs last of everything for exactly that reason: the services on this host come back
     reading a stale union until they are restarted, and nothing after this would be reliable.
+
+    Not re-runnable inside one VM: the `sed` below matches `threads=2`, which the first run
+    has already turned into `threads=3`, so a second run commits nothing, `git commit` exits
+    non-zero and the case fails on its own `rc == 0`. That is fine for `molecule test`, which
+    re-extracts `/srv/src` from the archive in `prepare.yml` every time -- but a bare
+    `molecule verify` twice over the same VM fails here rather than in the role.
+    (`test_deploy_restarts_only_the_changed_service` has the same shape, for the same reason.)
     """
     s = storage(host)
     unit = pool_unit(s)
