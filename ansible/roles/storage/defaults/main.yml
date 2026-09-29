@@ -19,3 +19,13 @@ aur_build_user: aurbuild
 aur_build_home: /var/lib/aurbuild
 snapraid_aur_commit: 94c51545d0ce36dee0402dc19c1b3cc4336b3ae9
 snapraid_version: 14.9-1
+
+# `mergerfs.balance`, which the maintenance run's balance step calls, ships in
+# mergerfs-tools -- in neither Arch's repositories nor Chaotic-AUR either, so it is built
+# from the AUR by the same task file. The AUR package is a `-git` one: its `pkgver()` runs
+# at build time and produces a version from whatever upstream commit it checked out, so the
+# version cannot be declared in advance. `aur_version: ''` says so, and the build is then
+# guarded on a stamp recording the AUR commit it was built from instead -- otherwise the
+# version guard would never match and the package would be rebuilt every night.
+mergerfs_tools_aur_commit: 098c987faa2690271c09b879dc49c8995e1558f7
+mergerfs_tools_version: ''

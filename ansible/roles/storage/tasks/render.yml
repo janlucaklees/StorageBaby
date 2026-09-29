@@ -21,3 +21,16 @@
     src: pool.mount.j2
     dest: '{{ render_output }}/storage/{{ pool_unit }}'
     mode: '0644'
+
+- name: Render the configuration files
+  ansible.builtin.template:
+    src: '{{ item.src }}'
+    dest: '{{ render_output }}/storage/{{ item.dest }}'
+    mode: '0644'
+  loop:
+    - { src: snapraid.conf.j2, dest: snapraid.conf }
+    - { src: maintenance.env.j2, dest: maintenance.env }
+    - { src: storage-maintenance.service.j2, dest: storage-maintenance.service }
+    - { src: storage-maintenance.timer.j2, dest: storage-maintenance.timer }
+  loop_control:
+    label: '{{ item.dest }}'

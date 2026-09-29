@@ -95,3 +95,23 @@
     aur_package: snapraid
     aur_commit: '{{ snapraid_aur_commit }}'
     aur_version: '{{ snapraid_version }}'
+
+# Official repositories, so no guard and no `not ansible_check_mode`: a `--check` run
+# resolves these against a database it already has and reports what it would install.
+# smartmontools is what `snapraid smart` reads the drives through, msmtp is the relay
+# client the maintenance mail goes out by, and mutt is what composes it -- the wrapper
+# still pipes its report into mutt, as it always did.
+- name: Packages the maintenance run needs
+  community.general.pacman:
+    name: [smartmontools, msmtp, mutt]
+    state: present
+
+# `mergerfs.balance`, which the balance step calls. Not in Chaotic-AUR either, so it is
+# built by the same task file -- and it is a `-git` recipe, so the pin is the AUR commit
+# and `aur_version` is empty; see `aur_build.yml` for why that changes the guard.
+- name: Build mergerfs-tools from the AUR (mergerfs.balance)
+  ansible.builtin.include_tasks: aur_build.yml
+  vars:
+    aur_package: mergerfs-tools-git
+    aur_commit: '{{ mergerfs_tools_aur_commit }}'
+    aur_version: '{{ mergerfs_tools_version }}'

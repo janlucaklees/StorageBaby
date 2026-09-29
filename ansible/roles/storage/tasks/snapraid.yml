@@ -1,0 +1,10 @@
+# Nothing restarts on a change: snapraid is run by a timer and reads the file every time.
+# And nothing here writes parity -- the role renders the declaration, the nightly
+# maintenance run is what syncs and scrubs.
+- name: Snapraid configuration
+  ansible.builtin.template:
+    src: snapraid.conf.j2
+    dest: /etc/snapraid.conf
+    owner: root
+    group: root
+    mode: '0644'

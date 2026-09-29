@@ -19,3 +19,14 @@
 - name: Mounts and the pool
   ansible.builtin.include_tasks: mounts.yml
   when: not (render_only | bool)
+
+# After mounts, and in this order: snapraid.conf names the branch and parity paths the
+# mounts just asserted, the maintenance run reads that file, and the mail is what the run
+# reports through.
+- name: The snapraid array
+  ansible.builtin.include_tasks: snapraid.yml
+  when: not (render_only | bool)
+
+- name: Maintenance scripts and timer
+  ansible.builtin.include_tasks: maintenance.yml
+  when: not (render_only | bool)

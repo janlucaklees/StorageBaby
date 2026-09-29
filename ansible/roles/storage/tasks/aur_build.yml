@@ -1,5 +1,11 @@
 # Build and install one AUR package on the host. Takes `aur_package`, `aur_commit` (the
-# pin) and `aur_version` (the `pkgver-pkgrel` that commit produces).
+# pin) and `aur_version` (the `pkgver-pkgrel` that commit produces, or `''`).
+#
+# `aur_version: ''` is for a `-git` recipe, whose `pkgver()` runs at build time and produces
+# a version from the upstream commit it checked out -- not knowable in advance, and never
+# equal to the `.SRCINFO` one. Such a package is guarded on a stamp recording the AUR commit
+# it was built from; every other one is guarded on the declared version, which is the
+# stronger check because it also catches a pin bumped without its version.
 #
 # For a package that is in neither Arch's official repositories nor Chaotic-AUR. The
 # whole file is one block under one condition -- the pinned version is not the installed
@@ -25,10 +31,19 @@
   failed_when: false
   check_mode: false
 
-- name: Build from the AUR unless the pinned version is installed -- {{ aur_package }}
+- name: Look for the build stamp of {{ aur_package }}
+  ansible.builtin.slurp:
+    src: '{{ aur_build_home }}/stamps/{{ aur_package }}'
+  register: _aur_stamp
+  failed_when: false
+  check_mode: false
+
+- name: Build from the AUR unless the pin is already installed -- {{ aur_package }}
   when:
     - not ansible_check_mode
-    - _aur_installed.stdout | trim != aur_package ~ ' ' ~ aur_version
+    - _aur_installed.rc != 0
+      or (aur_version | length > 0 and _aur_installed.stdout | trim != aur_package ~ ' ' ~ aur_version)
+      or (aur_version | length == 0 and (_aur_stamp.content | default('') | b64decode | trim) != aur_commit)
   block:
     - name: Resolve the clone directory of {{ aur_package }}
       ansible.builtin.set_fact:
@@ -39,13 +54,16 @@
         name: [base-devel, git]
         state: present
 
-    - name: The build users' root
+    - name: The build users' root, and where the build stamps go
       ansible.builtin.file:
-        path: '{{ aur_build_home }}'
+        path: '{{ item }}'
         state: directory
         owner: root
         group: root
         mode: '0755'
+      loop:
+        - '{{ aur_build_home }}'
+        - '{{ aur_build_home }}/stamps'
 
     - name: A build user that owns the clones and can log in nowhere
       ansible.builtin.user:
@@ -123,6 +141,7 @@
           {{ _aur_built_version }}, but declares {{ aur_version }}. Bump the commit and
           the version together.
         quiet: true
+      when: aur_version | length > 0
 
     - name: Install, as root, the build dependencies of {{ aur_package }}
       community.general.pacman:
@@ -145,17 +164,36 @@
         rm -f ./*.pkg.tar.*
         runuser -u "$BUILD_USER" -- makepkg --noconfirm --nocheck --clean
         mapfile -t built < <(runuser -u "$BUILD_USER" -- makepkg --packagelist)
+        present=()
+        for pkg in "${built[@]}"; do
+          if [ -f "$pkg" ]; then present+=("$pkg"); fi
+        done
+        # `--packagelist` names every package the recipe *could* produce, the split
+        # `-debug` one included -- and makepkg writes that one only when there were
+        # symbols to split out, which an `arch=any` package of shell and python scripts
+        # has none of. So what is really there is installed and a missing one is not an
+        # error; none at all is.
+        #
         # The first element rather than an array length: ansible-lint parses a shell body
         # with the same argument splitter Ansible uses, which reads a dollar-brace-hash as
         # the start of a comment and then calls the line an unbalanced quote.
-        [ -n "${built[0]:-}" ] || { echo 'makepkg --packagelist named no package' >&2; exit 1; }
-        for pkg in "${built[@]}"; do
-          [ -f "$pkg" ] || { echo "makepkg did not produce $pkg" >&2; exit 1; }
-        done
-        pacman -U --noconfirm "${built[@]}"
+        [ -n "${present[0]:-}" ] || { echo 'makepkg produced no package at all' >&2; exit 1; }
+        pacman -U --noconfirm "${present[@]}"
       args:
         executable: /bin/bash
       environment:
         BUILD_USER: '{{ aur_build_user }}'
         DIR: '{{ _aur_dir }}'
       changed_when: true
+
+    # Written last, after the install succeeded, so a build that failed half way through is
+    # retried on the next converge instead of being recorded as done. It is what the guard
+    # at the top reads for a `-git` package, whose installed version says nothing about
+    # which recipe produced it.
+    - name: Record the AUR commit this package was built from -- {{ aur_package }}
+      ansible.builtin.copy:
+        content: '{{ aur_commit }}'
+        dest: '{{ aur_build_home }}/stamps/{{ aur_package }}'
+        owner: root
+        group: root
+        mode: '0644'

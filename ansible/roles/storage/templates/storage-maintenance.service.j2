@@ -1,0 +1,16 @@
+{# The nightly maintenance run: balance, sync, scrub, status, SMART, and the mail. Type
+   oneshot, so `systemctl start storage-maintenance.service` blocks until it is done --
+   which is what makes it runnable by hand and by a verifier.
+
+   No timeout: a sync of a full array is measured in hours, and a maintenance run killed
+   half way through is exactly what the orchestrator's on-failure hook exists for. #}
+[Unit]
+Description=Storage Maintenance
+{# The array is on the pool's branches and the parity disk, so a run before they are
+   mounted would look at empty directories and sync that. #}
+Requires={{ pool_unit }}
+After={{ pool_unit }}
+
+[Service]
+Type=oneshot
+ExecStart=/opt/storagebaby/maintenance/storage-maintenance-unattended.sh

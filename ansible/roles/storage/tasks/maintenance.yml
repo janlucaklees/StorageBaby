@@ -1,0 +1,122 @@
+# `plugins` is created unconditionally, not per stop_services entry: the orchestrator globs
+# `plugins/*/<hook>.sh` and the cleanup below enumerates the directory, and both need it to
+# exist on a host that stops nothing.
+- name: Maintenance and log directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /opt/storagebaby/maintenance
+    - /opt/storagebaby/maintenance/plugins
+    - /var/log/storage-maintenance
+    - /var/log/snapraid
+
+# Copied, not templated. The scripts carry no rendered value at all: every parameter
+# reaches them through `maintenance.env` below, which they source. That is what keeps
+# `bash /opt/storagebaby/maintenance/sync.sh` by hand identical to the timer's run, and it
+# is why a threshold change touches one file instead of three.
+- name: The maintenance scripts
+  ansible.builtin.copy:
+    src: maintenance/{{ item }}
+    dest: /opt/storagebaby/maintenance/{{ item }}
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - storage-maintenance.sh
+    - storage-maintenance-unattended.sh
+    - sync.sh
+    - scrub.sh
+    - balance_disks.sh
+
+- name: The maintenance parameters, rendered from host.yml
+  ansible.builtin.template:
+    src: maintenance.env.j2
+    dest: /opt/storagebaby/maintenance/maintenance.env
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: A plugin directory per service the run stops
+  ansible.builtin.file:
+    path: /opt/storagebaby/maintenance/plugins/{{ item }}
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: '{{ storage.snapraid.maintenance.stop_services }}'
+
+# The hook scripts read the service name off their own directory, so the same two files
+# serve every service on every host: `stop_services` decides which directories exist and
+# nothing else. `on-failure` gets the start script too -- that is what keeps a service
+# stopped for a run that then aborted from staying down until morning.
+- name: The stop and start hooks of every service the run stops
+  ansible.builtin.copy:
+    src: maintenance/hooks/{{ hook.1.src }}
+    dest: /opt/storagebaby/maintenance/plugins/{{ hook.0 }}/{{ hook.1.name }}
+    owner: root
+    group: root
+    mode: '0755'
+  loop: >-
+    {{ storage.snapraid.maintenance.stop_services | product([
+         {'src': 'stop-service.sh', 'name': 'on-before-balance.sh'},
+         {'src': 'start-service.sh', 'name': 'on-after-scrub.sh'},
+         {'src': 'start-service.sh', 'name': 'on-failure.sh'}]) | list }}
+  loop_control:
+    loop_var: hook
+    label: '{{ hook.0 }}/{{ hook.1.name }}'
+
+# A plugin directory left behind is not the inert thing a stale unit is: the orchestrator
+# globs `plugins/*/<hook>.sh` and runs whatever it finds, so a service taken out of
+# `stop_services` would still be stopped every night by a script nothing points at.
+- name: Find every plugin directory on disk
+  ansible.builtin.find:
+    paths: /opt/storagebaby/maintenance/plugins
+    file_type: directory
+  register: _plugins_present
+
+- name: Remove the plugins of services this host no longer stops
+  ansible.builtin.file:
+    path: '{{ item.path }}'
+    state: absent
+  loop: '{{ _plugins_present.files }}'
+  loop_control:
+    label: '{{ item.path | basename }}'
+  when: (item.path | basename) not in storage.snapraid.maintenance.stop_services
+
+- name: Maintenance unit and timer
+  ansible.builtin.template:
+    src: '{{ item }}.j2'
+    dest: /etc/systemd/system/{{ item }}
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - storage-maintenance.service
+    - storage-maintenance.timer
+  register: _maintenance_units
+
+- name: Reload systemd for the maintenance units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _maintenance_units.changed
+
+# `state: started` on the timer, never the service: starting the service *is* the nightly
+# run, and a converge that synced parity would turn every deploy into a maintenance job.
+- name: Maintenance timer enabled
+  ansible.builtin.systemd:
+    name: storage-maintenance.timer
+    enabled: true
+    state: started
+
+# systemd keeps running the schedule it read at load time, so a changed OnCalendar only
+# takes effect after the timer itself is restarted -- otherwise a schedule change in git
+# would quietly wait for the next boot.
+- name: Restart the timer when its unit changed
+  ansible.builtin.systemd:
+    name: storage-maintenance.timer
+    state: restarted
+  when: _maintenance_units.changed

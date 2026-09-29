@@ -1,0 +1,33 @@
+{# /etc/snapraid.conf, rendered from `storage.disks`, `storage.parity` and
+   `storage.snapraid` in hosts/<host>/host.yml. The role never runs `snapraid fix` and
+   never writes parity: the nightly maintenance run does, from this file.
+
+   `disk <name> <mount>/` -- the *name* is the disk's identity to snapraid. Renaming one
+   makes snapraid treat the whole disk as new, which is a full parity rewrite on the next
+   sync, so the names here are the ones the live array already knows.
+
+   Content files: one on every data disk plus `/etc/snapraid.content` on the root
+   filesystem, which is what lets snapraid still read the file list when a data disk is
+   the one that died. Parity: one line per `storage.parity` entry in list order, which is
+   how snapraid spells parity levels (`parity`, `2-parity`, `3-parity`, ...). #}
+content /etc/snapraid.content
+{% for disk in storage.disks %}
+content {{ disk.mount }}/snapraid.content
+{% endfor %}
+
+{% for parity in storage.parity | default([]) %}
+{{ 'parity' if loop.first else loop.index ~ '-parity' }} {{ parity.mount }}/snapraid.parity
+{% endfor %}
+
+{% for disk in storage.disks %}
+disk {{ disk.name }} {{ disk.mount }}/
+{% endfor %}
+
+{# Paths are relative to a disk's root, so they are the same on every branch: an exclude
+   written against the pool's layout (`/apps/nextcloud/html/...`) matches on whichever
+   branch mergerfs put that directory on. #}
+{% for exclude in storage.snapraid.excludes %}
+exclude {{ exclude }}
+{% endfor %}
+
+block_size {{ storage.snapraid.block_size }}

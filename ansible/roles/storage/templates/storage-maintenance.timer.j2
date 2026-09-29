@@ -1,0 +1,16 @@
+{# `OnCalendar` comes from `storage.snapraid.maintenance.on_calendar`; a static test hands
+   the declared value to `systemd-analyze calendar`, so an unparseable schedule fails in
+   CI rather than silently never firing on a host.
+
+   `Persistent=true`: a host that was off at 02:00 runs the maintenance when it comes back
+   instead of skipping a night of parity. #}
+[Unit]
+Description=Daily Storage Maintenance
+
+[Timer]
+Unit=storage-maintenance.service
+OnCalendar={{ storage.snapraid.maintenance.on_calendar }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
