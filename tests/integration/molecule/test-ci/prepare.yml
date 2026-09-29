@@ -60,6 +60,45 @@
       ansible.builtin.set_fact:
         storagebaby_age_pub: '{{ (_age_pub.content | b64decode).strip() }}'
 
+    # Stands in for the SMTP relay storagebaby sends its maintenance report through. It
+    # writes one file per message, which is what makes "the report arrived and this is what
+    # it says" checkable -- a wrong port, a refused auth or a mutt with no sendmail would all
+    # otherwise leave the maintenance run itself green and lose the mail.
+    #
+    # Installed after the reboot above, so it is not killed moments after it starts; enabled
+    # all the same, so it also survives one.
+    - name: Install the throwaway SMTP sink
+      ansible.builtin.copy:
+        src: files/test-smtp-sink.py
+        dest: /usr/local/sbin/test-smtp-sink
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: The sink's unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/test-smtp-sink.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Throwaway SMTP sink for the integration tests
+
+          [Service]
+          ExecStart=/usr/local/sbin/test-smtp-sink
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: The sink runs
+      ansible.builtin.systemd:
+        name: test-smtp-sink.service
+        daemon_reload: true
+        enabled: true
+        state: started
+
 # Runs after bootstrap, so pacman's databases are already synced and upgraded -- a
 # `-Sy parted` before it would be a partial upgrade -- and before the converge, which is
 # the first thing that needs the partitions to exist.
@@ -327,6 +366,32 @@
       delegate_to: localhost
       register: _set_secret
       changed_when: _set_secret.stdout != 'keeping'
+
+    # The maintenance mail's relay password. It belongs to no service's `secrets` and to no
+    # `host_secrets` set, so neither generator above covers it -- and the storage role
+    # refuses to converge without it. Same keep-if-ours rule as the others: a file already
+    # encrypted to *this* VM's age key is kept, one left over from a previous VM is rewritten.
+    - name: Write and encrypt the mail secret
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -f "$OUT" ] && grep -q '{{ storagebaby_age_pub }}' "$OUT"; then
+          echo keeping
+          exit 0
+        fi
+        printf 'smtp_password: "%s"\n' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" > "$TMP"
+        sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "$OUT"
+        rm -f "$TMP"
+      args:
+        executable: /bin/bash
+        # Same reason as above: from /tmp sops finds no .sops.yaml whose creation rules would
+        # override the --age recipient with the operator's production key.
+        chdir: /tmp
+      environment:
+        TMP: '/tmp/{{ inventory_hostname }}-mail.yaml'
+        OUT: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/mail.sops.yaml'
+      delegate_to: localhost
+      register: _mail_secret
+      changed_when: _mail_secret.stdout != 'keeping'
 
 # Stands in for GitHub: the deploy unit that bootstrap installed already points at
 # /srv/storagebaby.git, so seeding a bare repo there is all it takes to make

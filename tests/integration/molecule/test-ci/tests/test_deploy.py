@@ -5,12 +5,13 @@ prepare, so `systemctl start` blocks until the whole convergence is done -- a mi
 or two on the first run, which clones the repo first. `timeout` keeps a wedged pull
 from hanging the verifier.
 
-All four run last (`order(-1)`, which keeps their relative order): every one but the
-first pushes to the seeded remote and restarts a service, which every other test would
-otherwise have to account for.
+Every case here runs last (`order(-1)`, which keeps their relative order): all but the
+first two push to the seeded remote and restart a service or remount the pool, which every
+other test would otherwise have to account for.
 """
 
 import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from test_service import (
     quadlets,
     unit_stem,
 )
+from test_storage import storage
 
 DEPLOY = "timeout 900 systemctl start storagebaby-deploy.service"
 # The working tree prepare seeded the bare remote from; pushing to it is what a real
@@ -74,6 +76,20 @@ CHECK = (
 
 
 @pytest.mark.order(-1)
+def test_deploy_service_is_a_noop_when_nothing_changed(host):
+    # The checkout renders byte for byte what the converge already put on the host, so
+    # nothing is reported changed and no unit is restarted -- that is the whole claim.
+    before = active_since(host, "svc-traefik", "traefik.service")
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+    assert host.file("/var/lib/storagebaby/repo/ansible/playbook.yml").exists
+    assert active_since(host, "svc-traefik", "traefik.service") == before
+
+
+# Declared after the case above and not before it, although it changes nothing itself:
+# `PULLED` is the checkout `ansible-pull` clones on its *first* run, so until one deploy
+# has happened there is no directory to run this in.
+@pytest.mark.order(-1)
 def test_the_whole_playbook_runs_clean_in_check_mode(host):
     """`--check --diff` over the whole playbook ends `failed=0`, on the converged host.
 
@@ -87,6 +103,7 @@ def test_the_whole_playbook_runs_clean_in_check_mode(host):
     Run against the checkout `ansible-pull` maintains, with the inventory the deploy unit
     names, so a pass here is a statement about the command an operator actually types.
     """
+    assert host.file(f"{PULLED}/ansible/playbook.yml").exists, f"{PULLED} has not been pulled yet"
     r = host.run(CHECK)
     assert r.rc == 0, r.stdout[-6000:] + r.stderr[-4000:]
     recap = [ln for ln in r.stdout.splitlines() if "failed=" in ln]
@@ -94,17 +111,6 @@ def test_the_whole_playbook_runs_clean_in_check_mode(host):
     for line in recap:
         assert "failed=0" in line, line
         assert "unreachable=0" in line, line
-
-
-@pytest.mark.order(-1)
-def test_deploy_service_is_a_noop_when_nothing_changed(host):
-    # The checkout renders byte for byte what the converge already put on the host, so
-    # nothing is reported changed and no unit is restarted -- that is the whole claim.
-    before = active_since(host, "svc-traefik", "traefik.service")
-    r = host.run(DEPLOY)
-    assert r.rc == 0, host.run(JOURNAL).stdout
-    assert host.file("/var/lib/storagebaby/repo/ansible/playbook.yml").exists
-    assert active_since(host, "svc-traefik", "traefik.service") == before
 
 
 def single_container_service(host):
@@ -311,3 +317,102 @@ def test_deploy_runs_after_change_hooks(host):
     assert marker_exists(host, user, container, target), (
         f"the hook `{hook['command']}` left no {target} in {container}\n{host.run(JOURNAL).stdout}"
     )
+
+
+# --- the storage role, from the deploy path ----------------------------------------
+#
+# Both of these push to the seeded remote and disturb the host's filesystems, so they are
+# declared last: `order(-1)` keeps the relative order of the cases that share it, and the
+# pool remount in the second one drops every container's bind mount under the union.
+
+
+def pool_unit(s: dict) -> str:
+    return s["pool"]["mount"].lstrip("/").replace("/", "-") + ".mount"
+
+
+def empty_commit(host, message: str):
+    """A new sha on `stable` with an identical tree.
+
+    `ansible-pull --only-if-changed` runs the playbook only when the checkout moved, so a
+    deploy that is meant to converge needs one -- and an empty commit leaves everything the
+    converge renders identical to what is already on the host, which is what makes the
+    assertions about *one* difference meaningful.
+    """
+    r = host.run(
+        f"cd {SEEDED} && git -c user.name=t -c user.email=t@t commit -q --allow-empty "
+        f"-m {shlex.quote(message)} && git push -q origin stable"
+    )
+    assert r.rc == 0, r.stderr
+    return r
+
+
+@pytest.mark.order(-1)
+def test_deploy_refuses_to_converge_with_a_declared_device_missing(host):
+    """A device that is not there stops the converge before any service is touched.
+
+    This is the property `mountpoints` used to carry and the reason the storage role runs
+    first: with a branch gone, `/pool/apps` would be an empty directory on the root
+    filesystem, and a converge that carried on would recreate every service volume under it
+    -- empty, at 02:00, from the deploy timer. So the run has to fail, name the disk, and
+    leave the services alone.
+
+    The disk is taken away by removing the udev symlink the tracked `host.yml` declares,
+    which is what a pulled, renamed or late-enumerating disk looks like to the role -- and it
+    leaves the filesystem mounted, so nothing under the pool is disturbed and "no service was
+    restarted" is a claim about the role's refusal and not about a remount. udev puts the
+    symlink back on a re-trigger.
+    """
+    s = storage(host)
+    disk = s["disks"][-1]
+    device = disk["device"]
+    assert host.file(device).exists, f"{device} is not there to begin with"
+    traefik_before = active_since(host, "svc-traefik", "traefik.service")
+
+    assert host.run(f"rm -f {device}").rc == 0
+    assert not host.file(device).exists, f"{device} survived its own removal"
+    empty_commit(host, "a deploy cycle with a disk taken away")
+    r = host.run(DEPLOY)
+    journal = host.run("journalctl -u storagebaby-deploy.service --no-pager | tail -200").stdout
+    assert r.rc != 0, f"the converge did not fail with {disk['name']} gone\n{journal}"
+    assert disk["name"] in journal or device in journal, journal
+    assert active_since(host, "svc-traefik", "traefik.service") == traefik_before, "a service was restarted anyway"
+
+    assert host.run("udevadm trigger --subsystem-match=block --action=change && udevadm settle").rc == 0
+    assert host.file(device).exists, f"udev did not put {device} back"
+    empty_commit(host, "a deploy cycle with the disk back")
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+
+
+@pytest.mark.order(-1)
+def test_a_pool_option_change_remounts_the_pool_exactly_once(host):
+    """A changed `pool.options` in git remounts the union, and a second converge does not.
+
+    The remount is the one outage this role can cause, so both halves matter: it has to
+    happen when the declaration changes, and it must *not* happen on the nightly converge
+    that renders the same unit again -- a remount per deploy would drop every container's
+    bind mount under the pool every night.
+
+    Runs last of everything for exactly that reason: the services on this host come back
+    reading a stale union until they are restarted, and nothing after this would be reliable.
+    """
+    s = storage(host)
+    unit = pool_unit(s)
+    stamp = f"systemctl show {unit} -p ActiveEnterTimestampMonotonic --value"
+    before = host.run(stamp).stdout.strip()
+    assert before not in ("", "0"), f"{unit} has no ActiveEnterTimestamp: is the pool up?"
+
+    r = host.run(
+        f"cd {SEEDED} && sed -i 's/threads=2/threads=3/' hosts/$(uname -n)/host.yml "
+        "&& git -c user.name=t -c user.email=t@t commit -qam 'change a pool option' && git push -q origin stable"
+    )
+    assert r.rc == 0, r.stderr
+    assert host.run(DEPLOY).rc == 0, host.run(JOURNAL).stdout
+    after = host.run(stamp).stdout.strip()
+    assert after != before, "the pool was not remounted by its changed option"
+    assert host.run(f"mountpoint -q -- {s['pool']['mount']}").rc == 0, "the pool is not mounted any more"
+    assert "threads=3" in host.file(f"/etc/systemd/system/{unit}").content_string
+
+    empty_commit(host, "a second deploy cycle over the same pool option")
+    assert host.run(DEPLOY).rc == 0, host.run(JOURNAL).stdout
+    assert host.run(stamp).stdout.strip() == after, "the pool was remounted again by an unchanged unit"

@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from conftest import HOSTS, REPO, load_yaml, placements
+from conftest import HOSTS, REPO, host_names, load_yaml, placements
 
 SOPS_CONFIG = load_yaml(REPO / ".sops.yaml")
 
@@ -60,3 +60,22 @@ def test_host_secret_references_resolve(p):
             pytest.skip("test hosts generate their secret sets")
         assert set_file.exists(), f"{p.host}: missing secret set {set_file.name} for {p.name}.{secret}"
         assert key in set(load_yaml(set_file)) - {"sops"}, f"{p.host}: {set_name} has no key {key}"
+
+
+# Test hosts are excluded: `prepare.yml` generates their whole secrets directory, encrypted
+# to the VM's own age key, and .gitignore keeps it out of the repository.
+@pytest.mark.parametrize("host", [h for h in host_names() if not h.startswith("test-")])
+def test_mail_secret_exists_for_a_host_that_sends_mail(host):
+    """The `storage` role refuses to converge without it, so the file has to be in the repo.
+
+    It is not a service's secret and belongs to no `host_secrets` set, so neither generator
+    covers it -- and a missing one is not a missing report but a failed converge, which on a
+    real host means the whole deploy stops at the storage role.
+    """
+    cfg = load_yaml(HOSTS / host / "host.yml")
+    if "mail" not in cfg.get("storage", {}):
+        pytest.skip("this host sends no maintenance mail")
+    path = HOSTS / host / "secrets" / "mail.sops.yaml"
+    assert path.exists(), f"{host}: storage.mail is declared but {path.name} is missing"
+    doc = load_yaml(path)
+    assert "smtp_password" in set(doc) - {"sops"}, f"{host}: {path.name} has no smtp_password"

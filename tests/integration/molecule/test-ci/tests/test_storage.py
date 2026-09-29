@@ -113,3 +113,149 @@ def test_the_storage_roots_live_on_the_pool(host):
         root = yaml.safe_load(fh)["storage_roots"]["pool"]
     assert host.file(root).is_directory, root
     assert host.check_output(f"findmnt -no TARGET --target {root}") == s["pool"]["mount"]
+
+
+def maintenance(host) -> dict:
+    """The host's `storage.snapraid.maintenance` block."""
+    return storage(host)["snapraid"]["maintenance"]
+
+
+def top_unit(host, service: str) -> str:
+    """`<name>-pod.service` when the service is a pod, `<name>.service` otherwise.
+
+    The same resolution the hook scripts and `make stop SERVICE=` do -- a pod service has
+    no `<name>.service` at all, and `systemctl` answers for a unit it does not know in a
+    way that would let a check pass without checking anything.
+    """
+    listed = host.run(f"systemctl --user -M svc-{service}@ list-unit-files {service}-pod.service")
+    return f"{service}-pod.service" if f"{service}-pod.service" in listed.stdout else f"{service}.service"
+
+
+def test_snapraid_conf_declares_every_disk(host):
+    s = storage(host)
+    conf = host.file("/etc/snapraid.conf")
+    assert conf.exists and conf.mode == 0o644, conf.mode
+    for disk in s["disks"]:
+        assert f"disk {disk['name']} {disk['mount']}/" in conf.content_string, conf.content_string
+        assert f"content {disk['mount']}/snapraid.content" in conf.content_string, conf.content_string
+    assert f"parity {s['parity'][0]['mount']}/snapraid.parity" in conf.content_string, conf.content_string
+    assert f"block_size {s['snapraid']['block_size']}" in conf.content_string, conf.content_string
+
+
+def test_the_maintenance_scripts_are_installed_with_their_parameters(host):
+    """The scripts, the rendered parameter file, and a plugin directory per stopped service.
+
+    The env file is the whole parameter path: the scripts carry no rendered value, so a
+    threshold that did not arrive here did not arrive at all.
+    """
+    s = storage(host)
+    m = maintenance(host)
+    for script in [
+        "storage-maintenance.sh",
+        "storage-maintenance-unattended.sh",
+        "sync.sh",
+        "scrub.sh",
+        "balance_disks.sh",
+    ]:
+        f = host.file(f"/opt/storagebaby/maintenance/{script}")
+        assert f.exists and f.mode == 0o755 and f.user == "root", f"{script}: {f.mode}"
+    env = host.file("/opt/storagebaby/maintenance/maintenance.env").content_string
+    assert f"STORAGE_POOL={s['pool']['mount']}" in env, env
+    assert f"BALANCE_TARGET_PERCENTAGE={m['balance_threshold']}" in env, env
+    assert f"SCRUB_PERCENT={m['scrub_percent']}" in env, env
+    assert f"SCRUB_OLDER_DAYS={m['scrub_older_days']}" in env, env
+    assert f"MAINTENANCE_MAIL_TO={s['mail']['to']}" in env, env
+
+    # Exactly the declared set, no more: a directory left behind from a service this host no
+    # longer stops would be run every night by a script nothing points at.
+    present = sorted(host.run("ls -1 /opt/storagebaby/maintenance/plugins").stdout.split())
+    assert present == sorted(m["stop_services"]), present
+    for service in m["stop_services"]:
+        for hook in ("on-before-balance.sh", "on-after-scrub.sh", "on-failure.sh"):
+            f = host.file(f"/opt/storagebaby/maintenance/plugins/{service}/{hook}")
+            assert f.exists and f.mode == 0o755, f"{service}/{hook}"
+
+
+def test_msmtprc_is_root_only_and_names_the_declared_relay(host):
+    s = storage(host)
+    f = host.file("/etc/msmtprc")
+    assert f.exists and f.mode == 0o600 and f.user == "root", f.mode
+    text = f.content_string
+    assert f"host {s['mail']['smtp_host']}" in text, "the relay is not the declared one"
+    assert f"port {s['mail']['smtp_port']}" in text
+    assert f"from {s['mail']['from']}" in text
+    assert f"user {s['mail']['smtp_user']}" in text
+    # The decrypt really happened: the render-only placeholder must not be what is on a host.
+    assert "REPLACE_ME" not in text, "msmtprc still carries the render placeholder"
+
+
+def test_maintenance_timer_is_enabled(host):
+    m = maintenance(host)
+    assert host.service("storage-maintenance.timer").is_enabled
+    assert host.service("storage-maintenance.timer").is_running
+    unit = host.file("/etc/systemd/system/storage-maintenance.timer").content_string
+    assert f"OnCalendar={m['on_calendar']}" in unit, unit
+    assert "Persistent=true" in unit, unit
+    # And the service is *not* started by the converge: starting it is the nightly run.
+    assert host.run("systemctl is-active storage-maintenance.service").stdout.strip() != "active"
+
+
+def test_a_maintenance_run_is_clean(host):
+    """One real run, end to end: balance, sync, scrub, status, SMART, and the mail.
+
+    A few files go into the pool first, because an array with nothing in it proves nothing
+    about a sync -- and they are what the content and parity files below are evidence of.
+    The unit is a oneshot, so `start` blocks until the whole run is done.
+    """
+    s = storage(host)
+    m = maintenance(host)
+    probe = f"{s['pool']['mount']}/maintenance-probe"
+    host.run(f"mkdir -p {probe}")
+    for n in range(3):
+        host.run(f"dd if=/dev/urandom of={probe}/{n}.bin bs=1M count=4 status=none")
+    host.run("rm -f /var/spool/test-mail/*.eml")
+
+    r = host.run("timeout 1800 systemctl start storage-maintenance.service")
+    journal = host.run("journalctl -u storage-maintenance.service --no-pager | tail -200").stdout
+    assert r.rc == 0, journal
+    assert host.check_output("systemctl show storage-maintenance.service -p Result --value") == "success", journal
+    log = host.file("/var/log/storage-maintenance/storage-maintenance.log").content_string
+    for section in [
+        "=== Balancing disks ===",
+        "=== Syncing ===",
+        "=== Scrubbing ===",
+        "=== Final Snapraid Status ===",
+        "=== SMART Report ===",
+        "=== Job Finished with Status: SUCCESS ===",
+    ]:
+        assert section in log, log[-6000:]
+    for disk in s["disks"]:
+        assert host.file(f"{disk['mount']}/snapraid.content").exists, disk["name"]
+    assert host.file("/etc/snapraid.content").exists
+    assert host.file(f"{s['parity'][0]['mount']}/snapraid.parity").exists
+
+    # Stopped before the balance and started again after the scrub: what must not survive the
+    # run is a service left down, which is the whole reason the hooks exist.
+    for service in m["stop_services"]:
+        unit = top_unit(host, service)
+        state = host.run(f"systemctl --user -M svc-{service}@ is-active {unit}").stdout.strip()
+        assert state == "active", f"{unit} is {state!r} after the maintenance run\n{log[-4000:]}"
+        assert f"Stopping {unit}" in log, log[-6000:]
+        assert f"Starting {unit}" in log, log[-6000:]
+    host.run(f"rm -rf {probe}")
+
+
+def test_the_maintenance_mail_reaches_the_sink(host):
+    """Runs after the maintenance case, and is about the message rather than about msmtp.
+
+    The sink writes one file per message, so a report msmtp could not send simply is not
+    there -- which is the failure this catches: a wrong port, a refused auth or a mutt with
+    no sendmail would all leave the maintenance run itself green.
+    """
+    s = storage(host)
+    listing = sorted(host.run("ls -1 /var/spool/test-mail").stdout.split())
+    assert listing, "the sink holds no message after the maintenance run"
+    body = host.file(f"/var/spool/test-mail/{listing[-1]}").content_string
+    assert f"To: {s['mail']['to']}" in body, body[:2000]
+    assert "SnapRAID Sync Report" in body, body[:2000]
+    assert "=== Job Finished with Status: SUCCESS ===" in body, body[:4000]
