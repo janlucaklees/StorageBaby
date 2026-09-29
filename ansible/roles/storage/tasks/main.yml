@@ -30,3 +30,7 @@
 - name: Maintenance scripts and timer
   ansible.builtin.include_tasks: maintenance.yml
   when: not (render_only | bool)
+
+- name: Outgoing mail
+  ansible.builtin.include_tasks: mail.yml
+  when: not (render_only | bool)

@@ -1,0 +1,30 @@
+{# /etc/msmtprc, 0600 root: msmtp wants the relay password in clear, and the maintenance
+   wrapper running as root is the only thing that sends through it.
+
+   Rendered from `storage.mail` in hosts/<host>/host.yml plus `smtp_password` out of
+   hosts/<host>/secrets/mail.sops.yaml. On the render-only path nothing is decrypted and
+   the password is the role default's `REPLACE_ME`, which is what the static test asserts:
+   a real value there would mean the static run had read a secret. #}
+defaults
+{% if storage.mail.tls | default(true) %}
+tls on
+tls_starttls on
+tls_trust_file /etc/ssl/certs/ca-certificates.crt
+{% else %}
+{# Only for a host whose relay is on its own loopback -- a test VM's sink. #}
+tls off
+{% endif %}
+logfile /var/log/msmtp.log
+
+{# An account literally named `default` is the one msmtp uses when no account is asked
+   for, which is how the wrapper's `mutt -e 'set sendmail=...msmtp'` reaches it. #}
+account default
+host {{ storage.mail.smtp_host }}
+port {{ storage.mail.smtp_port }}
+from {{ storage.mail.from }}
+{# `auth on` lets msmtp choose the mechanism, and without TLS it will only consider SCRAM
+   -- so a host talking to a plain sink has to name the method it means or it never
+   authenticates and never sends. #}
+auth {{ storage.mail.auth | default('on') }}
+user {{ storage.mail.smtp_user }}
+password {{ smtp_password }}

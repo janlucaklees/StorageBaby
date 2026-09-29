@@ -22,6 +22,10 @@
     dest: '{{ render_output }}/storage/{{ pool_unit }}'
     mode: '0644'
 
+# `msmtprc` renders with `smtp_password` from the role's defaults, which is the literal
+# `REPLACE_ME`: this path has no age key and decrypts nothing, and the static test asserts
+# the placeholder is what came out -- a real value there would mean the render had read a
+# secret.
 - name: Render the configuration files
   ansible.builtin.template:
     src: '{{ item.src }}'
@@ -29,6 +33,7 @@
     mode: '0644'
   loop:
     - { src: snapraid.conf.j2, dest: snapraid.conf }
+    - { src: msmtprc.j2, dest: msmtprc }
     - { src: maintenance.env.j2, dest: maintenance.env }
     - { src: storage-maintenance.service.j2, dest: storage-maintenance.service }
     - { src: storage-maintenance.timer.j2, dest: storage-maintenance.timer }

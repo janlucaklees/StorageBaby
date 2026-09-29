@@ -29,3 +29,7 @@ snapraid_version: 14.9-1
 # version guard would never match and the package would be rebuilt every night.
 mergerfs_tools_aur_commit: 098c987faa2690271c09b879dc49c8995e1558f7
 mergerfs_tools_version: ''
+
+# Rendered into msmtprc when nothing decrypted a real one -- the render-only path the static
+# tests use. A converge always overwrites it from hosts/<host>/secrets/mail.sops.yaml.
+smtp_password: REPLACE_ME

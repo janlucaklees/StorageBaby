@@ -1,0 +1,50 @@
+# The SMTP relay's password, the one secret this role carries. Copied to the host and
+# decrypted there, exactly like a service's secrets: the age key that can read it lives on
+# the host and nowhere else, so the controller -- the devtools container in a Molecule run
+# -- never holds plaintext.
+- name: Copy the host's mail secrets
+  ansible.builtin.copy:
+    src: '{{ storagebaby_repo_root }}/hosts/{{ inventory_hostname }}/secrets/mail.sops.yaml'
+    dest: /etc/storagebaby/mail.secrets.sops.yaml
+    owner: root
+    group: root
+    mode: '0600'
+
+# `check_mode: false` for the reason every probe in this role carries it: `command` reports
+# itself skipped under `--check`, and the `set_fact` below would then read `stdout` off a
+# result that has none.
+- name: Decrypt the mail secrets
+  ansible.builtin.command: sops --decrypt --output-type json /etc/storagebaby/mail.secrets.sops.yaml
+  environment:
+    SOPS_AGE_KEY_FILE: /etc/storagebaby/age.key
+  register: _mail_secrets
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+# Reported separately so the reason is visible: the task above is no_log, which would
+# otherwise reduce a failure to "censored". sops writes only diagnostics to stderr -- never
+# plaintext -- so stderr is safe to show and stdout is not.
+- name: The mail secrets decrypted
+  ansible.builtin.assert:
+    that: _mail_secrets.rc == 0
+    fail_msg: >-
+      sops could not decrypt hosts/{{ inventory_hostname }}/secrets/mail.sops.yaml:
+      {{ _mail_secrets.stderr }}. Is this host's age recipient in .sops.yaml, and has
+      `sops updatekeys` run over the file?
+    quiet: true
+
+- name: Read the SMTP password
+  ansible.builtin.set_fact:
+    smtp_password: '{{ (_mail_secrets.stdout | from_json).smtp_password }}'
+  no_log: true
+
+- name: Mail configuration
+  ansible.builtin.template:
+    src: msmtprc.j2
+    dest: /etc/msmtprc
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
