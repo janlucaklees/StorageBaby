@@ -101,9 +101,16 @@
 # smartmontools is what `snapraid smart` reads the drives through, msmtp is the relay
 # client the maintenance mail goes out by, and mutt is what composes it -- the wrapper
 # still pipes its report into mutt, as it always did.
+#
+# rsync is here and not left to the AUR recipe on purpose: `mergerfs-tools-git` declares
+# it `optdepends = rsync: for mergerfs.balance and mergerfs.dup`, and an optional
+# dependency is never installed. `mergerfs.balance` is precisely what the balance step
+# runs, and it needs rsync only when it really has files to move -- so without this the
+# nightly run succeeds for as long as the branches happen to be even and fails the first
+# night one of them fills up, which is the night it mattered.
 - name: Packages the maintenance run needs
   community.general.pacman:
-    name: [smartmontools, msmtp, mutt]
+    name: [smartmontools, msmtp, mutt, rsync]
     state: present
 
 # `mergerfs.balance`, which the balance step calls. Not in Chaotic-AUR either, so it is

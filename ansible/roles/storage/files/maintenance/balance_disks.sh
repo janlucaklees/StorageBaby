@@ -35,5 +35,15 @@ fi
 # Ensure log directory exists
 mkdir -p /var/log/snapraid
 
-# Perform disk balancing
-mergerfs.balance -p "$BALANCE_TARGET_PERCENTAGE" "$POOL" &> /var/log/snapraid/balance_disks.log
+# Perform disk balancing.
+#
+# The whole output goes to its own log, as it always did -- it is long and rsync-shaped.
+# But on a failure the last lines are echoed as well, because everything this script
+# writes to stdout ends up in the maintenance mail: without them the only thing an
+# operator reads at 02:00 is "Balancing disks failed. Aborting.", and the reason sits in
+# a file on a host nobody is looking at.
+if ! mergerfs.balance -p "$BALANCE_TARGET_PERCENTAGE" "$POOL" &> /var/log/snapraid/balance_disks.log; then
+	echo "mergerfs.balance failed. Last lines of /var/log/snapraid/balance_disks.log:"
+	tail -n 20 /var/log/snapraid/balance_disks.log
+	exit 1
+fi
