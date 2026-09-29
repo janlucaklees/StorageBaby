@@ -1,0 +1,173 @@
+services:
+  database:
+    image: 'postgres:17-alpine'
+    container_name: 'openarchiver_database'
+
+    restart: 'unless-stopped'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'pg_isready',
+          '-U',
+          '${DATABASE_USER}',
+          '-d',
+          '${DATABASE_NAME}'
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    environment:
+      TZ: '${TZ}'
+
+      POSTGRES_DB: '${DATABASE_NAME}'
+      POSTGRES_USER: '${DATABASE_USER}'
+      POSTGRES_PASSWORD_FILE: '/run/secrets/openarchiver_database_password'
+
+    labels:
+      com.centurylinklabs.watchtower.enable: true
+
+    secrets:
+      - 'openarchiver_database_password'
+
+    volumes:
+      - '/etc/localtime:/etc/localtime:ro'
+      - 'database:/var/lib/postgresql/data'
+
+  cache:
+    image: 'valkey/valkey:8-alpine'
+    container_name: 'openarchiver_cache'
+
+    restart: 'unless-stopped'
+    command: 'valkey-server --requirepass ${REDIS_PASSWORD}'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'valkey-cli',
+          '--no-auth-warning',
+          '-a',
+          '${REDIS_PASSWORD}',
+          'ping'
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    labels:
+      com.centurylinklabs.watchtower.enable: true
+
+    environment:
+      TZ: '${TZ}'
+
+    volumes:
+      - '/etc/localtime:/etc/localtime:ro'
+      - 'cache:/data'
+
+  meilisearch:
+    image: 'getmeili/meilisearch:v1.38'
+    container_name: 'openarchiver_meilisearch'
+
+    restart: 'unless-stopped'
+
+    environment:
+      TZ: '${TZ}'
+
+      MEILI_ENV: 'production'
+      MEILI_MASTER_KEY: '${MEILI_MASTER_KEY}'
+      MEILI_SCHEDULE_SNAPSHOT: '86400'
+
+    volumes:
+      - '/etc/localtime:/etc/localtime:ro'
+      - 'meilisearch:/meili_data'
+
+  tika:
+    image: 'apache/tika:3.2.2.0-full'
+    container_name: 'openarchiver_tika'
+
+    restart: 'unless-stopped'
+
+    environment:
+      TZ: '${TZ}'
+
+    volumes:
+      - '/etc/localtime:/etc/localtime:ro'
+
+  openarchiver:
+    image: 'logiclabshq/open-archiver:${VERSION}'
+    container_name: 'openarchiver_openarchiver'
+
+    restart: 'unless-stopped'
+
+    environment:
+      TZ: '${TZ}'
+      NODE_ENV: 'production'
+
+      PORT_BACKEND: '4000'
+      PORT_FRONTEND: '3000'
+      APP_URL: 'https://${DOMAIN}'
+      ORIGIN: 'https://${DOMAIN}'
+
+      DATABASE_URL: 'postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@database:5432/${DATABASE_NAME}'
+
+      MEILI_HOST: 'http://meilisearch:7700'
+      MEILI_MASTER_KEY: '${MEILI_MASTER_KEY}'
+
+      REDIS_HOST: 'cache'
+      REDIS_PORT: '6379'
+      REDIS_PASSWORD: '${REDIS_PASSWORD}'
+      REDIS_TLS_ENABLED: 'false'
+
+      STORAGE_TYPE: 'local'
+      STORAGE_LOCAL_ROOT_PATH: '/var/data/open-archiver'
+      STORAGE_ENCRYPTION_KEY: '${STORAGE_ENCRYPTION_KEY}'
+      BODY_SIZE_LIMIT: '100M'
+
+      JWT_SECRET: '${JWT_SECRET}'
+      JWT_EXPIRES_IN: '7d'
+      ENCRYPTION_KEY: '${ENCRYPTION_KEY}'
+
+      TIKA_URL: 'http://tika:9998'
+
+    labels:
+      traefik.enable: 'true'
+      traefik.docker.network: 'traefik_network'
+
+      traefik.http.routers.openarchiver-secure.rule: 'Host(`${DOMAIN}`)'
+      traefik.http.routers.openarchiver-secure.entrypoints: 'websecure'
+      traefik.http.routers.openarchiver-secure.tls: true
+
+      traefik.http.services.openarchiver.loadbalancer.server.port: '3000'
+
+    volumes:
+      - '/etc/localtime:/etc/localtime:ro'
+      - '/pool/apps/openarchiver/volumes/data:/var/data/open-archiver:cached'
+
+    depends_on:
+      database:
+        condition: 'service_healthy'
+      cache:
+        condition: 'service_healthy'
+      meilisearch:
+        condition: 'service_started'
+      tika:
+        condition: 'service_started'
+
+    networks:
+      - 'default'
+      - 'traefik_network'
+
+secrets:
+  openarchiver_database_password:
+    file: './openarchiver_database_password.secret'
+
+volumes:
+  database:
+  cache:
+  meilisearch:
+
+networks:
+  traefik_network:
+    external: true
