@@ -151,9 +151,10 @@ def test_a_service_placed_on_several_hosts_is_one_folder_or_identical_copies():
 
     A service that runs on more than one host normally lives once and is symlinked from
     every other host, which cannot drift at all -- `placements()` resolves the link, so
-    those come out as one directory. The exception is the `tcp-echo` fixture: it belongs to
-    the test hosts and to no real one, so there is nothing to link to. Two copies that
-    drifted would make the two test hosts quietly test two different things.
+    those come out as one directory. The exceptions are the test-only fixtures, `tcp-echo`
+    and `build-echo`: each belongs to the test hosts and to no real one, so there is nothing
+    to link to and each lives as a real folder under both. Two copies that drifted would
+    make the two test hosts quietly test two different things.
     """
     by_name = defaultdict(list)
     for p in placements():
