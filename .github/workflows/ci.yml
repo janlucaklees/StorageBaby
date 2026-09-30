@@ -23,7 +23,18 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     needs: static
-    timeout-minutes: 45
+    # 90, because 45 was a fit nothing had measured. What is measured is the workstation at
+    # the Makefile defaults (12288 MiB / 4 vCPU): 26 minutes for this scenario, 46 for
+    # `test-a`. A runner does the same work on 5120 MiB and 2 vCPU, after a second cold
+    # `make devtools` that shares no layer cache with the `static` job, and inside it two AUR
+    # compiles, the paperless pod's images, a real snapraid sync and scrub over four 4 GB
+    # disks and a 120 s poll for the FTP ingest. One harness flake in `create` -- 25 minutes
+    # waiting for SSH, recorded once -- would have eaten the old budget on its own. A
+    # timed-out job is fail-safe: `promote` is skipped and `stable` does not move, so the cost
+    # of this number being too small is a red build and a wrong diagnosis. The next push that
+    # runs green here is what measures the real figure; if it swaps instead, the lever is
+    # MOLECULE_VM_MEMORY_MIB and not this line.
+    timeout-minutes: 90
     # A GitHub-hosted runner has ~7 GB of RAM, less than the 12288 MiB the scenario
     # asks for locally. The scenario reads all three from the environment and falls
     # back to the local sizes and to `test-a` when they are unset.
