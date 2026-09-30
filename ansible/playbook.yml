@@ -80,8 +80,8 @@
     # order every run would restart every service on every converge. Sorted *after*
     # the suffix is joined on, because that is the string the static test asserts the
     # rendered file against -- and the two orders differ as soon as one route name is
-    # another plus a suffix: `-` sorts before `.`, so `paperless`/`paperless-upload`
-    # come out the other way round when the bare names are sorted first.
+    # another plus a suffix: `-` sorts before `.`, so a pair like `paperless` and
+    # `paperless-scan` comes out the other way round when the bare names are sorted first.
     - name: The host's route fqdns, in a stable order
       ansible.builtin.set_fact:
         placed_fqdns: >-

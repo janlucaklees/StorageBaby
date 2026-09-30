@@ -183,8 +183,8 @@ Why it is needed at all: rootless, a container's network namespace is pasta's, a
 pasta copies the **host's own address** onto that namespace's interface. A name that
 resolves to the host therefore resolves, from inside the container, to the container —
 where nothing listens on 443, because Traefik is the single listener on 80/443 in the
-host's network namespace. Measured on the test VM: a connect from inside
-`paperless-upload` and from inside `paperless-app` to the VM's own `192.168.122.53:443`
+host's network namespace. Measured on the test VM, from inside the containers of two
+different services: a connect to the VM's own `192.168.122.53:443`
 is refused, `127.0.0.1:443` is refused, and only `169.254.1.2:443` — podman's
 `host-gateway` — answers. It is not a test-host quirk: the LAN address is unreachable
 from a container on any rootless host, DNS or no DNS.

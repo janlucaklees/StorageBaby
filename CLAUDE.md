@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Git-driven configuration for a home NAS/media server ("StorageBaby") running Arch Linux. It covers the full stack: physical disk management, parity/redundancy, file sharing, and media services as rootless Podman containers. A host is set up once with `bootstrap.sh` and converges itself from this repository after that; nothing is changed on a host by hand. Design: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design.md`.
 
-Migrated: traefik (shared), and on storagebaby yuzukam, stirling-pdf, jellyfin, paperless-upload, kopia and the four multi-container stacks as pods — paperless, openarchiver, immich and nextcloud. Their `docker-compose.yml` directories are gone from the repo root; what is left there is `samba/` and `snapraid/`, Phase 4, still hand-stowed units and scripts. A new service goes under `hosts/`, never beside them.
+Migrated: traefik (shared), and on storagebaby yuzukam, stirling-pdf, jellyfin, kopia and the four multi-container stacks as pods — paperless, openarchiver, immich and nextcloud. Their `docker-compose.yml` directories are gone from the repo root; what is left there is `samba/` and `snapraid/`, Phase 4, still hand-stowed units and scripts. A new service goes under `hosts/`, never beside them. `paperless-upload` is retired: the scanner logs in to the `paperless-ftp` part of the paperless pod and writes into its `consume` volume, so the API hop and the `/pool/shared/scans` share are gone.
 
 ## Managing services
 

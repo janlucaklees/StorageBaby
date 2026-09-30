@@ -37,13 +37,12 @@ Traefik.
 | stirling-pdf                         | `stirling.*` → 8180                        | `docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest` — auto                                                       | none                                                      | 2     |
 | jellyfin                             | `jellyfin.*` → 8096                        | `lscr.io/linuxserver/jellyfin:latest` — auto                                                                            | none                                                      | 2     |
 | kopia                                | `kopia.*` → 51515                          | `docker.io/kopia/kopia:0.23.1` — pinned, bumped in git                                                                  | the repository server itself, plus one account per client | 2     |
-| paperless-upload                     | none                                       | host build (`.build` unit from the service's own `config/build/`)                                                       | none                                                      | 2     |
 | paperless (pod)                      | `paperless.*` → 8000, FTP 21 + 21100–21109 | app `paperless-ngx:2.20.15` and `pure-ftpd:trixie-1.0.50` pinned; postgres, redis, gotenberg and tika auto              | `data`, `media`, `backups` (nightly dump)                 | 3, 4  |
 | openarchiver (pod)                   | `openarchiver.*` → 3001                    | app `v0.6.0`, `meilisearch:v1.38` and `tika:3.2.2.0-full` pinned; postgres and valkey auto                              | `data`, `backups` (nightly dump)                          | 3     |
 | immich (pod)                         | `immich.*` → 2283                          | server and machine learning `v2.7.5` pinned together, the vectorchord postgres pinned by digest beside them; redis auto | `upload` — Immich writes its own database dumps into it   | 3     |
 | nextcloud (pod)                      | `nextcloud.*` → 8280, `collabora.*` → 9980 | app `33-fpm-alpine` pinned; nginx, postgres, redis and Collabora auto                                                   | `html`, `backups` (nightly dump)                          | 3     |
 
-Everything but traefik is placed on storagebaby; `test-a` places all nine folders by
+Everything but traefik is placed on storagebaby; `test-a` places all eight folders by
 symlink, `test-ci` the smaller subset a GitHub runner can carry. Both test hosts also place
 two test-only fixtures, in no table here because they are not NAS services: `tcp-echo`,
 which echoes a payload back so the `tcp_ports` path can be measured end to end, and
@@ -90,22 +89,20 @@ the service land on `master`.
 `REPLACE_ME` is the literal value in git wherever the real one was unknown when the
 service was migrated. Each file is opened with `make sops FILE=<path>`.
 
-| File                                                            | Keys                                               | What goes in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| --------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hosts/shared/services/traefik/secrets.sops.yaml`               | `porkbun_api_key`, `porkbun_secret_api_key`        | **Nothing.** Real already — carried over from the old `.secret` files in Phase 1.                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `hosts/storagebaby/services/kopia/secrets.sops.yaml`            | `b2_key_id`, `b2_application_key`                  | `REPLACE_ME`. The Backblaze application key id and key; there was no credential in the old stack to carry over. Confirm `s3_endpoint` and `s3_bucket` in `service.yml` against the account while you are there — they were written from the old README, not read off it.                                                                                                                                                                                                                                       |
-|                                                                 | `repository_password`                              | Generated for this migration. Correct **only if the bucket is fresh**; see step 2.                                                                                                                                                                                                                                                                                                                                                                                                                             |
-|                                                                 | `server_password`                                  | Generated. The web UI login for `server_username: jlk`, free to choose and free to rotate.                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `hosts/storagebaby/services/paperless/secrets.sops.yaml`        | `database_password`, `secret_key`                  | Both `REPLACE_ME`, and both have to be the **existing** values: the password of the database being migrated in, and the live `paperless_secret_key.secret` (a new one logs every user out and invalidates every API token).                                                                                                                                                                                                                                                                                    |
-|                                                                 | `ftp_password`                                     | `REPLACE_ME`, and a **free choice**: it is the password of the one FTP account the scanner delivers with, and the only other place it exists is the printer's own configuration. Set the printer to FTP, `<storagebaby's LAN address>`, port 21, user `scanner`, passive mode.                                                                                                                                                                                                                                 |
-|                                                                 | `ftp_password`                                     | `REPLACE_ME`, and a **free choice**: it is the password of the one FTP account the scanner delivers with, and the only other place it exists is the printer's own configuration. Set the printer to FTP, `<storagebaby's LAN address>`, port 21, user `scanner`, passive mode.                                                                                                                                                                                                                                 |
-| `hosts/storagebaby/services/openarchiver/secrets.sops.yaml`     | all six                                            | **Nothing.** Real already — the old stack's six `openarchiver_*.secret` files. Do not regenerate any of them: `encryption_key` and `storage_encryption_key` decrypt the archive, `jwt_secret` signs the sessions.                                                                                                                                                                                                                                                                                              |
-| `hosts/storagebaby/services/immich/secrets.sops.yaml`           | `database_password`                                | `REPLACE_ME`. The password of the database being migrated in. `database_name` is `postgres`, not `immich`, for the same reason — that is what the old stack called it.                                                                                                                                                                                                                                                                                                                                         |
-| `hosts/storagebaby/services/nextcloud/secrets.sops.yaml`        | `database_password`                                | `REPLACE_ME`. The password of the database being migrated in.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-|                                                                 | `collabora_username`, `collabora_password`         | `REPLACE_ME`. Collabora's admin console login, the old stack's `collabora_*.secret`.                                                                                                                                                                                                                                                                                                                                                                                                                           |
-|                                                                 | `admin_user`, `admin_password`                     | `REPLACE_ME`. Read only when the image **installs**, which on storagebaby it must never do — read step 5 before this one.                                                                                                                                                                                                                                                                                                                                                                                      |
-| `hosts/storagebaby/services/paperless-upload/secrets.sops.yaml` | `paperless_token`                                  | `REPLACE_ME_paperless_api_token`. The file it was to be carried over from was empty; issue a new API token in Paperless once it is up.                                                                                                                                                                                                                                                                                                                                                                         |
-| `hosts/storagebaby/secrets/kopia-clients.sops.yaml`             | `paperless`, `openarchiver`, `immich`, `nextcloud` | All `REPLACE_ME`, and all a **free choice**: each is one string that the Kopia server and that service's backup sidecar both read, so it only has to be the same on both sides. It would otherwise be the one placeholder that fails **silently** — both sides match, the account works, and the repository endpoint is public at `https://kopia.<domain>` — so `config/start.sh` refuses to register a client whose password is still `REPLACE_ME`, and the kopia server restart-loops until they are filled. |
+| File                                                        | Keys                                               | What goes in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hosts/shared/services/traefik/secrets.sops.yaml`           | `porkbun_api_key`, `porkbun_secret_api_key`        | **Nothing.** Real already — carried over from the old `.secret` files in Phase 1.                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `hosts/storagebaby/services/kopia/secrets.sops.yaml`        | `b2_key_id`, `b2_application_key`                  | `REPLACE_ME`. The Backblaze application key id and key; there was no credential in the old stack to carry over. Confirm `s3_endpoint` and `s3_bucket` in `service.yml` against the account while you are there — they were written from the old README, not read off it.                                                                                                                                                                                                                                       |
+|                                                             | `repository_password`                              | Generated for this migration. Correct **only if the bucket is fresh**; see step 2.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+|                                                             | `server_password`                                  | Generated. The web UI login for `server_username: jlk`, free to choose and free to rotate.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `hosts/storagebaby/services/paperless/secrets.sops.yaml`    | `database_password`, `secret_key`                  | Both `REPLACE_ME`, and both have to be the **existing** values: the password of the database being migrated in, and the live `paperless_secret_key.secret` (a new one logs every user out and invalidates every API token).                                                                                                                                                                                                                                                                                    |
+|                                                             | `ftp_password`                                     | `REPLACE_ME`, and a **free choice**: it is the password of the one FTP account the scanner delivers with, and the only other place it exists is the printer's own configuration. Set the printer to FTP, `<storagebaby's LAN address>`, port 21, user `scanner`, passive mode.                                                                                                                                                                                                                                 |
+| `hosts/storagebaby/services/openarchiver/secrets.sops.yaml` | all six                                            | **Nothing.** Real already — the old stack's six `openarchiver_*.secret` files. Do not regenerate any of them: `encryption_key` and `storage_encryption_key` decrypt the archive, `jwt_secret` signs the sessions.                                                                                                                                                                                                                                                                                              |
+| `hosts/storagebaby/services/immich/secrets.sops.yaml`       | `database_password`                                | `REPLACE_ME`. The password of the database being migrated in. `database_name` is `postgres`, not `immich`, for the same reason — that is what the old stack called it.                                                                                                                                                                                                                                                                                                                                         |
+| `hosts/storagebaby/services/nextcloud/secrets.sops.yaml`    | `database_password`                                | `REPLACE_ME`. The password of the database being migrated in.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+|                                                             | `collabora_username`, `collabora_password`         | `REPLACE_ME`. Collabora's admin console login, the old stack's `collabora_*.secret`.                                                                                                                                                                                                                                                                                                                                                                                                                           |
+|                                                             | `admin_user`, `admin_password`                     | `REPLACE_ME`. Read only when the image **installs**, which on storagebaby it must never do — read step 5 before this one.                                                                                                                                                                                                                                                                                                                                                                                      |
+| `hosts/storagebaby/secrets/kopia-clients.sops.yaml`         | `paperless`, `openarchiver`, `immich`, `nextcloud` | All `REPLACE_ME`, and all a **free choice**: each is one string that the Kopia server and that service's backup sidecar both read, so it only has to be the same on both sides. It would otherwise be the one placeholder that fails **silently** — both sides match, the account works, and the repository endpoint is public at `https://kopia.<domain>` — so `config/start.sh` refuses to register a client whose password is still `REPLACE_ME`, and the kopia server restart-loops until they are filled. |
 
 A postgres password is not a free choice because the image only applies
 `POSTGRES_PASSWORD` when it initialises an **empty** data directory. Moved-in data
@@ -172,43 +169,34 @@ by it — but check the live stack before migrating, because a "working" archive
 may not have been one. `hosts/storagebaby/services/openarchiver/README.md` has the
 symptom and the log lines.
 
-### 7. Converge once, then open the shared trees to the services that read them
+### 7. Converge once, then open the media tree to Jellyfin
 
-This one is deliberately after the first converge: the `media` and `scans` groups do
-not exist on the host until the `service` role creates them, so a `chgrp` run before
-it has nothing to chgrp to. Expect jellyfin to come up with an empty library and
-paperless-upload to restart-loop (it cannot create `processed/` in a tree it may not
-write) until these run:
+This one is deliberately after the first converge: the `media` group does not
+exist on the host until the `service` role creates it, so a `chgrp` run before it
+has nothing to chgrp to. Expect jellyfin to come up with an empty library until
+these run:
 
 ```bash
 doas chgrp -R media /pool/shared/media
 doas chmod -R o+rX /pool/shared/media
-doas chgrp -R scans /pool/shared/scans
-doas chmod -R g+rwX /pool/shared/scans
-doas find /pool/shared/scans -type d -exec chmod g+s {} +
 ```
 
-The setgid bit is per directory and is not inherited by anything that already
-exists, so a plain `chmod g+s /pool/shared/scans` would fix the share root and
-leave every subdirectory already under it — `processed/`, and whatever the
-scanner made — without it. Hence the `find`.
-
 The role creates a bind directory only when it is missing and never touches
-the permissions of one that exists, so both trees stay the operator's — which
-is also why these are not one-shot: anything dropped into them later by
-another writer inherits whatever that writer gives it.
+the permissions of one that exists, so the tree stays the operator's — which
+is also why this is not one-shot: anything dropped into it later by another
+writer inherits whatever that writer gives it.
 
-For the media tree the `o+rX` is what Jellyfin actually reads through: the
-linuxserver image drops its supplementary groups when s6 switches to its own
-user, so group access never reaches the app process —
-`hosts/storagebaby/services/jellyfin/README.md` has the measurement. The
-`chgrp` still matters anyway, because the `media` group is what Samba and the
-rest of the host use, and it is what the role itself would set on a tree it
-creates. The uploader keeps its groups, so for the scans tree the group is the
-whole mechanism — and the `g+s` is what makes the existing tree match the
-`2775` the role would have given a fresh one, so files the scanner and the
-uploader drop there stay group-`scans` instead of falling back to the writer's
-own group.
+The `o+rX` is what Jellyfin actually reads through: the linuxserver image drops
+its supplementary groups when s6 switches to its own user, so group access never
+reaches the app process — `hosts/storagebaby/services/jellyfin/README.md` has the
+measurement. The `chgrp` still matters anyway, because the `media` group is what
+Samba and the rest of the host use, and it is what the role itself would set on a
+tree it creates.
+
+`/pool/shared/scans` needs nothing any more. It was the Samba drop the retired
+`paperless-upload` watched; the scanner now logs in by FTP and writes into
+paperless's own `consume` volume, so the tree is data nothing serves and no group
+on the host has to reach it.
 
 ### 8. After the first converge, check the certificate and the backups
 
@@ -334,9 +322,9 @@ volume of paperless, openarchiver and nextcloud is new and starts empty — the 
 timer fills it on its first run. `immich`'s `model-cache` is downloadable weights and
 can be left behind as easily as moved; its `upload` tree is where Immich puts its own
 database dumps, once they are switched on (its README has the switch).
-`yuzukam` and `paperless-upload` declare no volumes at all: yuzukam is stateless,
-and paperless-upload's only state is the `scans` bind, which stays where it is and
-is handled by the shared-trees operator step above.
+`yuzukam` declares no volumes at all — it is stateless. Paperless's `consume` is
+new and starts empty by definition: it is the FTP spool the consumer drains, and a
+file in it has not been ingested yet.
 
 ### The recipe, per service
 
@@ -412,12 +400,6 @@ command in this repo is invoked:
   story — `podman exec paperless-app id -u`, `openarchiver-app`, `immich-server`, and
   for nextcloud `www-data`, uid 33. Reading the number off the running container once
   is always cheaper than guessing it.
-
-- **paperless-upload** — nothing to do. It declares no volumes, and its unit runs
-  `UserNS=keep-id:uid=1000,gid=1000`, so container uid 1000 **is**
-  `svc-paperless-upload`'s own host uid: no subuid, nothing for `podman unshare` to
-  translate. Its only state is the `/pool/shared/scans` bind, and that one is opened
-  by group and setgid in the shared-trees operator step — never by a chown.
 
 Then `make start SERVICE=<svc>` and check `make ps SERVICE=<svc>`. If the ownership
 is wrong the container comes up and fails — nothing on the host will quietly fix it

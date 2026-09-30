@@ -303,8 +303,8 @@ def test_every_image_a_unit_names_is_in_the_local_store(host, owner, spec_path):
         assert r.rc == 0, f"{unit} names {image}, which is not in {user}'s image store"
         checked += 1
     if not checked:
-        # paperless-upload is the one such service: its single container runs the image
-        # its own `.build` produces, so there is nothing for this case to look at.
+        # The `build-echo` fixture is the one such service: its single container runs the
+        # image its own `.build` produces, so there is nothing for this case to look at.
         pytest.skip(f"{user} pulls nothing: every unit names an image built on the host")
 
 
@@ -474,19 +474,6 @@ def test_tcp_route_file_matches_the_spec(host, owner, spec_path):
         assert f"tcp-{port}" in body and f"127.0.0.1:{target}" in body, body
 
 
-def container_env(host, user: str, container: str) -> dict[str, str]:
-    """`NAME -> value` from the environment podman starts a container with.
-
-    Read from the running container rather than from the rendered unit, so what a test
-    exercises is the value the service really got -- spec default, host override and
-    all. `println` puts one entry per line, which is the only shape an `Environment=`
-    value containing spaces survives.
-    """
-    r = run_as(host, user, "podman inspect " + container + " --format '{{range .Config.Env}}{{println .}}{{end}}'")
-    assert r.rc == 0, r.stderr
-    return dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
-
-
 def hosts_file_map(host, user: str, container: str) -> dict[str, str]:
     """`name -> address` from the hosts file podman mounts into a container as /etc/hosts.
 
@@ -533,71 +520,12 @@ def test_container_resolves_every_placed_route_name(host, owner, spec_path, temp
         )
 
 
-# `process.argv[2]` is the name to reach: bun passes the script's arguments on after the
-# script path. The Host header and the SNI are the same name although the connection
-# goes to it directly, because that is what Traefik routes on; the certificate is the
-# host's default self-signed one on a test host, so verification is off.
-TRAEFIK_HOP_JS = """
-const https = require("node:https");
-const name = process.argv[2];
-const req = https.request(
-  { host: name, port: 443, path: "/api/", method: "GET", timeout: 15000,
-    rejectUnauthorized: false, servername: name, headers: { Host: name } },
-  (r) => { console.log(r.statusCode); process.exit(0); },
-);
-req.on("error", (e) => { console.log("ERROR " + (e.code || e.message)); process.exit(0); });
-req.on("timeout", () => { console.log("TIMEOUT"); process.exit(0); });
-req.end();
-"""
-
-
-@service_case
-def test_uploader_reaches_paperless_through_traefik(host, owner, spec_path):
-    """One real cross-service hop, opened from inside a container: uploader -> Traefik -> pod.
-
-    The resolution check above reads a file; this one uses it. It is the hop the repo
-    rule is actually about -- a service in its own rootless network namespace reaching
-    another service on its public name -- and it is the hop nothing exercised before,
-    because the pods' `AddHost` lines only ever covered names of their own.
-
-    The name is not built here: it is read out of the running container's
-    `PAPERLESS_URL`, the one the uploader itself posts to. Constructing
-    `paperless.<domain>` instead would prove the map works and still leave the service
-    misconfigured -- which is what it was, pointing every test VM at the production
-    host, until `service_config` in both test host files overrode it.
-
-    Named rather than derived, like the nextcloud hook check: paperless-upload is the
-    one service on the platform that calls another one, and `bun` is the probe its
-    image happens to carry. A second such service would want this generalised.
-    """
-    placed(host, owner)
-    spec = load_spec(spec_path)
-    if spec["name"] != "paperless-upload":
-        pytest.skip("does not call another service")
-    user = f"svc-{spec['name']}"
-    container = container_name(quadlets(spec_path, "container")[0])
-    url = container_env(host, user, container).get("PAPERLESS_URL")
-    assert url, f"{container} runs with no PAPERLESS_URL: there is nothing to reach"
-    assert url.startswith("https://"), f"PAPERLESS_URL is {url!r}, and this probe speaks TLS on 443"
-    target = url.removeprefix("https://").split("/")[0].split(":")[0]
-    assert target in placed_route_fqdns(host), (
-        f"PAPERLESS_URL names {target}, which no route on this host serves -- "
-        "the uploader is configured for a paperless that is not here"
-    )
-    r = host.run(f"cat > /tmp/traefik-hop.js <<'JS'\n{TRAEFIK_HOP_JS}\nJS\nchmod 644 /tmp/traefik-hop.js")
-    assert r.rc == 0, r.stderr
-    r = run_as(host, user, f"podman cp /tmp/traefik-hop.js {container}:/tmp/traefik-hop.js")
-    assert r.rc == 0, r.stderr
-    r = run_as(host, user, f"podman exec {container} bun /tmp/traefik-hop.js {target}")
-    assert r.rc == 0, r.stderr
-    code = r.stdout.strip()
-    # A connection error prints its code instead of a status, which is the failure this
-    # test exists for: without the host-gateway map the name resolves to the pod's own
-    # interface and the connect is refused.
-    assert code.isdigit(), f"{container} could not reach https://{target}/api/: {code}"
-    # Same reading as `test_domain_answers_over_https`: 404 is Traefik matching no
-    # router, 5xx a backend that cannot answer, anything between proves the hop landed.
-    assert 200 <= int(code) < 500 and code != "404", f"https://{target}/api/ answered {code}"
+# The explicit container-to-Traefik hop test lived here and went with `paperless-upload`:
+# the uploader was the one service that called another one by its public name, and the
+# `bun` in its image was the probe. The mechanism is still covered end to end -- every
+# pod's Kopia backup sidecar makes the same hop to `https://kopia.<domain>` on every
+# converge, and `test_backup_sidecar_snapshots_to_the_server` above asserts the result of
+# it. What went is the case named for it, not the claim.
 
 
 @service_case
