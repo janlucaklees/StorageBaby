@@ -347,7 +347,10 @@ doas systemctl stop storagebaby-deploy.timer
 then, with the commit on `stable`, bring the checkout to it and read the whole diff first:
 
 ```sh
-doas git -C /var/lib/storagebaby/repo fetch origin stable
+# The repository is reachable only through the host's deploy key, which lives in the
+# deploy unit's GIT_SSH_COMMAND and nowhere in root's ssh config.
+export GIT_SSH_COMMAND='ssh -i /etc/storagebaby/deploy_key -o IdentitiesOnly=yes'
+doas -E git -C /var/lib/storagebaby/repo fetch origin stable
 doas git -C /var/lib/storagebaby/repo checkout --detach FETCH_HEAD
 cd /var/lib/storagebaby/repo
 doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
@@ -365,18 +368,22 @@ in the storage role rather than in the first service, because storage runs first
 Then the outage itself:
 
 ```sh
-# 1. every service with a pool-class volume
+# 1. every service with a pool-class volume (all of them but yuzukam; traefik's
+#    letsencrypt volume is `fast`, and it restarts by itself for the entrypoints)
 for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
-	make stop SERVICE=$s
+	doas make stop SERVICE=$s
 done
 # 2. the other holder of /pool
 doas systemctl stop smb nmb
-# 3. converge for real, reading the same diff again
+# 3. ask the kernel who still has it open -- this is the EBUSY, before it happens.
+#    A login shell sitting in /pool counts, and so does anything not in the list above.
+doas fuser -vm /pool
+# 4. converge for real, reading the same diff again
 doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
 	--diff ansible/playbook.yml
-# 4. back up
+# 5. back up
 for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
-	make start SERVICE=$s
+	doas make start SERVICE=$s
 done
 doas systemctl start storagebaby-deploy.timer
 ```
@@ -397,11 +404,20 @@ Three things about that run, none of them a problem:
 
 ### 10. After that converge, retire the hand-stowed half and Samba
 
-**There is nothing to unstow.** The five unit paths and `/etc/snapraid.conf` were `stow`
-symlinks into the old checkout; Ansible's `template` does not follow a symlink at its
-destination, it replaces it with a regular file — so step 9 already turned all six into
-rendered files that no longer point anywhere. Do not run `stow -D`; what is left over is
-the old checkout itself and the wrapper beside it.
+**There is probably nothing to unstow — check rather than assume.** The five unit paths and
+`/etc/snapraid.conf` were `stow` symlinks into the old checkout; Ansible's `template` does
+not follow a symlink at its destination, it replaces it with a regular file, but only on a
+converge where the content actually differs. All six do differ, so step 9 turned all six
+into rendered files — confirm it, because a link that survived would dangle the moment the
+checkout is deleted:
+
+```sh
+find /etc/systemd/system -maxdepth 1 -type l -name '*.mount' -o -maxdepth 1 -type l -name 'storage-maintenance.*'
+ls -l /etc/snapraid.conf
+```
+
+Neither may point into the old checkout. Do not run `stow -D` either way; what is left over
+is the checkout itself and the wrapper beside it.
 
 Verify first that the unit really is the new one:
 
