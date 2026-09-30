@@ -49,12 +49,29 @@ done
 # the role's defaults.
 CHAOTIC_KEY=3056513887B78AEB
 CHAOTIC_KEYSERVER=keyserver.ubuntu.com
+CHAOTIC_FETCH_ATTEMPTS=3
+CHAOTIC_FETCH_DELAY=30
 if ! pacman -Qq chaotic-keyring chaotic-mirrorlist > /dev/null 2>&1; then
 	pacman-key --recv-key "$CHAOTIC_KEY" --keyserver "$CHAOTIC_KEYSERVER"
 	pacman-key --lsign-key "$CHAOTIC_KEY"
-	pacman -U --noconfirm \
-		https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst \
-		https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst
+	# Retried, and only this step. The two packages come straight off
+	# cdn-mirror.chaotic.cx over HTTPS -- not through a mirrorlist, because they are what
+	# makes the mirrorlist exist -- so there is nothing between the CDN and the host to
+	# fail over to. It answered 503 for four minutes during a run and took the whole
+	# bootstrap with it, on a fetch that has nothing to do with the host being set up.
+	# The key import above is a different server and stays a single attempt.
+	for attempt in $(seq 1 "$CHAOTIC_FETCH_ATTEMPTS"); do
+		if pacman -U --noconfirm \
+			https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst \
+			https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst; then
+			break
+		fi
+		if [ "$attempt" -ge "$CHAOTIC_FETCH_ATTEMPTS" ]; then
+			echo "chaotic-aur packages could not be fetched in $CHAOTIC_FETCH_ATTEMPTS attempts" >&2
+			exit 1
+		fi
+		sleep "$CHAOTIC_FETCH_DELAY"
+	done
 fi
 # The markers are ansible's, not decoration: `blockinfile` in the role looks for exactly
 # these two lines. Without them the role would append a *second* `[chaotic-aur]` section

@@ -10,6 +10,13 @@ chaotic_keyserver: keyserver.ubuntu.com
 chaotic_packages:
   - https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst
   - https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst
+# Those two URLs are the one fetch in this repository with no mirror behind it: they are
+# what makes the mirrorlist exist, so pacman goes straight to the CDN for them. It
+# answered 503 for four minutes during a run and failed the converge on a fetch that had
+# nothing to do with the host. Both sides of the setup retry it -- this role and
+# `bootstrap.sh` -- and `tests/static/test_bootstrap.py` holds the two numbers identical.
+chaotic_fetch_attempts: 3
+chaotic_fetch_delay: 30
 
 # snapraid is in neither, so `aur_build.yml` builds it from the AUR on the host. The
 # commit is the pin; the version is what that commit produces, and the role asserts the

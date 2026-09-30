@@ -71,6 +71,34 @@ def test_bootstrap_sets_up_the_same_chaotic_aur_as_the_storage_role():
     assert script.index(lines[0]) < upgrade.start(), "the repository is added after the upgrade"
 
 
+def test_bootstrap_retries_the_chaotic_fetch_like_the_role_does():
+    """Both sides retry the one fetch with no mirror behind it, the same number of times.
+
+    `cdn-mirror.chaotic.cx` serves those two package URLs directly -- they are what makes
+    the mirrorlist exist, so there is nothing to fail over to -- and it answered 503 for
+    four minutes during a run. The role retries it with `until`; bootstrap has to do the
+    same by hand, and the two schedules are the role's defaults so neither can be bumped
+    alone.
+    """
+    script = (REPO / "bootstrap.sh").read_text()
+    defaults = load_yaml(STORAGE_DEFAULTS)
+    attempts, delay = defaults["chaotic_fetch_attempts"], defaults["chaotic_fetch_delay"]
+    assert attempts > 1 and delay > 0, defaults
+    for value in (attempts, delay):
+        assert re.search(rf"^CHAOTIC_FETCH_[A-Z]+={value}$", script, re.M), (
+            f"bootstrap.sh does not carry the role's retry value {value}"
+        )
+    tasks = load_yaml(STORAGE_TOOLS)
+    retried = [
+        task
+        for task in tasks
+        if task.get("until") and "pacman -U" in str(task.get("ansible.builtin.command", ""))
+    ]
+    assert len(retried) == 1, f"{STORAGE_TOOLS} retries the chaotic fetch in {len(retried)} tasks"
+    assert retried[0]["retries"] == "{{ chaotic_fetch_attempts }}", retried[0]
+    assert retried[0]["delay"] == "{{ chaotic_fetch_delay }}", retried[0]
+
+
 def test_git_ssh_command_is_one_quoted_environment_value():
     # systemd splits an unquoted Environment= on whitespace, so the bare form silently
     # reduces to GIT_SSH_COMMAND=ssh and drops the deploy key and both -o options --

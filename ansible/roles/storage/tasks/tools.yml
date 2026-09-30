@@ -33,12 +33,23 @@
 
 # Not `community.general.pacman`: that module installs repository packages by name, and
 # these two are the packages that make the repository exist.
+#
+# Retried, and the only step here that is: the two URLs go straight to
+# cdn-mirror.chaotic.cx, with no mirrorlist behind them to fail over to, and it answered
+# 503 for four minutes during a run. `until` re-runs the whole `pacman -U`, which is
+# right -- either package may be the one that failed, and installing them together is
+# what keeps the keyring and the mirrorlist in step. The key import above is a different
+# server and keeps its single attempt.
 - name: Install the Chaotic-AUR keyring and mirrorlist
   ansible.builtin.command: pacman -U --noconfirm {{ chaotic_packages | join(' ') }}
   when:
     - not ansible_check_mode
     - _chaotic_pkgs.rc != 0
   changed_when: true
+  register: _chaotic_fetch
+  retries: '{{ chaotic_fetch_attempts }}'
+  delay: '{{ chaotic_fetch_delay }}'
+  until: _chaotic_fetch.rc == 0
 
 - name: The [chaotic-aur] repository in pacman.conf
   ansible.builtin.blockinfile:
