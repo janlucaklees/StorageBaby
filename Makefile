@@ -50,14 +50,6 @@ DEVTOOLS_RUN_AGE := docker run --rm -t \
 	-v $(AGE_DIR):/root/.config/sops/age \
 	$(DEVTOOLS_IMAGE)
 
-.PHONY: pull
-pull:
-	rsync -aHAXvh --exclude-from='.rsyncignore' $(SERVER):$(REMOTE_PATH) ./
-
-.PHONY: push
-push:
-	rsync -aHAXvh --exclude-from='.rsyncignore' ./ $(SERVER):$(REMOTE_PATH)
-
 .PHONY: devtools
 devtools:
 	docker build -t $(DEVTOOLS_IMAGE) devtools

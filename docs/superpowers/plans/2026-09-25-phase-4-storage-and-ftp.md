@@ -1,5 +1,11 @@
 # Phase 4: Storage Roles, Samba Retirement and FTP through Traefik — Implementation Plan
 
+> **What was built is recorded in the spec, not here.** Eleven amendments came out of the
+> implementation and every one of them is in
+> `../specs/2026-09-25-phase-4-storage-and-ftp-design.md`, §9 "Amendments". Where this plan and
+> that list disagree -- `config.ftp_public_address` (it became `tcp_bind_address`), the test
+> disks' size (4 GB, not 1), the AUR build route, the image pre-pull -- the list is what happened.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Bring the storage half of a host into git — disk and parity mounts, the mergerfs pool, snapraid, the nightly maintenance run and its mail — give the platform TCP routing so a scanner delivers by FTP straight into Paperless's consume directory, and retire `samba/`, `snapraid/`, the snapshot plugins and `paperless-upload`. After this phase nothing on a host is hand-stowed.

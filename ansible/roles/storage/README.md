@@ -240,9 +240,11 @@ storage:
   `/apps/nextcloud/html/…`: the pool-class volume `html` of the `nextcloud` service.
 - **The disk `name` is snapraid's identity for that disk.** Renaming one makes snapraid treat
   the whole disk as new, which is a full parity rewrite on the next sync.
-- **`/opt/storagebaby/maintenance/`** holds the orchestrator, `sync.sh`, `scrub.sh`,
-  `balance_disks.sh` and the unattended wrapper, all 0755 root, **copied byte for byte** from
-  the role's `files/maintenance/`. Logs go to `/var/log/storage-maintenance/` (the wrapper's
+- **`/opt/storagebaby/maintenance/`** holds six scripts, all 0755 root and **copied byte for
+  byte** from the role's `files/maintenance/`: the orchestrator, `sync.sh`, `scrub.sh`,
+  `balance_disks.sh`, the unattended wrapper, and `storage-maintenance-failed.sh` — the one
+  `storage-maintenance-failed.service` execs on `OnFailure=`, which is the only way a pool
+  that will not mount is reported at all. Logs go to `/var/log/storage-maintenance/` (the wrapper's
   own, and the body of the mail) and `/var/log/snapraid/` (each snapraid command's).
 - **Parameters reach those scripts through one rendered file and only through it**:
   `/opt/storagebaby/maintenance/maintenance.env`, which every script sources. No threshold,

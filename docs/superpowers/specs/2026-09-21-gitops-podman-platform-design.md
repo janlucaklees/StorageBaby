@@ -12,6 +12,13 @@ Non-goals: clustering, a web UI, Docker of any kind on a target host. Building i
 
 ## 2. Repository layout
 
+> **Superseded by `2026-09-25-phase-4-storage-and-ftp-design.md`.** What is written below is the
+> design as it stood before Phase 4 and is kept as the record of it. What was built instead: one
+> `storage` role rather than `mounts`/`snapraid`/`samba` roles, the block named `storage` rather
+> than `disks` + `snapraid` + `samba`, the pool's create policy `pfrd` and not `eplfs`, Samba
+> dropped rather than migrated, no `cups` or `syncthing` role, and no `scripts/` directory (there
+> never was one). Read that spec's §5, §6 and §9 for the built shape.
+
 ```
 hosts/
   storagebaby/
@@ -61,6 +68,13 @@ The operator then adds the deploy key as a read-only GitHub deploy key, adds the
 Ansible runs as root because it manages users, packages, mounts and per-user unit directories. No container runs as root and no container gets a socket to anything.
 
 ## 4. Per-host configuration
+
+> **Superseded by `2026-09-25-phase-4-storage-and-ftp-design.md`.** What is written below is the
+> design as it stood before Phase 4 and is kept as the record of it. What was built instead: one
+> `storage` role rather than `mounts`/`snapraid`/`samba` roles, the block named `storage` rather
+> than `disks` + `snapraid` + `samba`, the pool's create policy `pfrd` and not `eplfs`, Samba
+> dropped rather than migrated, no `cups` or `syncthing` role, and no `scripts/` directory (there
+> never was one). Read that spec's §5, §6 and §9 for the built shape.
 
 `ansible/inventory/hosts.yml` lists host names only. The playbook loads `hosts/<inventory_hostname>/host.yml` and discovers placed services from `hosts/<inventory_hostname>/services/*/service.yml` plus `hosts/shared/services/*/service.yml`.
 
@@ -187,6 +201,13 @@ Integration (`tests/integration/`, Molecule with libvirt/QEMU VMs):
 Pipeline (`.github/workflows/ci.yml`): static plus `test-ci` on every push and PR. On master success, fast-forward `stable`. Branch protection keeps humans off `stable`. Hosts only track `stable`.
 
 ## 9. Storage maintenance
+
+> **Superseded by `2026-09-25-phase-4-storage-and-ftp-design.md`.** What is written below is the
+> design as it stood before Phase 4 and is kept as the record of it. What was built instead: one
+> `storage` role rather than `mounts`/`snapraid`/`samba` roles, the block named `storage` rather
+> than `disks` + `snapraid` + `samba`, the pool's create policy `pfrd` and not `eplfs`, Samba
+> dropped rather than migrated, no `cups` or `syncthing` role, and no `scripts/` directory (there
+> never was one). Read that spec's §5, §6 and §9 for the built shape.
 
 The snapraid role installs the existing storage-maintenance orchestrator, plugins and timer as root system units. Plugin hooks stop and start services with `systemctl --user -M svc-<name>@ stop|start <unit>`. The jellyfin and samba plugins are updated accordingly; remote snapshot plugins are unchanged.
 

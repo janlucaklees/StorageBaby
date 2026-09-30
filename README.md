@@ -1,7 +1,9 @@
 # StorageBaby
 
 Git-driven configuration for my self-hosted services and the Arch hosts they
-run on. Design: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design.md`.
+run on. Design: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design.md`,
+whose §2, §4 and §9 describe the pre-Phase-4 world and carry a pointer to
+`2026-09-25-phase-4-storage-and-ftp-design.md`, which is where the storage half is.
 
 ## Layout
 
@@ -69,10 +71,15 @@ dumps, never as data directories: a `<name>-dump.timer` writes `pg_dump -Fc` int
 `backups` volume half an hour before the snapshot, and that volume is what the sidecar
 carries.
 
-Nothing is left of the old repository. `samba/` and `snapraid/` were the last two
-directories at the root, and both are retired: the mounts, the pool, the array and the
-nightly maintenance run are the `storage` role below, and Samba is dropped entirely
-rather than migrated. A new service goes under `hosts/`.
+No directory of the old repository is left. `samba/` and `snapraid/` were the last two
+at the root, and both are retired: the mounts, the pool, the array and the nightly
+maintenance run are the `storage` role below, and Samba is dropped entirely rather than
+migrated (a static test refuses either name coming back). A new service goes under
+`hosts/`. What still sits at the root of it is `compress-subfolders.sh`, a standalone
+helper nothing in this repository calls; the `pull`/`push` targets that used to rsync the
+live server's tree into the checkout, and the `.rsyncignore` beside them, are gone —
+keeping them would have meant one command away from re-importing the trees this phase
+retired.
 
 ## Storage
 
@@ -125,8 +132,11 @@ storage:
   container holding a bind mount under it comes back reading an empty directory until it
   is restarted. Run the playbook with `--check --diff` first, stop the pool-class services,
   converge, start them.
-- **mergerfs comes from Chaotic-AUR; snapraid and `mergerfs-tools` are built from the AUR**
-  by the role itself, each pinned by AUR commit and bumped like an image tag. The role
+- **mergerfs comes from Chaotic-AUR; snapraid and `mergerfs-tools-git` are built from the
+  AUR** by the role itself, and their pins are not the same kind: snapraid's is a declared
+  `pkgver-pkgrel` the role compares with `vercmp` (older is rebuilt, newer is left alone and
+  reported), `mergerfs-tools-git`'s is the AUR commit recorded in a build stamp, because a
+  `-git` recipe versions itself at build time. Both are bumped like an image tag. The role
   never runs `pacman -Syu` and never reboots — upgrading a host is the operator's job.
 
 `ansible/roles/storage/README.md` is the full reference, including **"Adding a disk"**:
@@ -317,7 +327,8 @@ each branch unit's `Description=` differs), which is why step 9 exists.
 
 `ftp_password` is in the table above. Two more things, neither of them a secret:
 
-- **`tcp_bind_address`**, a top-level key in `hosts/storagebaby/host.yml`. It defaults to
+- **`tcp_bind_address`**, an _optional_ top-level key in `hosts/storagebaby/host.yml` —
+  absent today, and correctly so, because the playbook's own default applies. It defaults to
   the host's default-route address, and that is right on a host with one address. On a host
   with several — a second NIC, a VPN interface, a bridge — set it explicitly to the address
   the scanner reaches, because it is both what Traefik's TCP entrypoints bind and what the
@@ -330,28 +341,77 @@ each branch unit's `Description=` differs), which is why step 9 exists.
 
 ### 9. The first converge is a planned outage — run it by hand
 
-The first converge replaces the hand-stowed storage units with rendered ones. None of the
-five can be byte-identical to what is there (step 7), so **all four branch units and
-`/pool` are remounted, once**. Every container holding a bind mount under `/pool` comes
-back reading an empty directory until it is restarted, and `systemctl stop pool.mount` is
-a plain `umount`: it fails with `EBUSY` while anything at all still holds `/pool` open —
-which `smbd` does, serving `/pool/shared/*`, right up until step 10 retires it.
+storagebaby has never converged, so this one run does every phase at once: it creates
+nine service users, fetches every image of every service, writes the rendered storage
+units over the hand-installed ones, and starts the rootless Traefik on 80, 443 and 21. Two
+things about it are the reason it is a planned outage and not a timer tick.
 
-So this one converge does not belong to the deploy timer. Stop the timer **before** the
-placing commit reaches `stable`:
+**The pool is remounted.** The seven unit paths (`mnt-data-data{1,2,3}.mount`,
+`mnt-parity-parity1.mount`, `pool.mount`, `storage-maintenance.service`, `.timer`) and
+`/etc/snapraid.conf` are all on the host already — the retired `snapraid/install.sh` put
+them there with `doas cp`, so they are plain files, and `template` simply overwrites each
+one. None of the eight can be byte-identical to what is there (step 7), so **all four
+branch units and `/pool` are remounted, once**. `systemctl stop pool.mount` is a plain
+`umount`: it fails with `EBUSY` while anything at all still holds `/pool` open — the old
+Docker stacks and `smbd` both do, right up until the moment they are stopped.
+
+**80, 443 and 21 have to be free.** Traefik is placed by this converge and binds all three.
+The old `nginx`/reverse-proxy container holds 80 and 443 until its stack is down.
+
+#### Before the outage
+
+Upgrade the host and reboot it first. The roles never do either (that is the operator's
+job, deliberately), and this converge installs packages with `state: present`: on a system
+that has not been upgraded since bootstrap they would be resolved either against
+months-old databases whose files the mirrors no longer carry, or — if the repository-list
+change fires the role's one `pacman -Sy` — against freshly synced ones, which is a partial
+upgrade. Both are avoided by:
+
+```sh
+doas pacman -Syu
+doas systemctl reboot
+```
+
+Then check there is room, because this run downloads more than any later one ever will:
+
+```sh
+df -h /
+doas pacman -Q mergerfs mergerfs-tools-git snapraid base-devel
+```
+
+- **Images: every image of every service, all at once.** The role pre-pulls before it
+  writes anything, and podman is rootless, so each `svc-*` user has its **own** image store
+  under its own home on `/` — roughly 25–30 distinct references, the kopia image once for
+  the server and once per backup sidecar, next to the copies `/var/lib/docker` still holds.
+  Tens of GB on the root filesystem. Each pull is capped at ten minutes with three
+  attempts, and the play **stops at the first image it cannot fetch**: the services sorted
+  before it are converged, the ones behind it are not, and the failure names the image.
+- **Packages: two AUR builds, not one.** `snapraid` is built and installed if what is
+  installed is _older_ than the pinned `14.9-1` (a newer one is left alone and reported);
+  `mergerfs-tools-git` is guarded on a build stamp that cannot exist on a host that has
+  never converged, so it is rebuilt and reinstalled even though `install.sh` already
+  `yay -S`'d it. Both pull in `base-devel` and `git`, which stay installed. Beside them:
+  the Chaotic-AUR keyring and mirrorlist, `mergerfs` from that repository (`state: present`,
+  so an AUR-built one is left alone) and `smartmontools msmtp mutt rsync` from the official
+  repositories.
+
+#### The checkout, and the pre-flight
+
+Stop the timer **before** the placing commit reaches `stable`:
 
 ```sh
 doas systemctl stop storagebaby-deploy.timer
 ```
 
-then, with the commit on `stable`, bring the checkout to it and read the whole diff first:
+The checkout the deploy unit converges from does not exist yet — `ansible-pull` clones it
+on its first run, and there must be no first unattended run before this one. Make it by
+hand, at the commit CI promoted, with the host's own deploy key:
 
 ```sh
-# The repository is reachable only through the host's deploy key, which lives in the
-# deploy unit's GIT_SSH_COMMAND and nowhere in root's ssh config.
-export GIT_SSH_COMMAND='ssh -i /etc/storagebaby/deploy_key -o IdentitiesOnly=yes'
-doas -E git -C /var/lib/storagebaby/repo fetch origin stable
-doas git -C /var/lib/storagebaby/repo checkout --detach FETCH_HEAD
+doas install -d -m 0755 /var/lib/storagebaby
+doas sh -c '. /etc/storagebaby/deploy.conf
+	export GIT_SSH_COMMAND="ssh -i /etc/storagebaby/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+	git clone --branch "$BRANCH" "$REPO_URL" /var/lib/storagebaby/repo'
 cd /var/lib/storagebaby/repo
 doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
 	--check --diff ansible/playbook.yml
@@ -382,59 +442,86 @@ run is a real test of: the host cannot decrypt what the push carries. Either
 not in `.sops.yaml` yet — "New host" below has that half. It surfaces in the storage role
 rather than in the first service, because storage runs first.
 
-Then the outage itself:
+#### The outage
 
 ```sh
-# 1. every service with a pool-class volume (all of them but yuzukam; traefik's
-#    letsencrypt volume is `fast`, and it restarts by itself for the entrypoints)
-for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
-	doas make stop SERVICE=$s
-done
+# 1. the old stacks -- they hold /pool through their bind mounts and 80/443 through the
+#    proxy. Every project docker knows, from wherever its compose file lives:
+doas docker compose ls -a
+#    then, per project directory (the old ~/StorageBaby working copy):
+doas docker compose -f <that project's compose file> down
+doas docker ps            # has to come back empty
 # 2. the other holder of /pool
 doas systemctl stop smb nmb
 # 3. ask the kernel who still has it open -- this is the EBUSY, before it happens.
 #    A login shell sitting in /pool counts, and so does anything not in the list above.
-doas fuser -vm /pool
+doas fuser -vm /pool      # has to come back empty
 # 4. converge for real, reading the same diff again
+cd /var/lib/storagebaby/repo
 doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
 	--diff ansible/playbook.yml
-# 5. back up
+# 5. only once that ended failed=0
+doas systemctl start storagebaby-deploy.timer
+```
+
+**If the converge aborts, re-run that same command.** Do not reach for the timer or the
+deploy unit to finish it: `ansible-pull` runs with `--only-if-changed`, which compares the
+checkout's sha before and after its own `git` step, and the checkout is already at
+`stable`'s tip — so a tick converges nothing and the host sits half-done looking idle,
+until the next push to `stable`. That is right after a successful run and wrong after a
+failed one, and the hand command is what closes the gap. Measured on the test VM:
+`systemctl start storagebaby-deploy.service` against an unchanged checkout logs
+`Repository has not changed, quitting` and exits 0 without running the playbook, so
+starting the unit by hand is not a retry either.
+
+Nothing needs starting afterwards: the services this converge places are started by it.
+What comes back down is only whatever the old stacks were serving, and that is what step 10
+retires.
+
+#### Changing `pool.options` later
+
+Every later converge that touches a branch or the pool's option string remounts the union
+the same way, and then the holders are the platform's own services rather than Docker.
+Every container with a pool-class volume comes back reading an empty directory until it is
+restarted, so that converge is also run by hand:
+
+```sh
+doas systemctl stop storagebaby-deploy.timer
+cd /var/lib/storagebaby/repo # the make targets below are this repository's
+for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
+	doas make stop SERVICE=$s
+done
+doas fuser -vm /pool
+doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
+	--diff ansible/playbook.yml
 for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
 	doas make start SERVICE=$s
 done
 doas systemctl start storagebaby-deploy.timer
 ```
 
-Three things about that run, none of them a problem:
+Every service but `yuzukam` has a pool-class volume; Traefik's `letsencrypt` volume is
+`fast`, and Traefik restarts by itself when its entrypoints change. The role warns before
+it remounts, and `--check --diff` shows the option string that is about to change.
 
-- **Traefik restarts once**, because the TCP entrypoints are static configuration on its
-  unit's `Exec=` line. Every route is down for that restart and nothing else changes.
-- **Packages move.** The role adds the Chaotic-AUR repository (`chaotic-keyring`,
-  `chaotic-mirrorlist`, one `pacman -Sy` database refresh — never a `-Syu`, never a
-  reboot), and if the host's `snapraid` is not the pinned `14.9-1` it builds that version
-  from the AUR and `pacman -U`s it over what is installed. Running `pacman -Q` over the
-  three packages beforehand says whether anything will move. The AUR build also installs
-  `base-devel` and leaves it installed.
-- **The old timer is already replaced, not disabled.** `storage-maintenance.timer` and
-  `.service` keep their names; the role overwrote both, so there is no second run to
-  disable. Step 10 is what removes the half that is now orphaned.
+### 10. After that converge, retire the hand-installed half and Samba
 
-### 10. After that converge, retire the hand-stowed half and Samba
-
-**There is probably nothing to unstow — check rather than assume.** The five unit paths and
-`/etc/snapraid.conf` were `stow` symlinks into the old checkout; Ansible's `template` does
-not follow a symlink at its destination, it replaces it with a regular file, but only on a
-converge where the content actually differs. All six do differ, so step 9 turned all six
-into rendered files — confirm it, because a link that survived would dangle the moment the
-checkout is deleted:
+**The storage half was never stowed — it was copied.** `snapraid/install.sh` installed all
+eight of its targets with `doas cp`: the three data mounts, the parity mount, `pool.mount`,
+`storage-maintenance.service`, `storage-maintenance.timer` and `/etc/snapraid.conf`. They
+are plain files, all eight differ from what the role renders, so step 9 overwrote every one
+of them in place and there is nothing to unstow. The **one** thing that ever was stowed is
+`/etc/samba/smb.conf` (`samba/install.sh` ran `stow -vv -t / config`), and `pacman -Rns
+samba` below makes it moot. Check rather than assume — a symlink that survived would dangle
+the moment the old checkout is deleted:
 
 ```sh
-find /etc/systemd/system -maxdepth 1 -type l -name '*.mount' -o -maxdepth 1 -type l -name 'storage-maintenance.*'
-ls -l /etc/snapraid.conf
+find /etc/systemd/system -maxdepth 1 -type l \( -name '*.mount' -o -name 'storage-maintenance.*' \)
+ls -l /etc/snapraid.conf /etc/samba/smb.conf
 ```
 
-Neither may point into the old checkout. Do not run `stow -D` either way; what is left over
-is the checkout itself and the wrapper beside it.
+Nothing there may point into the old checkout. Do not run `stow -D` either way; what is
+left over is the checkout itself and the wrapper beside it.
 
 Verify first that the unit really is the new one:
 
@@ -450,8 +537,11 @@ doas rm -rf /opt/scripts
 ```
 
 and with them the old `~/StorageBaby` working copy the wrapper pointed at, once nothing
-else is being read out of it (`make pull` / `make push` are the only things that ever
-wrote to it).
+else is being read out of it — the compose files of step 9's stacks are in it, so it goes
+after those stacks are confirmed dead and their data is where the platform's volumes are.
+Nothing in this repository writes to it any more: the `make pull`/`make push` targets that
+used to rsync it in both directions are gone, because one of them would have re-imported
+the very trees this phase retired.
 
 Samba is retired by hand, because the role does not remove a package it never installed:
 
@@ -802,7 +892,11 @@ pulls `stable` every 5 minutes.
 
 Until the host's age recipient is in `.sops.yaml` and `sops updatekeys` has run
 on the secret files it needs, its first converge fails at secret decryption.
-That is expected: the host cannot read anything it was not encrypted to.
+That is expected: the host cannot read anything it was not encrypted to. It
+fails in the `storage` role's mail task rather than in the first service, because
+`storage` runs first and `hosts/<host>/secrets/mail.sops.yaml` is the first secret
+the play reads — and a missing `/etc/storagebaby/age.key` surfaces in the same
+place, which is why that assert names the key before it names `.sops.yaml`.
 
 ## Operating a service
 
