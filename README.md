@@ -292,7 +292,7 @@ symptom and the log lines.
 
 `hosts/storagebaby/host.yml`'s `storage` block was written from the deployed mount units
 and `/etc/snapraid.conf`, not from a measurement of the live machine — so read it back
-before it is converged. Four device paths, three mount points, one pool option string:
+before it is converged. Four device paths, four mount points, one pool option string:
 
 ```sh
 lsblk -o NAME,SIZE,PARTUUID,PARTLABEL,MOUNTPOINTS
@@ -388,9 +388,9 @@ Three things about that run, none of them a problem:
 - **Packages move.** The role adds the Chaotic-AUR repository (`chaotic-keyring`,
   `chaotic-mirrorlist`, one `pacman -Sy` database refresh — never a `-Syu`, never a
   reboot), and if the host's `snapraid` is not the pinned `14.9-1` it builds that version
-  from the AUR and `pacman -U`s it over what is installed. `pacman -Q snapraid mergerfs
-mergerfs-tools-git` before the run says whether anything will move. The AUR build also
-  installs `base-devel` and leaves it installed.
+  from the AUR and `pacman -U`s it over what is installed. Running `pacman -Q` over the
+  three packages beforehand says whether anything will move. The AUR build also installs
+  `base-devel` and leaves it installed.
 - **The old timer is already replaced, not disabled.** `storage-maintenance.timer` and
   `.service` keep their names; the role overwrote both, so there is no second run to
   disable. Step 10 is what removes the half that is now orphaned.
