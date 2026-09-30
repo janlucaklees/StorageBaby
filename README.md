@@ -360,8 +360,10 @@ branch units and `/pool` are remounted, once**. `systemctl stop pool.mount` is a
 `umount`: it fails with `EBUSY` while anything at all still holds `/pool` open — the old
 Docker stacks and `smbd` both do, right up until the moment they are stopped.
 
-**80, 443 and 21 have to be free.** Traefik is placed by this converge and binds all three.
-The old `nginx`/reverse-proxy container holds 80 and 443 until its stack is down.
+**80, 443 and 21 have to be free.** The rootless Traefik this converge places binds all
+three. What holds 80 and 443 until its stack is down is **Traefik in Docker** — the same
+program with the same Porkbun resolver, in the container `1435ca0` replaced — and the two
+cannot both be up.
 
 #### Before the outage
 
