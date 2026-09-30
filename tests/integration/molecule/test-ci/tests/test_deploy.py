@@ -55,8 +55,8 @@ def unit_marks(host, user, unit) -> Marks:
     every caller that needs a *real* reading asserts against `"0"` itself.
     """
     out = host.run(f"systemctl --user -M {user}@ show {unit} -p ActiveEnterTimestampMonotonic -p NRestarts").stdout
-    props = dict(ln.split("=", 1) for ln in out.splitlines() if "=" in ln)
-    return Marks(props.get("ActiveEnterTimestampMonotonic", "0").strip(), props.get("NRestarts", "0").strip() or "0")
+    props = {k: (v.strip() or "0") for k, v in (ln.split("=", 1) for ln in out.splitlines() if "=" in ln)}
+    return Marks(props.get("ActiveEnterTimestampMonotonic", "0"), props.get("NRestarts", "0"))
 
 
 def assert_the_role_did_not_restart(host, user, unit, before: Marks, what: str):
@@ -412,6 +412,11 @@ def test_deploy_restarts_only_the_changed_service(host):
     """
     other = other_placed_service(host)
     before = unit_marks(host, "svc-traefik", "traefik.service")
+    # `other` is the *pod* unit for a pod service, and no `.pod.j2` in this repo renders a
+    # `Restart=` -- so on a pod the NRestarts half of `assert_the_role_did_not_restart` is
+    # inert and the claim stays as strict as a bare timestamp comparison. That is the right
+    # way round: what health-cycles is a container, and a container cycling does not move
+    # its pod unit. The counter earns its keep on the single-container services.
     other_before = unit_marks(host, f"svc-{other[0]}", other[1]) if other else None
     # `systemctl show` answers for a unit it does not know with a 0 timestamp, and 0 ==
     # 0 would make the "and nothing else restarted" assertion below pass without ever
