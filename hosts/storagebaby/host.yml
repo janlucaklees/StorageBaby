@@ -10,9 +10,10 @@ storage_roots:
 # to do by hand. It never partitions, formats or wipes: a new disk is prepared once by
 # hand (the role README, "Adding a disk") and then declared here.
 #
-# The partuuids and the parity `by-id` path are the ones the hand-stowed units this
-# phase retires carry (`snapraid/config/etc/systemd/system/*.mount`), and the names are
-# what `snapraid.conf` already calls the disks.
+# The partuuids and the parity `by-id` path are the ones the hand-stowed units this phase
+# retired carried, and the names are what the deployed `snapraid.conf` already calls the
+# disks -- renaming one would make snapraid treat that disk as new. Verify all four device
+# paths against the running host before the first converge (root README, operator steps).
 storage:
   disks:
     - {

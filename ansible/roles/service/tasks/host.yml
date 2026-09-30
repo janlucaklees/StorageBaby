@@ -148,8 +148,8 @@
   when: not item.stat.exists
 
 # Bind paths are host trees the service uses but does not own, so an existing one is
-# never re-permissioned: the operator (Phase 4's samba role on storagebaby) decides
-# who may read it. The role only guarantees the group exists, that the service user
+# never re-permissioned: the operator decides who may read it, by hand, once (the root
+# README's media step). The role only guarantees the group exists, that the service user
 # is in it, and that a missing path starts out setgid to that group.
 - name: Check which bind directories exist
   ansible.builtin.stat:

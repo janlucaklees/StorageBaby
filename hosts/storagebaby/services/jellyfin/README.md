@@ -121,9 +121,9 @@ Jellyfin comes up before that and serves an empty library; the root `README.md`
 carries this as the shared-trees operator step, the one that runs after the first
 converge rather than before it.
 
-`chgrp` still matters: the group is what Samba and the rest of the host use, and
-what the role would set on a fresh tree. `o+rX` is what Jellyfin actually reads
-through. The tree is media files on a single-tenant NAS, so world-readable costs
+`chgrp` still matters: the group is what the role itself would set on a tree it
+creates, and what anything else on the host that has to reach the library goes
+through. `o+rX` is what Jellyfin actually reads through. The tree is media files on a single-tenant NAS, so world-readable costs
 nothing here; do not copy the pattern to a bind holding anything private.
 
 Note that `test_binds.py::test_container_can_read_group_file` probes through

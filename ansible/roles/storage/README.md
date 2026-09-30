@@ -161,11 +161,45 @@ planned outage.
 Which means **stopping every pool-class service is not enough: `smb` and `nmb` have to be
 stopped too.** Taking a branch down takes the pool down first, and `systemctl stop
 pool.mount` is a plain `umount` — it fails with `EBUSY` while anything at all holds `/pool`
-open, and until Samba is retired (Task 5) `smbd` serves `/pool/shared/*` the whole time.
-So: stop every service with a pool-class volume, `systemctl stop smb nmb`, converge, then
-start them again. Task 5's operator steps carry the same list.
+open, and Samba is retired only **after** that converge — `smbd` serves `/pool/shared/*`
+the whole time until it is. So: stop every service with a pool-class volume,
+`systemctl stop smb nmb`, converge, then start them again. The root `README.md`'s operator
+steps carry the same list, in the order they have to be run in.
 
 Script and configuration changes need no restart.
+
+## Adding a disk
+
+The role does not create the filesystem, so a new disk is prepared once by hand and then
+declared. Four steps, and the third is the only one that is committed:
+
+1. **Partition and format it, on the host.** One partition over the whole disk, GPT, and
+   `ext4` on it — the same shape every declared disk has today:
+
+   ```bash
+   doas parted -s /dev/sdX mklabel gpt mkpart primary ext4 0% 100%
+   doas mkfs.ext4 /dev/sdX1
+   ```
+
+2. **Read its stable path.** Never `/dev/sdX` — that is enumeration order, and it changes:
+
+   ```bash
+   lsblk -o NAME,SIZE,PARTUUID,PARTLABEL
+   ```
+
+   `/dev/disk/by-partuuid/<the partuuid>` is what goes into the declaration.
+
+3. **Declare it** in `hosts/<host>/host.yml` under `storage.disks` (or `storage.parity`) —
+   a `name`, the `device` from step 2, a `mount` under `/mnt/data/`, `fstype: ext4` — and
+   push. The role mounts it, adds it to the pool's branch list and gives it its `disk` and
+   `content` lines in `snapraid.conf`; the next nightly run's `snapraid sync` writes that
+   content file and folds the disk into the array.
+4. **Expect the remount.** A new branch changes `pool.mount`, so the converge that adds a
+   disk takes the pool down and back up — "Change handling" above is the whole of it. Run
+   the pre-flight, stop every pool-class service first, start them afterwards.
+
+The disk's `name` is snapraid's identity for it: choosing one that is already in use, or
+renaming one later, makes snapraid treat the whole disk as new and rewrite parity.
 
 ## The array, the nightly run and its mail
 
@@ -212,8 +246,8 @@ storage:
   file, and running `bash /opt/storagebaby/maintenance/sync.sh` by hand behaves exactly like
   the timer's run. A static test asserts that none of the shipped scripts contains a template
   expression at all.
-- **`stop_services`** is the plugin set. It replaces the hand-written
-  `snapraid/storage-maintenance/plugins/` directory: the role creates
+- **`stop_services`** is the plugin set. It replaces the hand-written `plugins/` directory
+  the retired `snapraid/` tree carried, one script per service per hook: the role creates
   `plugins/<service>/` for each declared name and drops the same two scripts into it —
   `on-before-balance.sh` (stop) and `on-after-scrub.sh` plus `on-failure.sh` (start). The
   failure copy is the half that matters: a run that aborts after stopping a service must not

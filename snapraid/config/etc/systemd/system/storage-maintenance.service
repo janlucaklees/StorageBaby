@@ -1,6 +1,0 @@
-[Unit]
-Description=Storage Maintenance
-
-[Service]
-Type=oneshot
-ExecStart=/opt/scripts/storage-maintenance-unattended.sh
