@@ -1,0 +1,27 @@
+[Unit]
+Description=TCP echo fixture for the tcp_ports contract
+
+[Container]
+# Pinned, and deliberately without `AutoUpdate=registry`: a floating tag on a fixture
+# would let the thing a test measures change under the test.
+Image=docker.io/library/busybox:1.37.0
+ContainerName=tcp-echo
+# BusyBox's persistent server: `-lk` keeps listening after a connection closes and `-e`
+# pipes each one into `cat`, which is the whole service. It has to be the last option.
+Exec=nc -lk -p 7777 -e /bin/cat
+# The loopback target of this service's `tcp_ports` entry. Traefik's `tcp-7777`
+# entrypoint forwards here; nothing else may reach it.
+PublishPort=127.0.0.1:17777:7777
+Environment=TZ={{ tz }}
+# The listening socket, not a round trip: whether a connection really comes back out is
+# Traefik's half of the path, and `test_traefik.py` measures that from the VM. Podman runs
+# a health command that is not a JSON array through `/bin/sh -c`, so the pipe is fine.
+HealthCmd=netstat -lnt | grep -q :7777
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

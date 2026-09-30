@@ -1,4 +1,5 @@
 import re
+from collections import defaultdict
 
 import pytest
 
@@ -140,3 +141,24 @@ def test_service_contract(p):
 
 def test_at_least_one_placement():
     assert placements()
+
+
+def test_a_service_placed_on_several_hosts_is_one_folder_or_identical_copies():
+    """The convention is a symlink; a copy is allowed but may not drift.
+
+    A service that runs on more than one host normally lives once and is symlinked from
+    every other host, which cannot drift at all -- `placements()` resolves the link, so
+    those come out as one directory. The exception is the `tcp-echo` fixture: it belongs to
+    the test hosts and to no real one, so there is nothing to link to. Two copies that
+    drifted would make the two test hosts quietly test two different things.
+    """
+    by_name = defaultdict(list)
+    for p in placements():
+        by_name[p.name].append(p.dir)
+    for name, dirs in by_name.items():
+        trees = {}
+        for d in set(dirs):
+            trees[d] = {f.relative_to(d).as_posix(): f.read_bytes() for f in sorted(d.rglob("*")) if f.is_file()}
+        first = next(iter(trees.values()))
+        for d, tree in trees.items():
+            assert tree == first, f"{name}: {d} differs from another copy of this service folder"

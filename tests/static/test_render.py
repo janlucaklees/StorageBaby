@@ -180,10 +180,24 @@ def test_traefik_entrypoints_are_exactly_the_hosts_tcp_ports(rendered, host):
     port nothing claims any more, and a port leaking onto a host that does not place the
     service -- storagebaby, whose list is empty today, is the case that proves it.
     """
-    unit = (rendered / host / "traefik" / "traefik.container").read_text()
+    unit_dir = rendered / host / "traefik"
+    unit = (unit_dir / "traefik.container").read_text()
     found = TCP_ENTRYPOINT.findall(unit)
     assert all(name == address for name, address in found), f"{host}: {found}"
     assert sorted(int(name) for name, _ in found) == placed_tcp_ports(host), unit
+    # And that the lines really land in the command Quadlet generates. `Exec=` is one
+    # logical line held together by backslashes and the ports are rendered into the middle
+    # of it, so a loop that emitted a blank line or lost a trailing `\` would leave a unit
+    # file that still matches the regex above and a Traefik that never binds the port.
+    r = subprocess.run(
+        ["/usr/lib/podman/quadlet", "-dryrun", "-user"],
+        env={"QUADLET_UNIT_DIRS": str(unit_dir), "PATH": "/usr/bin"},
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    for name, _ in found:
+        assert f"--entrypoints.tcp-{name}.address=:{name}" in r.stdout, r.stdout
 
 
 @pytest.mark.parametrize(
