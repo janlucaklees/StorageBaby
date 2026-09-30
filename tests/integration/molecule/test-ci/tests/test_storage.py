@@ -250,8 +250,8 @@ def test_a_maintenance_run_is_clean(host):
 
     # Stopped before the balance and started again after the scrub: what must not survive the
     # run is a service left down, which is the whole reason the hooks exist. Both test hosts
-    # declare one, so neither loop is vacuous -- test-a a pod service (jellyfin), test-ci a
-    # single-container one (yuzukam), which are the two branches `top_unit` resolves.
+    # declare one, so neither loop is vacuous -- jellyfin on test-a, yuzukam on test-ci, both
+    # single containers. The pod branch of `top_unit` is exercised on no host today.
     assert m["stop_services"], "this host stops nothing, so the hook path below proves nothing"
     for service in m["stop_services"]:
         unit = top_unit(host, service)

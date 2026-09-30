@@ -142,16 +142,17 @@ affected services first (`make stop SERVICE=<name>`) and start them after.
 This role is check-mode clean: every read-only probe carries `check_mode: false` so its
 result is still there for the conditional that reads it, and every step that installs
 something is skipped, so a `--check` run reports what it would install and installs
-nothing. Read the whole role's diff and the warning task from that run.
+nothing. The mount-point assertion is skipped in check mode too (nothing was mounted), so
+a `--check` run on a fresh host shows the units it would write, not whether they mount.
 
-**The whole playbook is check-mode clean, not just this role.** The `service` role had the
-same idiom in five places — a registered `command` whose `stdout` or `rc` a later
-`set_fact`, `until` or `when` reads, where check mode skips the command and leaves behind a
-result with neither — so every one of them carries `check_mode: false` now, and a
-`--check --diff` run of the whole `ansible/playbook.yml` ends `failed=0`. A test on the VM
-converges the playbook in check mode the way `ansible-pull` does and asserts exactly that
-(`tests/integration/molecule/test-ci/tests/test_deploy.py`). So the pre-flight really is
-one: run it, read the whole diff, then push.
+**The whole playbook is check-mode clean, with one limit.** A `--check --diff` run of
+`ansible/playbook.yml` ends `failed=0` on a host that has never converged as well as on
+one that has: `prepare.yml` runs it on the fresh test VM before the first converge and
+fails the scenario otherwise, and `tests/integration/molecule/test-ci/tests/test_deploy.py`
+runs it again on the converged host. The limit: the `service` role is skipped in check
+mode for a service whose user does not exist yet, because nothing of that service can be
+probed before its first converge. So on a never-converged host the pre-flight covers
+`host_base`, this role and nothing else; on a converged host it covers everything.
 
 **This applies to storagebaby's very first converge, and it remounts more than the pool.**
 None of the five rendered units can be byte-identical to the hand-stowed ones they replace:

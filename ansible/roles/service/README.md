@@ -452,7 +452,7 @@ are an answer**. Anything else — 125 for a store it cannot open, 127 for a bro
 than being read as "the image is missing" and turned into a registry error for a fault
 that has nothing to do with the registry.
 
-### Under `--check` the probe runs and the pull does not
+### Under `--check` the probe runs (once the service user exists) and the pull does not
 
 The probe is read-only, and it is what makes a pre-flight before a version bump say
 which images a push would have to fetch. The pull is skipped by its own `when:` rather

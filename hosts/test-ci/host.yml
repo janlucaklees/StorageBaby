@@ -86,9 +86,9 @@ storage:
       # not empty either, because `stable` is promoted on this host's run alone -- an empty
       # list makes the whole stop-before-balance path, the hook scripts the role generates
       # and the pod-or-container unit resolution behind them, vacuous on CI. `yuzukam` is a
-      # single-container service that is placed here and costs nothing to stop and start, so
-      # it exercises the non-pod branch of that resolution; test-a keeps jellyfin and the
-      # pod branch.
+      # single-container service that is placed here and costs nothing to stop and start.
+      # test-a stops jellyfin, also a single container; no test host exercises the pod
+      # branch of that resolution, which storagebaby's own list does not use either.
       stop_services: [yuzukam]
   # The throwaway SMTP sink `prepare.yml` installs on the VM, on the loopback. `tls: false`
   # because nothing but the loopback is between the two ends, and `auth: plain` explicitly
