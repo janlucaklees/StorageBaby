@@ -97,9 +97,13 @@ templates escape naively. Widen that regex and the escape has to become real.
   repository is `bootstrap.sh`'s, once, on a host that has nothing running on it yet.
 - **Everything Chaotic-AUR does not carry: built from the AUR, here, pinned.**
   `tasks/aur_build.yml` takes `aur_package`, `aur_commit` and `aur_version`, and is one
-  block under one condition — the pinned `pkgver-pkgrel` is not the installed one — so a
-  converged host does no clone, no compile and no network. It clones the AUR package at the
-  pinned commit **as an unprivileged build user** (`aurbuild`, home under
+  block under one condition — the installed version is **older** than the pinned
+  `pkgver-pkgrel`, asked of `vercmp`, pacman's own comparison — so a converged host does no
+  clone, no compile and no network. The direction matters: a host whose snapraid is _newer_
+  than the pin (the operator's own `pacman -Syu`, or Arch shipping it one day) keeps it, and
+  the converge says so in a line naming both versions. Nothing here downgrades the program
+  that owns a live array's parity; a version moves forward by bumping the pin. It clones the
+  AUR package at the pinned commit **as an unprivileged build user** (`aurbuild`, home under
   `/var/lib/aurbuild`, no login shell), asserts that the commit really produces
   `aur_version`, installs the recipe's `depends`/`makedepends` **as root**, and runs
   `makepkg --nocheck` as the build user before `pacman -U`ing the result. Task 1 uses it

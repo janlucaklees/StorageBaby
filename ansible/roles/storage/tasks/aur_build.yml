@@ -31,6 +31,11 @@
   failed_when: false
   check_mode: false
 
+# "<name> <version>" minus the name, and empty when the package is not installed at all.
+- name: The installed version of {{ aur_package }}
+  ansible.builtin.set_fact:
+    _aur_installed_version: "{{ (_aur_installed.stdout | trim | regex_replace('^\\S+\\s+', '')) if _aur_installed.rc == 0 else '' }}"
+
 - name: Look for the build stamp of {{ aur_package }}
   ansible.builtin.slurp:
     src: '{{ aur_build_home }}/stamps/{{ aur_package }}'
@@ -38,11 +43,42 @@
   failed_when: false
   check_mode: false
 
+# Which way the installed version differs from the pin, and not merely *that* it does.
+# `pacman -Q` prints "<name> <version>"; `vercmp` is pacman's own comparison of two of
+# those version strings and answers -1, 0 or 1. An inequality alone would treat a *newer*
+# installed copy as a mismatch and `pacman -U` the pin over it -- a silent downgrade of the
+# program that owns the parity of a live array, from the nightly deploy timer, the first
+# time the operator's own `pacman -Syu` moves snapraid ahead of the pin. Bumping the pin is
+# how a version moves forward; nothing here moves one back.
+- name: Compare the installed version with the pin -- {{ aur_package }}
+  ansible.builtin.command: vercmp {{ _aur_installed_version }} {{ aur_version }}
+  register: _aur_vercmp
+  when:
+    - _aur_installed.rc == 0
+    - aur_version | length > 0
+  changed_when: false
+  check_mode: false
+
+# Loud rather than silent, and not a failure: leaving a newer package alone is the right
+# outcome, but an operator reading a converge has to be able to see that the declaration in
+# git is not what the host runs.
+- name: Installed newer than the pin, and left alone -- {{ aur_package }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ aur_package }} {{ _aur_installed_version }} is installed and newer than the pinned
+      {{ aur_version }}. Leaving it: this role does not downgrade a package. Bump
+      {{ aur_package }}'s pin in ansible/roles/storage/defaults/main.yml -- the commit and
+      the version together -- if the declaration is meant to catch up.
+  when:
+    - aur_version | length > 0
+    - _aur_installed.rc == 0
+    - _aur_vercmp.stdout | default('0') | trim | int > 0
+
 - name: Build from the AUR unless the pin is already installed -- {{ aur_package }}
   when:
     - not ansible_check_mode
     - _aur_installed.rc != 0
-      or (aur_version | length > 0 and _aur_installed.stdout | trim != aur_package ~ ' ' ~ aur_version)
+      or (aur_version | length > 0 and (_aur_vercmp.stdout | default('0') | trim | int) < 0)
       or (aur_version | length == 0 and (_aur_stamp.content | default('') | b64decode | trim) != aur_commit)
   block:
     - name: Resolve the clone directory of {{ aur_package }}
