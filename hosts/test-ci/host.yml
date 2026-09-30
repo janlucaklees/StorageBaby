@@ -12,14 +12,14 @@ tz: Europe/Berlin
 storage_roots:
   pool: /pool/apps
   fast: /srv/fast
-# Four 1 GB virtual disks the Molecule harness attaches, partitions and labels: the
+# Four 4 GB virtual disks the Molecule harness attaches, partitions and labels: the
 # device paths are GPT partition labels it writes from these very `name`s, so the
 # tracked file names the disks and the harness makes those names exist. It has to be a
 # stable name in the repository rather than a generated inventory variable --
 # `test_deploy.py` converges through `ansible-pull`, which sees no Molecule inventory,
 # and a different `What=` on that run would remount /pool under the running services'
 # bind mounts. `minfreespace` is the one option that cannot be storagebaby's: 20G on a
-# 1 GB branch means every create fails.
+# 4 GB branch means every create fails.
 storage:
   disks:
     - {
@@ -81,9 +81,15 @@ storage:
       balance_threshold: 5
       scrub_percent: 8
       scrub_older_days: 12
-      # This host places no jellyfin, and a plugin for a service that is not here would
-      # fail every maintenance run. The list is the placement, not a copy of storagebaby's.
-      stop_services: []
+      # The list is the placement, not a copy of storagebaby's: this host has no jellyfin,
+      # and a plugin for a service that is not here would fail every maintenance run. It is
+      # not empty either, because `stable` is promoted on this host's run alone -- an empty
+      # list makes the whole stop-before-balance path, the hook scripts the role generates
+      # and the pod-or-container unit resolution behind them, vacuous on CI. `yuzukam` is a
+      # single-container service that is placed here and costs nothing to stop and start, so
+      # it exercises the non-pod branch of that resolution; test-a keeps jellyfin and the
+      # pod branch.
+      stop_services: [yuzukam]
   # The throwaway SMTP sink `prepare.yml` installs on the VM, on the loopback. `tls: false`
   # because nothing but the loopback is between the two ends, and `auth: plain` explicitly
   # because msmtp's automatic choice considers only SCRAM without TLS -- against a sink that

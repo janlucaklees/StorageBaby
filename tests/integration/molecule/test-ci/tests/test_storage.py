@@ -249,9 +249,13 @@ def test_a_maintenance_run_is_clean(host):
     assert host.file(f"{s['parity'][0]['mount']}/snapraid.parity").exists
 
     # Stopped before the balance and started again after the scrub: what must not survive the
-    # run is a service left down, which is the whole reason the hooks exist.
+    # run is a service left down, which is the whole reason the hooks exist. Both test hosts
+    # declare one, so neither loop is vacuous -- test-a a pod service (jellyfin), test-ci a
+    # single-container one (yuzukam), which are the two branches `top_unit` resolves.
+    assert m["stop_services"], "this host stops nothing, so the hook path below proves nothing"
     for service in m["stop_services"]:
         unit = top_unit(host, service)
+        assert unit, f"{service}: no unit resolved, so neither assertion below would mean anything"
         state = host.run(f"systemctl --user -M svc-{service}@ is-active {unit}").stdout.strip()
         assert state == "active", f"{unit} is {state!r} after the maintenance run\n{log[-4000:]}"
         assert f"Stopping {unit}" in log, log[-6000:]

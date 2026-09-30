@@ -5,14 +5,14 @@ tz: Europe/Berlin
 storage_roots:
   pool: /pool/apps
   fast: /srv/fast
-# Four 1 GB virtual disks the Molecule harness attaches, partitions and labels: the
+# Four 4 GB virtual disks the Molecule harness attaches, partitions and labels: the
 # device paths are GPT partition labels it writes from these very `name`s, so the
 # tracked file names the disks and the harness makes those names exist. It has to be a
 # stable name in the repository rather than a generated inventory variable --
 # `test_deploy.py` converges through `ansible-pull`, which sees no Molecule inventory,
 # and a different `What=` on that run would remount /pool under the running services'
 # bind mounts. `minfreespace` is the one option that cannot be storagebaby's: 20G on a
-# 1 GB branch means every create fails.
+# 4 GB branch means every create fails.
 storage:
   disks:
     - {

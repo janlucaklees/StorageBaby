@@ -84,9 +84,12 @@ def test_bootstrap_retries_the_chaotic_fetch_like_the_role_does():
     defaults = load_yaml(STORAGE_DEFAULTS)
     attempts, delay = defaults["chaotic_fetch_attempts"], defaults["chaotic_fetch_delay"]
     assert attempts > 1 and delay > 0, defaults
-    for value in (attempts, delay):
-        assert re.search(rf"^CHAOTIC_FETCH_[A-Z]+={value}$", script, re.M), (
-            f"bootstrap.sh does not carry the role's retry value {value}"
+    # Each value bound to its own name: `[A-Z]+` would accept the two of them swapped, and
+    # `CHAOTIC_FETCH_ATTEMPTS=30` every 3 seconds against a CDN that just answered 503 is
+    # the opposite of what the schedule says.
+    for name, value in (("ATTEMPTS", attempts), ("DELAY", delay)):
+        assert re.search(rf"^CHAOTIC_FETCH_{name}={value}$", script, re.M), (
+            f"bootstrap.sh does not carry the role's CHAOTIC_FETCH_{name}={value}"
         )
     tasks = load_yaml(STORAGE_TOOLS)
     retried = [

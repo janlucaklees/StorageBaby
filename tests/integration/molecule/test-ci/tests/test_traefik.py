@@ -116,6 +116,13 @@ def test_no_tcp_port_was_lost_to_an_address_collision(host):
     carry `Restart=always`, so the pair flaps rather than failing, and a converge that
     happened to catch the good half of the cycle would pass everything above.
 
+    Asserted on what the journal *says*, not on grep's exit status: `journalctl | grep`
+    answers 1 for a clean journal and 1 for an empty one, so the same pass would have come
+    back from a rotated journal, a `_UID=` that matched nothing, or a `journalctl` that
+    failed with `-q` swallowing its own diagnostic. This is the one assertion standing for
+    the whole entrypoint-versus-loopback fix, so it reads the haystack first and requires it
+    to be non-empty.
+
     Read per service *user* rather than per unit: the error can come from either side and
     from either process -- Traefik's own listener, or the rootlessport helper podman starts
     for a `PublishPort=` -- and a unit filter would have to guess which unit of a pod
@@ -127,8 +134,11 @@ def test_no_tcp_port_was_lost_to_an_address_collision(host):
     users = ["svc-traefik"] + sorted({f"svc-{name}" for name, _, _ in entries})
     for user in users:
         uid = host.user(user).uid
-        r = host.run(f"journalctl _UID={uid} --no-pager -q | grep -i 'address already in use'")
-        assert r.rc == 1, f"{user} could not bind a port:\n{r.stdout}"
+        r = host.run(f"journalctl _UID={uid} --no-pager -q")
+        assert r.rc == 0, f"journalctl for {user} (uid {uid}) failed: {r.stderr}"
+        assert r.stdout.strip(), f"{user} (uid {uid}) logged nothing at all: there is no haystack here"
+        offending = [line for line in r.stdout.splitlines() if "address already in use" in line.lower()]
+        assert not offending, "{} could not bind a port:\n{}".format(user, "\n".join(offending[:20]))
 
 
 def vm_address(host) -> str:

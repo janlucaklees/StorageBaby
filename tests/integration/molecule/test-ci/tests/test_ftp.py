@@ -27,7 +27,14 @@ from test_traefik import traefik_tcp_bind_address, vm_address
 # and a parser failure the same red. paperless-ngx ingests `text/plain` with its own
 # parser, and that is one document row either way.
 PROBE = "storagebaby-ftp-probe.txt"
-PAYLOAD = "Storagebaby FTP probe document.\\nUploaded by the integration suite.\\n"
+# A nonce in the body, not decoration: paperless-ngx checksums an incoming file and refuses
+# one that matches a document it already holds ("It is a duplicate of ..."), and with
+# `PAPERLESS_CONSUMER_DELETE_DUPLICATES` at its default it leaves the rejected file in the
+# consume directory. With a constant payload a second `verify` against a VM left up by
+# `converge` -- the documented iteration loop -- would fail both closing assertions at once
+# and read exactly like a broken consumer. The cost is one more document and one more
+# `/tmp` file per run on a VM that gets destroyed, which is the right side of that trade.
+PAYLOAD = "Storagebaby FTP probe document, run %s.\\nUploaded by the integration suite.\\n"
 
 COUNT_SQL = "select count(*) from documents_document"
 # `227 Entering Passive Mode (a,b,c,d,p1,p2)` out of curl's protocol trace.
@@ -109,8 +116,12 @@ def test_an_ftp_upload_becomes_a_document(host):
     address = vm_address(host)
     consume = volume_path(hostvars, spec, "consume")
 
+    # Bound once: it is read out of the running container, so an inline call would be a
+    # second `podman exec` per interpolation -- and it is the value scrubbed out of the
+    # failure messages below.
+    password = ftp_password(host)
     before = documents(host)
-    r = host.run(f"printf '{PAYLOAD}' > /tmp/{PROBE}")
+    r = host.run(f"printf '{PAYLOAD}' \"$(date +%s%N)\" > /tmp/{PROBE}")
     assert r.rc == 0, r.stderr
     # `--disable-epsv` is the flag that makes this say something about the advertised
     # address: curl tries EPSV first, and a `229` reply carries no address at all, so the
@@ -118,20 +129,35 @@ def test_an_ftp_upload_becomes_a_document(host):
     # curl from *ignoring* the address it was given, which is its default. Between them the
     # data connection really goes where the server said -- which is what an older scanner's
     # client does, and what fails silently when `-P` is wrong.
+    # The two `-Q` commands are the chroot assertion, and they carry `-` so curl sends them
+    # *after* the transfer -- nothing about the upload can depend on them -- and `*` so a
+    # refusal does not fail the transfer either. Both outcomes prove the same thing: from a
+    # virtual user's home, `CWD ..` either goes nowhere or is denied, and `PWD` answers `/`.
+    # It is the one security property of the FTP drop (`-l puredb:` plus pure-ftpd's default
+    # chroot for virtual users) that nothing else here measures.
     r = host.run(
         f"curl -sS -v --ftp-pasv --disable-epsv --no-ftp-skip-pasv-ip "
-        f"--connect-timeout 20 --max-time 120 "
-        f"-T /tmp/{PROBE} ftp://{spec['config']['ftp_user']}:{ftp_password(host)}@{address}:{port}/"
+        f"--connect-timeout 20 --max-time 120 -Q '-*CWD ..' -Q '-*PWD' "
+        f"-T /tmp/{PROBE} ftp://{spec['config']['ftp_user']}:{password}@{address}:{port}/"
     )
-    assert r.rc == 0, f"the upload to {address}:{port} failed: {r.stderr}"
+    # `curl -v` writes its whole FTP command trace to stderr, `PASS <the real password>`
+    # included, and these failure messages end up in the Molecule output and in a CI job log.
+    trace = r.stderr.replace(password, "***")
+    assert r.rc == 0, f"the upload to {address}:{port} failed: {trace}"
 
-    found = PASV_REPLY.search(r.stderr)
-    assert found, f"no 227 reply in curl's trace:\n{r.stderr}"
+    found = PASV_REPLY.search(trace)
+    assert found, f"no 227 reply in curl's trace:\n{trace}"
     advertised = found.group(1).replace(",", ".")
     assert advertised == bind, f"the server advertised {advertised}, Traefik binds {bind}"
     data_port = int(found.group(2)) * 256 + int(found.group(3))
-    passive = sorted(p for _, p, _ in placed_tcp_entries(host) if p != port)
+    # This service's range and not the host's: `placed_tcp_entries` answers for every placed
+    # service, so an unfiltered set would accept a data connection that landed on another
+    # service's entrypoint -- `tcp-echo`'s 7777 on both test hosts -- and would print
+    # "outside 7777-21109", which is not a range.
+    passive = sorted(p for name, p, _ in placed_tcp_entries(host) if name == "paperless" and p != port)
+    assert passive, "paperless declares no passive range on this host"
     assert data_port in passive, f"the data connection went to {data_port}, outside {passive[0]}-{passive[-1]}"
+    assert re.search(r'257 "/"', trace), f"the account is not chrooted to its home:\n{trace}"
 
     # Polled: the consumer wakes on its polling interval, then parses and files the
     # document. Two minutes is generous for a one-line text file on this VM.

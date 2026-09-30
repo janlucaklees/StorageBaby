@@ -239,8 +239,16 @@ def test_snapraid_conf_renders_and_parses(rendered, tmp_path, host):
     # the devtools container and /tmp is not, which is the only pair of writable devices
     # there is in there.
     other = Path("/dev/shm") / f"storagebaby-stub-{host}"
-    if other.parent.stat().st_dev == tmp_path.stat().st_dev:
-        pytest.skip("/dev/shm and the temporary directory are one device: no stub array is possible")
+    # An assert and not a skip: the condition is a fact about the devtools image (/dev/shm is
+    # tmpfs there, /tmp is not), not about whatever host happens to run the suite. As a skip, a
+    # base image change or an `--ipc=host` would turn the only case that hands the rendered
+    # config to snapraid itself into three green skips, and the file would stop being
+    # validated at all. Fix the image instead.
+    assert other.parent.stat().st_dev != tmp_path.stat().st_dev, (
+        "/dev/shm and the temporary directory are one device, so no two-device stub array can be "
+        "built and snapraid would never see the rendered config. That is the devtools image's "
+        "shape, not a host's -- fix devtools/Dockerfile rather than skipping the case."
+    )
     shutil.rmtree(other, ignore_errors=True)
     stub = tmp_path / "snapraid.conf"
     stub.write_text(_stub_tree(conf, root, other))
@@ -345,3 +353,26 @@ def test_maintenance_units_verify(rendered, host):
     ]
     r = subprocess.run(["systemd-analyze", "verify", *units], capture_output=True, text=True, cwd=str(REPO))
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+# Phase 4 replaced both of these directories with the `storage` role and dropped Samba
+# entirely, and the spec says so in §6. A returning `snapraid/` would be the more dangerous
+# of the two: its `install.sh` copied hand-written mount units over the ones this role
+# renders, and the retired `Makefile` targets that used to rsync a live server's tree into
+# the checkout are gone for the same reason.
+RETIRED_ROOT_DIRS = ["samba", "snapraid"]
+
+
+def test_the_retired_root_directories_are_gone():
+    """Neither `samba/` nor `snapraid/` exists at the repository root.
+
+    A directory, not a string: what this refuses is the tree coming back -- by a revert, a
+    merge or an rsync from the live server -- and not a mention of it in prose, which every
+    document that explains the retirement has to be free to make.
+    """
+    for name in RETIRED_ROOT_DIRS:
+        assert not (REPO / name).exists(), (
+            f"{name}/ is back at the repository root. Phase 4 retired it: the mounts, the pool, "
+            "the array and the nightly maintenance run are ansible/roles/storage, and Samba is "
+            "dropped rather than migrated."
+        )

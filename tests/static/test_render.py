@@ -189,7 +189,9 @@ def test_traefik_entrypoints_are_exactly_the_hosts_tcp_ports(rendered, host):
     Asserted as a set per host rather than per service, because the two failures worth
     catching are both invisible to a per-service check: an entrypoint left over from a
     port nothing claims any more, and a port leaking onto a host that does not place the
-    service -- storagebaby, whose list is empty today, is the case that proves it.
+    service. No host's list is empty today -- paperless's 21 and its passive range wherever
+    paperless is placed, the `tcp-echo` fixture's 7777 on the two test hosts -- so it is the
+    set comparison that carries the claim, on every one of them.
 
     Each entrypoint also has to carry a real bind address, which is the half a render can
     only see through the placeholder it was given: on a host the value is the primary
