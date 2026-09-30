@@ -120,6 +120,8 @@ Phase 2 adds the optional keys `binds`, `devices`, `groups`, `config` and the ho
 
 Phase 3 adds `routes` (several hostnames for one service), `host_secrets` (a value shared between two services of one host), `hooks.after_change`, plain systemd timer units in `quadlet/`, and makes `backup` a block the role consumes rather than a declaration nothing reads; it also turns the four multi-container stacks into pods. See `2026-09-23-phase-3-pods-and-backups-design.md`, which supersedes this section wherever the two disagree.
 
+Phase 4 adds `tcp_ports` (plain-TCP ports Traefik listens on and forwards to loopback, which is what carries FTP into Paperless) and the host keys `storage` (the disks, parity, mergerfs pool, snapraid array and maintenance run the new `storage` role realises, replacing `mountpoints`) and `tcp_bind_address`. It retires `samba/`, `snapraid/` and `paperless-upload`, after which nothing on a host is hand-stowed. See `2026-09-25-phase-4-storage-and-ftp-design.md`.
+
 The service role, for each placed service:
 
 - creates `svc-<name>` (system user, subuid/subgid via `usermod --add-subids`, linger)

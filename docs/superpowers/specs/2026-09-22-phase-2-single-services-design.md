@@ -67,3 +67,5 @@ Kopia connection is declared, not clicked: secrets `server_password`, `repositor
 ## 7. Open item
 
 Ownership and mode of `/pool/shared/media` and `/pool/shared/scans` on storagebaby decide the one-time permission command the operator runs before Jellyfin and the uploader can read them. Default after the Task 5 finding: `chmod -R o+rX /pool/shared/media` for Jellyfin (linuxserver images drop supplementary groups); for `scans` the uploader keeps its groups, so `chgrp -R scans /pool/shared/scans && chmod -R g+rwX /pool/shared/scans` applies. Not executed by the role.
+
+**Closed by Phase 4 (2026-10-01).** Only the `media` half remains: `chgrp -R media /pool/shared/media && chmod -R o+rX /pool/shared/media`, one operator step after the first converge (root `README.md`). `/pool/shared/scans` needs nothing at all — `paperless-upload` and the Samba share it watched are both retired, and the scanner writes into paperless's own `consume` volume by FTP.

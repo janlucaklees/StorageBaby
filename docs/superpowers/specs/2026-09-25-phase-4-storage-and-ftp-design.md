@@ -1,6 +1,6 @@
 # Phase 4: storage roles, Samba retirement and FTP through Traefik
 
-Status: reviewed, approved (2026-09-25)
+Status: reviewed, approved (2026-09-25); implemented 2026-10-01
 Date: 2026-09-25
 Extends: `2026-09-21-gitops-podman-platform-design.md`, `2026-09-22-phase-2-single-services-design.md`, `2026-09-23-phase-3-pods-and-backups-design.md`.
 
@@ -158,8 +158,29 @@ tcp_ports:
 
 ## 8. Operator items this phase creates
 
-- Copy the four `by-partuuid` paths from the deployed mount units into `hosts/storagebaby/host.yml`; keep `pool.options` byte-identical to the deployed `pool.mount` so the first converge does not remount the pool (verify with `--check --diff`).
-- Fill `hosts/storagebaby/secrets/mail.sops.yaml` (`smtp_password`) and the paperless `ftp_password`; set `service_config.paperless.ftp_public_address` to storagebaby's LAN address.
-- Point the printer at `<storagebaby>:21`, user `config.ftp_user`.
-- Remove the hand-stowed units and `/opt/scripts` after the first converge succeeds (the role installs under `/opt/storagebaby/`; the old timer must be disabled so the run does not happen twice). The README gives the commands.
-- Stop and disable `smb`/`nmb` and uninstall `samba` by hand; the role does not remove packages it never installed.
+As implemented. `README.md`, "Operator steps before and right after the first storagebaby deploy", carries these as numbered steps 7–12 with the commands; this list is the summary.
+
+- **Check the declaration against the running host** (step 7): the three data disks are `by-partuuid` paths and the parity disk a `by-id` one — four devices, not four partuuids — and the block was written from the deployed units in Task 1 rather than left for the operator to copy, so what is left is to read it back. `pool.options` has to stay byte-identical to the deployed `pool.mount`, and the disk names `d1`/`d2`/`d3` are snapraid's identity for those disks.
+- **Fill `hosts/storagebaby/secrets/mail.sops.yaml` (`smtp_password`) and `storage.mail.smtp_host`/`smtp_user`**, plus the paperless `ftp_password` (step 1's table). The relay was never captured in this repository; until it is real the maintenance run succeeds and its mail step fails, nightly.
+- **Set `tcp_bind_address` if the host has more than one address** (step 8). This replaces the spec's `service_config.paperless.ftp_public_address`: the address is Traefik's to bind as well as the FTP server's to advertise, so it became one top-level `host.yml` key (§5's amendment) and the pod template reads it.
+- **Point the printer at `<that address>:21`**, user `config.ftp_user` (`scanner`), passive mode.
+- **The first converge is a planned outage, run by hand** (step 9): stop the deploy timer, pre-flight the whole playbook with `--check --diff`, stop every pool-class service **and `smb`/`nmb`** — `systemctl stop pool.mount` is a plain `umount` and fails `EBUSY` while `smbd` holds `/pool` — converge, start everything, start the timer. The rendered units cannot be byte-identical to the stowed ones, so all four branches and the pool are remounted once. That converge also adds Chaotic-AUR, refreshes the package databases once and may `pacman -U` the pinned snapraid over the installed one, leaving `base-devel` behind; Traefik restarts once for the new TCP entrypoints. A first converge that cannot decrypt now aborts in the `storage` role's mail task, because `storage` runs before the services.
+- **Remove `/opt/scripts` and the old `~/StorageBaby` checkout after it succeeds** (step 10). The old timer is **not** disabled: `storage-maintenance.timer` and `.service` keep their names and the role overwrote both, so there is no second run — `systemctl cat storage-maintenance.service` showing `/opt/storagebaby/maintenance/…` is the check.
+- **Stop, disable and uninstall Samba by hand** (step 10); the role does not remove packages it never installed. The share trees stay on disk.
+- **Verify what the converge cannot** (step 12): every mount active and `/pool` on `fuse.mergerfs` with the declared options, `storage-maintenance.timer` enabled, one manual `storage-maintenance.service` run with its mail arriving, and a scan from the printer appearing in Paperless.
+
+## 9. Amendments during implementation
+
+Each of these changed something the sections above state. They are recorded here rather than rewritten into the text, so the spec still reads as what was approved.
+
+1. **Packages come from Chaotic-AUR and the AUR, not from upstream artefacts** (2026-09-26, JLK). mergerfs is in Chaotic-AUR, which the role configures the project's documented way; `snapraid` and `mergerfs-tools-git` are not, so `tasks/aur_build.yml` builds them as an unprivileged build user, pinned by AUR commit. No tarball is unpacked under `/opt`.
+2. **The test VM's disks are identified by GPT partition label, and are 4 GB each.** The tracked `host.yml` names `/dev/disk/by-partlabel/<name>` and the Molecule harness writes those labels, because `test_deploy.py` converges through `ansible-pull`, which sees no Molecule inventory. 1 GB branches left jellyfin too little room on the pool.
+3. **`snapraid.maintenance.stop_services` replaces the hand-copied `plugins/jellyfin/` directory.** A verbatim plugin would stop a service `test-ci` does not place and fail every maintenance run there. It retires the `samba` plugin by construction.
+4. **`mail` gained optional `tls` and `auth`.** With `auth on` and no TLS msmtp considers only SCRAM and would never authenticate against the test sink. Both default to the production values, so storagebaby's block is the spec's.
+5. **Images are pulled before anything is written, and systemd's default start timeout is kept** (2026-09-29, JLK). A first start that pulls a large image can exceed `TimeoutStartSec=90`; the `service` role therefore pulls every image in `images.yml` before a unit is rendered, stopped or restarted, so a failed pull leaves the host byte-identical. A service that needs longer than 90 s to _start_ is itself suspect, so the timeout stays as it is.
+6. **TCP entrypoints bind `tcp_bind_address`, not the wildcard** (§5's own amendment, 2026-09-30). Measured: a wildcard listener and the pod's `127.0.0.1:<port>` publish are mutually exclusive, which every `range` entry and the FTP passive range need. The same address is the FTP server's `pasv_address`, and it replaces the spec's `ftp_public_address`.
+7. **A `.build` fixture service is kept on the test hosts.** `paperless-upload` was the only user of the role's build-unit path; `build-echo` keeps `settled_builds`, the build-before-pod ordering and the rebuild-on-config-change covered after it was retired.
+8. **The FTP part carries `AddCapability=AUDIT_WRITE`.** Bisected: `pure-ftpd` exits 252 under podman's default capability set with no diagnostic, and `CAP_AUDIT_WRITE` — in Docker's default set, not podman's — is the one that makes it start. Rootless it is a capability inside the service user's own namespace, the same argument `AddCapability=MKNOD` on Collabora rests on.
+9. **The first converge on storagebaby remounts the pool, and that is accepted** (2026-09-26, JLK) rather than avoided by reproducing the stowed `What=`. It is one planned outage, and §8 step 9 is the procedure.
+10. **No role runs `pacman -Syu` and none reboots a host** (2026-09-29, JLK). Keeping a host current is the operator's job. The role's one `-Sy` database refresh, on the converge that added the repository, stays; `bootstrap.sh` adds Chaotic-AUR before its single `-Syu` so a fresh host's upgrade already knows it.
+11. **`storage-maintenance-failed.service` was added.** The maintenance unit `Requires=` the pool, so a pool that does not come up fails the unit's _start job_ and `ExecStart=` never runs — the wrapper's own mail included. The `OnFailure=` notifier is what mails that night instead.
