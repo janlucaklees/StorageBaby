@@ -95,6 +95,30 @@
   failed_when: _mgr.rc not in [0, 1]
   changed_when: false
 
+# Both helpers run a command in a service user's session as root, and both are needed
+# by services that have no secrets at all (hooks), so they are installed here rather
+# than from secrets.yml. Installed *before* images.yml below, because the image probe
+# and the pull go through `podman-as`, and this is the last thing the pull needs that
+# it does not have yet.
+- name: Install the service-user helpers
+  ansible.builtin.copy:
+    src: '{{ item.src }}'
+    dest: '{{ item.dest }}'
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - { src: podman-secret-sync.sh, dest: /usr/local/sbin/podman-secret-sync }
+    - { src: podman-as, dest: /usr/local/sbin/podman-as }
+  loop_control:
+    label: '{{ item.dest }}'
+
+# Images, before anything of this service is written to the host: not a unit file, not
+# the config tree, not a `podman secret`, not even a volume directory. See images.yml
+# for why that ordering is the point and not an accident.
+- name: Images
+  ansible.builtin.include_tasks: images.yml
+
 # Create-only, exactly like the bind directories below: the role hands a service a
 # volume directory that starts out its own (0750, svc-owned) and then never touches
 # its ownership or mode again. An image owns its data tree after first start --
@@ -167,22 +191,6 @@
     mode: 'u=rwX,go=rX'
   register: config_copy
   when: (service_dir ~ '/config') is directory
-
-# Both helpers run a command in a service user's session as root, and both are needed
-# by services that have no secrets at all (hooks), so they are installed here rather
-# than from secrets.yml.
-- name: Install the service-user helpers
-  ansible.builtin.copy:
-    src: '{{ item.src }}'
-    dest: '{{ item.dest }}'
-    owner: root
-    group: root
-    mode: '0755'
-  loop:
-    - { src: podman-secret-sync.sh, dest: /usr/local/sbin/podman-secret-sync }
-    - { src: podman-as, dest: /usr/local/sbin/podman-as }
-  loop_control:
-    label: '{{ item.dest }}'
 
 - name: Secrets
   ansible.builtin.include_tasks: secrets.yml

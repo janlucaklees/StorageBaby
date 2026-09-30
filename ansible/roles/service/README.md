@@ -24,6 +24,16 @@ It is included once per `hosts/**/services/<name>/service.yml` by `ansible/playb
 The merge of `service.config` happens in the playbook, not in the role: `service` is an
 include_role param, and a role param outranks any `set_fact` the role could make.
 
+A `*.container.j2` or `*.build.j2` is rendered **twice** per converge, and must render
+standalone: once through `lookup('template')` in `images.yml`, only to read its `Image=`
+lines (see "Images are pulled before anything of a service is written"), and then for
+real through the `template` module. The lookup renders on the controller with the same
+task vars the module gets, so everything in the table above is available — but nothing
+the module alone provides is. A template reaching for `ansible_managed`, a `template_*`
+variable, a `#jinja2:` header or the surrounding loop's `item` would render differently
+in the two passes, or fail the first one outright, and no container or build template in
+this repo does.
+
 ## Idioms
 
 ```jinja
@@ -308,10 +318,13 @@ test enforces all four. They are contract, not style: the integration verifier r
 `podman healthcheck run <ContainerName>` for every container of every placed service, so a
 unit without a health command or without its own name fails the suite.
 
-## Images are pulled before units change
+## Images are pulled before anything of a service is written
 
-`units.yml` begins by pulling every image this service's units name, before it writes a
-unit file, reloads the user manager, restarts anything or starts anything.
+`images.yml` pulls every image this service's units name, and `host.yml` includes it as
+early as the pull's own prerequisites allow — right after the service user's manager is
+up and `podman-as` is installed, and therefore **before** the volume and bind
+directories, the config copy, the secret sync, every unit file, every Traefik route and
+every timer.
 
 Without it a first start **is** the pull. Podman fetches the image from inside
 `systemctl start`, a container unit inherits the user manager's default
@@ -329,46 +342,105 @@ with its image already local, is a service worth looking at. The same holds for 
 version bump: the image is on disk before the restart, so the downtime is the restart
 and nothing else.
 
-The list comes from `lookup('template')` on the service's own `*.container.j2` and
-`*.build.j2` plus the generated sidecar, not from the files the role is about to render.
-That is what makes a failed pull harmless: nothing on the host has been touched, so the
-next converge renders, reloads and restarts normally. Rendering first and failing after
-would leave a unit file on disk that `template` calls unchanged from then on — the
-reload and the restart that carry it into the running container would never happen
-again, and the deploy after the failed one would go green over a service still running
-the old image.
+### What a failed pull has already done to the host, and what it has not
 
-**Skipped:** an `Image=` that names another unit (`<stem>.build`, `<stem>.image`), a
-value equal to an `ImageTag=` one of this service's `.build` units produces, and
-anything under `localhost/`. None of them exists in a registry, and none of them needs
-this: Quadlet writes a `.build` as `Type=oneshot`, which systemd starts with **no**
-timeout, so whatever its Containerfile pulls cannot hit the wall above.
+The ordering is the point, not a convenience. Everything the role writes for a service —
+config, `podman secret`s, unit files, drop-ins, route files, timers — reports `changed`
+exactly **once**, on the run that really writes it, and that one `changed` is what the
+restarts at the end of `units.yml` are keyed on. Write first and fail after, and the
+retry finds all of it already matching, restarts nothing, and goes green over a service
+still running the old config, the old secret and the old image.
 
-**Already local is left alone.** Each image is probed with `podman image exists` first
-and pulled only when it is missing — pull policy `missing`, spelled out. That is
-deliberate for the `AutoUpdate=registry` services: a floating tag is moved by the
-service user's own `podman-auto-update.timer`, on its schedule and with its own restart.
-Re-pulling a tag that is already there would fetch a newer digest behind auto-update's
-back and restart the service from a converge that was meant to change nothing. This role
-only guarantees that the reference a unit names exists locally before that unit starts.
+So on a pull that cannot be done, for the service the play stops at:
+
+- **already done:** `svc-<name>` exists with subuid/subgid and linger, its extra groups
+  exist and it is a member of them, `/usr/local/sbin/podman-as` and
+  `podman-secret-sync` are installed. The pull needs all of it. A _membership_ change
+  also stopped and started the user manager by then (see "What the role does to the
+  host"), which is the one thing ahead of the pull that touches a running container.
+- **not done:** volume directories, bind directories, `{{ config_dir }}`, the config
+  copy, the `podman secret` store, the unit directory, every rendered unit and drop-in,
+  the drop-in cleanup, the Traefik route files, `daemon-reload`, every `restart`, every
+  `start`, the timers, the hooks.
+
+Every service sorted **after** it in the play is untouched entirely, and every service
+sorted before it has already converged — the failed pull aborts the play, it does not
+roll anything back.
+
+The image list comes from `lookup('template')` on the service's own `*.container.j2` and
+`*.build.j2` plus the generated sidecar, not from the files the role is about to render —
+because at that point those files do not exist yet, and must not.
+
+One hole this does **not** close, because it has the same shape and predates the pull:
+`Render quadlet units` in `units.yml` is a loop, and a `template` failure on item _n_
+leaves items `1..n-1` written with no `daemon-reload` and no restart. It is far less
+dangerous — a broken template fails on every converge, so nothing goes green while it is
+broken, and a brand-new unit is still picked up by "Start units that are not up"; the
+residue is an _updated_ unit that rendered before the failing one. Note that the
+pre-pull's `lookup('template')` covers only `*.container.j2` and `*.build.j2`, so a
+broken `*.pod.j2` or `*.volume.j2` is exactly this case and not a pull failure.
+
+### What is not pulled
+
+An `Image=` that names another unit (`<stem>.build`, `<stem>.image`), a value equal to an
+`ImageTag=` one of this service's `.build` units produces, and anything under
+`localhost/`. None of them exists in a registry, and none of them needs this: Quadlet
+writes a `.build` as `Type=oneshot`, which systemd starts with **no** timeout, so
+whatever its Containerfile pulls cannot hit the wall above.
+
+A `.image` unit is a `Type=oneshot` too and so has the same excuse — but unlike a
+`.build` its own `Image=` _is_ a registry reference, and nothing here pulls it. So the
+skip is only sound while no service declares one, and
+`test_no_service_declares_an_image_unit` in `tests/static/test_quadlet_conventions.py`
+keeps it that way: a `*.image.j2` fails the static suite until this file learns to read
+it.
+
+### Already local is left alone
+
+Each image is probed with `podman image exists` first and pulled only when it is missing —
+pull policy `missing`, spelled out. That is deliberate for the `AutoUpdate=registry`
+services: a floating tag is moved by the service user's own `podman-auto-update.timer`,
+on its schedule and with its own restart. Re-pulling a tag that is already there would
+fetch a newer digest behind auto-update's back and restart the service from a converge
+that was meant to change nothing. This role only guarantees that the reference a unit
+names exists locally before that unit starts.
 
 The probe is also how `changed` is decided: `podman pull` prints an image ID whether it
 fetched anything or not, so "it was not there, and now it is" is the honest reading, and
 it is made against podman's own lookup rather than against progress lines podman is free
-to reword.
+to reword. An attempt that did **not** fetch the image is not reported `changed` either —
+the journal of a failed nightly deploy is the one place that must read at face value.
 
-**Under `--check` the probe runs and the pull does not.** The probe is read-only, and it
-is what makes a pre-flight before a version bump say which images a push would have to
-fetch. The pull is skipped by its own `when:` rather than by the module's check-mode
-handling, because a conditional skip never enters the retry loop, while a module-level
-skip produces a result the `until` then has to be able to read.
+`podman image exists` answers rc 0 for found and rc 1 for missing, and **only those two
+are an answer**. Anything else — 125 for a store it cannot open, 127 for a broken
+`podman-as`, a user manager that went away — fails the task with podman's stderr, rather
+than being read as "the image is missing" and turned into a registry error for a fault
+that has nothing to do with the registry.
 
-**Retries:** three attempts, thirty seconds apart, each wrapped in `timeout -k 30 600`.
-The timeout is the program and not the task's `timeout:` keyword, because ansible-core
-raises a task timeout as a `BaseException` that bypasses the `until` loop — a stalled
-pull would then fail the converge instead of being retried, and a stall is the case this
-defends against. A pull that still cannot be done after that fails the converge, naming
-the image, with every service on the host still running.
+### Under `--check` the probe runs and the pull does not
+
+The probe is read-only, and it is what makes a pre-flight before a version bump say
+which images a push would have to fetch. The pull is skipped by its own `when:` rather
+than by the module's check-mode handling, because a conditional skip never enters the
+retry loop, while a module-level skip produces a result the `until` then has to be able
+to read.
+
+### Retries, and how long a dead registry can cost
+
+Three attempts per image, thirty seconds apart, each wrapped in `timeout -k 30 600`. The
+timeout is the program and not the task's `timeout:` keyword, because ansible-core raises
+a task timeout as a `BaseException` that bypasses the `until` loop — a stalled pull would
+then fail the converge instead of being retried, and a stall is the case this defends
+against.
+
+The loop **stops at the first image it cannot fetch** (`loop_control.break_when`);
+without that, ansible would run every remaining item and only then fail the task, so an
+unreachable registry would cost the full budget per image — immich alone is five, close
+to three hours, and `storagebaby-deploy.service` is a `Type=oneshot` with no
+`TimeoutStartSec` to cut it short. With the break, the worst case **per service** is
+3 × 600 s + 2 × 30 s ≈ **31 minutes** to the first failure, plus the time any images of
+that same service pulled successfully before it. The converge then fails, naming the
+image, with every service on the host still running.
 
 ## Unit names and order
 

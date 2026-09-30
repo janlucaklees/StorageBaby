@@ -37,6 +37,23 @@ def test_container_declares_health_and_restart(path):
         assert any(ln.startswith(required) for ln in lines), f"{path.name}: no line starting with {required!r}"
 
 
+@pytest.mark.parametrize("d", _service_dirs(), ids=lambda d: d.name)
+def test_no_service_declares_an_image_unit(d):
+    # Quadlet's `.image` unit pulls a registry reference of its own, and the role's
+    # pre-pull does not read it: `images.yml` renders only `*.container.j2` and
+    # `*.build.j2` to collect `Image=` lines, and it *skips* an `Image=<stem>.image`
+    # because a unit reference cannot be pulled. So a `.image` unit is the one way an
+    # image can reach a host without the pre-pull ever seeing it -- fetched instead from
+    # inside `systemctl start`, which is the 90-second start timeout this repo removed
+    # that exposure for. Unsupported until `images.yml` reads `*.image.j2` too, and
+    # unsupported means "fails here", not "works differently on the NAS".
+    found = sorted(f.name for f in (d / "quadlet").glob("*.image.j2"))
+    assert not found, (
+        f"{d.name}: {found} -- a `.image` unit's own image is not pre-pulled; "
+        "teach ansible/roles/service/tasks/images.yml to read it first"
+    )
+
+
 @pytest.mark.parametrize("path", _containers(), ids=lambda p: f"{p.parent.parent.name}/{p.name}")
 def test_published_ports_are_loopback_only(path):
     # Traefik is the only thing on these hosts that listens on a routable address, and a

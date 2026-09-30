@@ -115,12 +115,13 @@ IMAGE_REF = re.compile(
 def test_rendered_images_are_pullable_references(rendered, p):
     """Every rendered `Image=` is a fully qualified reference with a tag or a digest.
 
-    The role pulls these before it touches a unit (`ansible/roles/service/README.md`,
-    "Images are pulled before units change"), so an ambiguous one is not a style
-    complaint: `podman pull nginx:alpine` resolves through the host's
-    `unqualified-search-registries`, which means the image a converge fetches would
-    depend on a file outside this repository -- and an untagged reference silently means
-    `:latest`, which is a different image on the NAS than on the test VM.
+    The role pulls these before it touches anything of the service
+    (`ansible/roles/service/README.md`, "Images are pulled before anything of a service is
+    written"), so an ambiguous one is not a style complaint: `podman pull nginx:alpine`
+    resolves through the host's `unqualified-search-registries`, which means the image a
+    converge fetches would depend on a file outside this repository -- and an untagged
+    reference silently means `:latest`, which is a different image on the NAS than on the
+    test VM.
 
     Checked on the *rendered* unit and not on the template, because two of them build the
     reference out of `service.config.version`.

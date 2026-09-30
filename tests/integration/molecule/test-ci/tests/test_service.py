@@ -281,8 +281,8 @@ def rendered_unit_images(host, user: str) -> dict[str, str]:
 def test_every_image_a_unit_names_is_in_the_local_store(host, owner, spec_path):
     """The role pulled every image before it started anything, so all of them are here.
 
-    This is the observable half of "Images are pulled before units change"
-    (`ansible/roles/service/README.md`). A running container proves its own image is
+    This is the observable half of "Images are pulled before anything of a service is
+    written" (`ansible/roles/service/README.md`). A running container proves its own image is
     local, but the claim is about the whole set -- including the generated backup
     sidecar's, and including a unit that is up for a reason other than this converge --
     so the units are enumerated from the host's unit directory and each one's reference

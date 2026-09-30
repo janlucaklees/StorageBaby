@@ -1,0 +1,136 @@
+# Every image this service's units name, fetched before anything of the service is
+# written to the host.
+#
+# A first start *is* the pull: podman fetches the image from inside `systemctl start`,
+# a container unit inherits the user manager's default `TimeoutStartSec=90s`, and
+# podman only holds that window open while the transfer keeps reporting progress. A
+# large image over an ordinary link therefore gets its start job killed mid-pull --
+# measured on the test host, `immich-server` and `immich-machine-learning` both died at
+# 4m15s and `apache/tika` sat on docker.io for 25 minutes with no output at all. Every
+# one of them came back seconds later on `Restart=always`, so nothing was broken except
+# the converge: "Start units that are not up" had already failed the play, and with it
+# every service sorted behind the one that stalled.
+#
+# Pulling here turns that into ordinary play time and leaves systemd's default start
+# timeout meaning what it says -- a service that needs more than 90 s to *start* is
+# suspect. No `TimeoutStartSec=` is rendered anywhere for the same reason.
+#
+# Included from host.yml as early as the pull's own prerequisites allow -- right after
+# the user manager is up and `podman-as` is installed -- and therefore *before* the
+# volume and bind directories, the config copy, the secret sync and every unit file. A
+# pull that cannot be done leaves all of those untouched, which is what keeps the next
+# converge honest: each of them reports `changed` exactly once, on the run that really
+# writes it, and it is that one `changed` the restart at the end of units.yml is keyed
+# on. Write first and fail after, and the retry finds config, secrets and unit files
+# already matching, restarts nothing, and goes green over a service still running the
+# old ones.
+#
+# Why the images are read from the templates rather than from the unit files units.yml
+# renders: because those files do not exist yet at this point, and must not. Rendering
+# them first to read an `Image=` off them would reintroduce exactly the hole above.
+# `lookup('template')` renders with the same variables the `template` module would use,
+# on the controller, which is where that module renders too.
+- name: Render this service's container and build units to see which images they name
+  ansible.builtin.set_fact:
+    rendered_container_units: "{{ rendered_container_units | default([]) + [lookup('template', item)] }}"
+  loop: "{{ (lookup('fileglob', service_dir ~ '/quadlet/*.j2', wantlist=True)
+    | select('search', '\\.(container|build)\\.j2$') | sort | list)
+    + (['kopia-client.container.j2'] if backup_enabled | bool else []) }}"
+  loop_control:
+    label: '{{ item | basename }}'
+
+# An `Image=` does not have to be a registry reference. Quadlet also accepts the name
+# of another unit -- `<stem>.build` for an image this host builds (paperless-upload
+# does), `<stem>.image` for a `.image` unit -- and a `.build`'s own `ImageTag=` is a
+# tag that exists only once that build has run. None of the three can be pulled, and
+# none of them needs to be: Quadlet writes a `.build` as `Type=oneshot`, which systemd
+# starts with no timeout at all, so whatever its Containerfile pulls cannot hit the
+# wall this file exists to avoid. A `.image` unit is a `Type=oneshot` too, but its own
+# `Image=` *is* a registry reference that nothing here pulls -- which is why
+# `test_no_service_declares_an_image_unit` refuses one until this file covers it.
+# `localhost/` is rejected as well, for a container that names a built tag directly
+# instead of the `.build` unit.
+- name: The images those units name, minus the ones this host builds itself
+  ansible.builtin.set_fact:
+    pull_images: >-
+      {{ _found | reject('in', _built) | reject('search', '\.(build|image)$')
+         | reject('match', 'localhost/') | unique | sort | list }}
+  vars:
+    _found: "{{ rendered_container_units | map('regex_findall', '(?m)^Image=(.*)$') | flatten | map('trim') | list }}"
+    _built: "{{ rendered_container_units | map('regex_findall', '(?m)^ImageTag=(.*)$') | flatten | map('trim') | list }}"
+
+# The probe is what makes this a pull *policy* and not a re-pull: an image already in
+# the service user's store is left alone, which is `missing` semantics, and that is
+# what keeps this out of `podman-auto-update`'s way. A floating tag
+# (`AutoUpdate=registry`, `:latest`) is moved by the service user's own
+# `podman-auto-update.timer`, on its schedule and with its own restart; this file only
+# guarantees that the reference a unit names exists locally before that unit is
+# started. Re-pulling here would fetch a newer digest behind auto-update's back and
+# restart the service from a converge that was supposed to change nothing.
+#
+# It is also how `changed` is decided. `podman pull` prints an image ID whether it
+# fetched anything or not, and reading its progress lines would tie the role to wording
+# podman is free to change; "it was not there, and now it is" is the same statement,
+# made against podman's own image lookup.
+#
+# `failed_when` and not `failed_when: false`: `podman image exists` answers rc 0 for
+# found and rc 1 for missing, and *only* those two are an answer. Anything else -- 125
+# for a store it cannot open, 127 for a broken `podman-as`, a user manager that went
+# away between the wait above and here -- is a broken probe, and swallowing it would
+# turn it into "the image is missing" and then report a registry error for a fault that
+# has nothing to do with the registry. The failed result carries podman's stderr, which
+# is the sentence worth reading.
+- name: Which of those images the service user already has
+  ansible.builtin.command: /usr/local/sbin/podman-as {{ svc_user }} podman image exists {{ item }}
+  loop: '{{ pull_images }}'
+  register: _image_present
+  # `check_mode: false`: a read-only probe whose registered result the task below
+  # reads, and the one half of this file worth running under `--check` -- it is what
+  # lets the pre-flight say which images a push would have to fetch.
+  check_mode: false
+  changed_when: false
+  failed_when: _image_present.rc not in [0, 1]
+
+# Deliberately *without* `check_mode: false`: a pull writes to the image store, so
+# `--check` must not do one. The skip is spelled out in `when:` rather than left to the
+# module, because the two are not the same thing where an `until` is involved: a
+# conditional skip never enters the retry loop at all, while a module-level check-mode
+# skip produces a *result* that `until` then has to be able to read. This `command`
+# happens to return `rc: 0` with its "would have run" result, so it works either way on
+# ansible-core 2.21 -- but that is the module's business, not something a retry loop
+# should depend on.
+#
+# `timeout` the program, not the task's own `timeout:` keyword: ansible-core raises a
+# task timeout as a BaseException that bypasses the `until` loop, so a stalled pull
+# would fail the converge instead of being retried -- and a stall is the case being
+# defended against, the tika pull that produced nothing for 25 minutes and then
+# finished in 31 s on the next attempt. `timeout` runs the command in its own process
+# group and signals the group, so the `runuser` and the `podman` behind it both go
+# down, and rc 124 is a failed attempt like any other for the `until`.
+#
+# `break_when`: ansible runs every item of a loop and fails the task afterwards, so
+# without it an unreachable registry costs the full retry budget *per image* -- immich
+# alone is five, close to three hours of a nightly deploy before anything is reported,
+# and the deploy unit is a `Type=oneshot` with no `TimeoutStartSec` to cut it short.
+# The first image that cannot be fetched is already the answer, so the loop stops
+# there; the task still fails, because the failed item is in `results`. `| default(0)`
+# is not decoration: a `when`-skipped item leaves `_image_pull` holding whatever it
+# held before -- the previous service's aggregate loop result, or nothing at all on the
+# first item of the first service -- and neither of those has an `rc`.
+#
+# `changed_when`: an attempt that did not fetch the image did not change the host.
+# Without this a failed nightly pull reports itself `changed` in the one journal that
+# has to be readable at face value.
+- name: Pull the images the units name, before anything of this service is written
+  ansible.builtin.command: timeout -k 30 600 /usr/local/sbin/podman-as {{ svc_user }} podman pull {{ item.item }}
+  loop: '{{ _image_present.results }}'
+  loop_control:
+    label: '{{ item.item }}'
+    break_when:
+      - _image_pull.rc | default(0) != 0
+  when: item.rc == 1 and not ansible_check_mode
+  register: _image_pull
+  retries: 3
+  delay: 30
+  until: _image_pull.rc == 0
+  changed_when: _image_pull.rc == 0
