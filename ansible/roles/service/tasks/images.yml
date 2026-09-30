@@ -30,9 +30,19 @@
 # them first to read an `Image=` off them would reintroduce exactly the hole above.
 # `lookup('template')` renders with the same variables the `template` module would use,
 # on the controller, which is where that module renders too.
+
+# Emptied here, not at the end: the role is included once per placed service in the same
+# play, so this fact is still set from the previous service when this one starts. Without
+# the reset the list only grows, and every service would pull every earlier service's
+# images into *its* store -- and a reference one service cannot fetch would fail the
+# converge again under every user that follows it.
+- name: Start with an empty rendered-unit list for this service
+  ansible.builtin.set_fact:
+    rendered_container_units: []
+
 - name: Render this service's container and build units to see which images they name
   ansible.builtin.set_fact:
-    rendered_container_units: "{{ rendered_container_units | default([]) + [lookup('template', item)] }}"
+    rendered_container_units: "{{ rendered_container_units + [lookup('template', item)] }}"
   loop: "{{ (lookup('fileglob', service_dir ~ '/quadlet/*.j2', wantlist=True)
     | select('search', '\\.(container|build)\\.j2$') | sort | list)
     + (['kopia-client.container.j2'] if backup_enabled | bool else []) }}"
