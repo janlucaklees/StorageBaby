@@ -86,7 +86,15 @@ templates escape naively. Widen that regex and the escape has to become real.
   `chaotic-mirrorlist` from the project's own package URLs, appends the `[chaotic-aur]`
   section to `/etc/pacman.conf` and installs `mergerfs`. The key dance is gated on
   `chaotic-keyring` already being installed, which is what makes a second converge report
-  no change.
+  no change. `bootstrap.sh` does the same thing, with the same key, the same package URLs
+  and the same `blockinfile` marker lines, **before** its one `pacman -Syu` — so a fresh
+  host's upgrade already knows the repository, and the first converge finds its own markers
+  and changes nothing. `tests/static/test_bootstrap.py` holds the two copies in agreement.
+- **Package upgrades are the operator's job, not this role's.** It never runs `pacman -Syu`
+  and never reboots. What it does run is one `-Sy` database refresh, and only on the
+  converge that changed the repository list — a host whose packages are stale is a host its
+  operator has not upgraded, which is a decision, not drift. The only full upgrade in this
+  repository is `bootstrap.sh`'s, once, on a host that has nothing running on it yet.
 - **Everything Chaotic-AUR does not carry: built from the AUR, here, pinned.**
   `tasks/aur_build.yml` takes `aur_package`, `aur_commit` and `aur_version`, and is one
   block under one condition — the pinned `pkgver-pkgrel` is not the installed one — so a

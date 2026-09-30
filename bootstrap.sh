@@ -36,6 +36,38 @@ done
 	exit 2
 }
 
+# Chaotic-AUR, before the upgrade below so that the upgrade already knows it. mergerfs
+# comes from there and the `storage` role installs it -- but the role never runs a full
+# upgrade and never reboots (package upgrades are the operator's job), so a repository it
+# adds after this script would first be synced by the *role's* database refresh and its
+# packages resolved against a system the operator has not upgraded since. Adding it here
+# means the one `-Syu` a host ever gets from this repository covers it.
+#
+# The steps mirror `ansible/roles/storage/tasks/tools.yml` exactly, marker lines included,
+# so the two agree and both are idempotent: the role finds its own `blockinfile` markers
+# and reports no change, and `tests/static/test_bootstrap.py` holds the values identical to
+# the role's defaults.
+CHAOTIC_KEY=3056513887B78AEB
+CHAOTIC_KEYSERVER=keyserver.ubuntu.com
+if ! pacman -Qq chaotic-keyring chaotic-mirrorlist > /dev/null 2>&1; then
+	pacman-key --recv-key "$CHAOTIC_KEY" --keyserver "$CHAOTIC_KEYSERVER"
+	pacman-key --lsign-key "$CHAOTIC_KEY"
+	pacman -U --noconfirm \
+		https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst \
+		https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst
+fi
+# The markers are ansible's, not decoration: `blockinfile` in the role looks for exactly
+# these two lines. Without them the role would append a *second* `[chaotic-aur]` section
+# on the first converge and report changed on a host that was already correct.
+if ! grep -q '^# BEGIN ANSIBLE MANAGED chaotic-aur$' /etc/pacman.conf; then
+	cat >> /etc/pacman.conf << 'EOF'
+# BEGIN ANSIBLE MANAGED chaotic-aur
+[chaotic-aur]
+Include = /etc/pacman.d/chaotic-mirrorlist
+# END ANSIBLE MANAGED chaotic-aur
+EOF
+fi
+
 pacman -Syu --noconfirm --needed git ansible sops age podman passt openssh make
 
 install -d -m 0700 /etc/storagebaby
