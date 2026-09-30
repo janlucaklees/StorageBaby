@@ -7,6 +7,12 @@
 # baseline (the web entrypoint); a placed service that claims a lower TCP port -- FTP's
 # control port 21 is the case this exists for -- brings it down to that port and no
 # further, which is why it is a `min` over the placement rather than a constant.
+#
+# What it costs is host-wide and worth stating: the setting is the kernel's, not Traefik's,
+# so lowering it to 21 lets *every* unprivileged user on the host bind 21-79 (25 and 53
+# included), not only the one that needed it. The alternative is a capability on a binary
+# inside a container image or a privileged listener, both worse. Because the value is
+# derived from the placement, it returns to 80 on the converge after the declaration goes.
 - name: Allow unprivileged binding from the lowest port Traefik must listen on
   ansible.posix.sysctl:
     name: net.ipv4.ip_unprivileged_port_start

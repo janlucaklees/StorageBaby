@@ -1,9 +1,36 @@
+import re
 import subprocess
 
 from conftest import REPO, load_yaml
 
 UNIT_DIR = REPO / "ansible/roles/host_base/files"
 STORAGE_DEFAULTS = REPO / "ansible/roles/storage/defaults/main.yml"
+STORAGE_TOOLS = REPO / "ansible/roles/storage/tasks/tools.yml"
+
+
+def pacman_conf_block() -> list[str]:
+    """The exact lines the role's `blockinfile` manages in `/etc/pacman.conf`.
+
+    Derived from the task and not spelled out here, which is the whole point of the test
+    below: a changed `marker:` or `block:` would otherwise keep the test green while the
+    first converge stopped recognising bootstrap's section and appended a second one.
+    """
+    # The module may be written short or fully qualified, and the role uses the long form;
+    # matched on the suffix so neither spelling silently finds nothing.
+    tasks = load_yaml(STORAGE_TOOLS)
+    blocks = [
+        args
+        for task in tasks
+        for key, args in task.items()
+        if key.split(".")[-1] == "blockinfile" and args.get("path") == "/etc/pacman.conf"
+    ]
+    assert len(blocks) == 1, f"{STORAGE_TOOLS} manages /etc/pacman.conf in {len(blocks)} tasks"
+    args = blocks[0]
+    return [
+        args["marker"].replace("{mark}", "BEGIN"),
+        *args["block"].strip().splitlines(),
+        args["marker"].replace("{mark}", "END"),
+    ]
 
 
 def test_bootstrap_is_valid_bash():
@@ -33,15 +60,15 @@ def test_bootstrap_sets_up_the_same_chaotic_aur_as_the_storage_role():
     assert defaults["chaotic_keyserver"] in script
     for url in defaults["chaotic_packages"]:
         assert url in script, f"bootstrap.sh does not install {url}"
-    for line in [
-        "# BEGIN ANSIBLE MANAGED chaotic-aur",
-        "[chaotic-aur]",
-        "Include = /etc/pacman.d/chaotic-mirrorlist",
-        "# END ANSIBLE MANAGED chaotic-aur",
-    ]:
+    lines = pacman_conf_block()
+    for line in lines:
         assert line in script, f"bootstrap.sh writes no {line!r}"
-    # Before the upgrade, or the upgrade cannot see the repository it just gained.
-    assert script.index("[chaotic-aur]") < script.index("pacman -Syu"), "the repository is added after the upgrade"
+    # Before the upgrade, or the upgrade cannot see the repository it just gained. Anchored
+    # on the start of a line: `script.index("pacman -Syu")` would find the string in a
+    # comment as happily as in the command, and silently measure the wrong position.
+    upgrade = re.search(r"^pacman -Syu", script, re.M)
+    assert upgrade, "bootstrap.sh runs no `pacman -Syu`"
+    assert script.index(lines[0]) < upgrade.start(), "the repository is added after the upgrade"
 
 
 def test_git_ssh_command_is_one_quoted_environment_value():

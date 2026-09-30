@@ -44,7 +44,11 @@ Traefik.
 | nextcloud (pod)                      | `nextcloud.*` → 8280, `collabora.*` → 9980 | app `33-fpm-alpine` pinned; nginx, postgres, redis and Collabora auto                                                   | `html`, `backups` (nightly dump)                          | 3     |
 
 Everything but traefik is placed on storagebaby; `test-a` places all nine folders by
-symlink, `test-ci` the smaller subset a GitHub runner can carry.
+symlink, `test-ci` the smaller subset a GitHub runner can carry. Both test hosts also place
+`tcp-echo`, a test-only fixture that is in no table here because it is not a NAS service: it
+echoes back a payload so the `tcp_ports` path can be measured end to end. It is the one
+placement that is a real folder per host rather than a symlink — there is nothing to link to
+— and a static test keeps the two copies byte-identical.
 
 Kopia is pinned on purpose — a kopia upgrade can carry a repository format upgrade,
 which is not a decision for a nightly timer. The pods pin on the same rule: whatever

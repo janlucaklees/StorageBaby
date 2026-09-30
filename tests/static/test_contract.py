@@ -107,6 +107,9 @@ def test_service_contract(p):
             assert set(entry) == {"range"}, f"{p.name}: a tcp range takes neither port nor target"
             lo, hi = entry["range"]
             assert isinstance(lo, int) and isinstance(hi, int), f"{p.name}: a tcp range is two integers"
+            # 1024 and not 1: a single `port` may be privileged because 21 has to be
+            # expressible (`host_base` lowers the sysctl for it), but a *range* below 1024
+            # would drag the whole host's unprivileged-port floor down with its lowest port.
             assert 1024 <= lo <= hi <= 65535, f"{p.name}: tcp range {lo}-{hi} out of bounds"
             # One entrypoint per port is one listener in Traefik and one PublishPort on
             # the pod; a range of hundreds is a configuration mistake, not a feature.

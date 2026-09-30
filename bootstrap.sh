@@ -60,6 +60,15 @@ fi
 # these two lines. Without them the role would append a *second* `[chaotic-aur]` section
 # on the first converge and report changed on a host that was already correct.
 if ! grep -q '^# BEGIN ANSIBLE MANAGED chaotic-aur$' /etc/pacman.conf; then
+	# An append assumes the file ends in a newline. Arch's shipped pacman.conf does, but if
+	# it ever did not, the `# BEGIN` marker would be concatenated onto the last line -- the
+	# grep above would not find it on a re-run and would append a second time, and the
+	# role's `blockinfile` would not find its marker either, which is the duplicate section
+	# this whole guard exists to prevent. A command substitution strips trailing newlines,
+	# so a non-empty result means the last byte is not one.
+	if [ -n "$(tail -c1 /etc/pacman.conf)" ]; then
+		printf '\n' >> /etc/pacman.conf
+	fi
 	cat >> /etc/pacman.conf << 'EOF'
 # BEGIN ANSIBLE MANAGED chaotic-aur
 [chaotic-aur]

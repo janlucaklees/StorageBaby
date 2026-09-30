@@ -150,7 +150,12 @@ Three more consequences worth knowing before declaring one:
 - **A port below 80 moves the unprivileged-port sysctl.** Traefik is rootless, and
   `host_base` sets `net.ipv4.ip_unprivileged_port_start` to the minimum of 80 and the
   host's declared TCP ports for that reason — FTP's control port 21 is the case it exists
-  for.
+  for. The setting is host-wide and it is not Traefik's: the day a service declares 21,
+  **every** unprivileged user on the host — every `svc-*`, and any future one — may bind
+  21–79, which includes 25 and 53. It is still the right trade-off (the alternatives are a
+  capability on the binary or a privileged listener), and it is bounded in the one way that
+  matters: the value is derived from the placement, so it comes back up to 80 on the
+  converge after the declaration goes.
 
 ## Reaching another service through Traefik
 
