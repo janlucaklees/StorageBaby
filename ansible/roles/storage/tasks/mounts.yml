@@ -77,6 +77,41 @@
     daemon_reload: true
   when: disk_units.changed or pool_unit_render.changed
 
+# `ansible.builtin.systemd` refuses a unit whose LoadState is `not-found`, and it does so
+# in check mode too -- while under `--check` the two templates above wrote nothing. So on a
+# host that has never converged there is no unit here to stop, enable or mount, and the
+# pre-flight of a first converge would die on the first of them instead of reporting what
+# the converge is going to do. Read off the paths and not off the templates' results: in
+# check mode a `template` that *would* change a file returns no `dest` at all.
+#
+# Only a genuinely bare host takes this branch. A real converge has written all five by the
+# time it gets here, and the pre-flight this mode exists for -- a pool option about to be
+# pushed to a converged host -- finds every one of them, storagebaby's first converge
+# included: the units it replaces carry exactly these names.
+- name: Look for the mount units on the host
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item.mount | regex_replace('^/', '') | regex_replace('/', '-') }}.mount"
+  loop: '{{ storage_devices + [storage.pool] }}'
+  loop_control:
+    label: '{{ item.mount }}'
+  register: _mount_unit_files
+
+- name: Whether every mount unit is already on the host
+  ansible.builtin.set_fact:
+    mount_units_present: "{{ _mount_unit_files.results | rejectattr('stat.exists') | list | length == 0 }}"
+
+- name: What a converge would mount on a host that has none of these units yet
+  ansible.builtin.debug:
+    msg: >-
+      These mount units are not on this host yet, so --check can neither enable nor mount
+      them: {{ _absent | join(', ') }}. A real converge writes them, mounts every branch and
+      the parity disk, and mounts {{ storage.pool.mount }} over them last.
+  vars:
+    _absent: "{{ _mount_unit_files.results | rejectattr('stat.exists') | map(attribute='item.mount') | list }}"
+  when:
+    - ansible_check_mode
+    - not (mount_units_present | bool)
+
 # Asked before anything is stopped or restarted, because that is the only moment the
 # answer still means "is a bind mount about to be pulled out from under a container".
 # `check_mode: false`: a read-only query whose result gates the warning below, and under
@@ -113,7 +148,9 @@
   ansible.builtin.systemd:
     name: '{{ pool_unit }}'
     state: stopped
-  when: disk_units.changed
+  when:
+    - disk_units.changed
+    - (mount_units_present | bool) or not ansible_check_mode
 
 # One task, not "start" plus "restart the changed ones": on a first converge every unit
 # is changed and is not mounted, and `restarted` starts an inactive mount unit -- so the
@@ -126,12 +163,14 @@
   loop: '{{ disk_units.results }}'
   loop_control:
     label: '{{ item.item.name }}'
+  when: (mount_units_present | bool) or not ansible_check_mode
 
 - name: The pool enabled and mounted
   ansible.builtin.systemd:
     name: '{{ pool_unit }}'
     enabled: true
     state: "{{ 'restarted' if (disk_units.changed or pool_unit_render.changed) else 'started' }}"
+  when: (mount_units_present | bool) or not ansible_check_mode
 
 # `state: started` above already fails when it cannot mount, so this is the second half:
 # that what is there is really a mount point and not a directory that happens to exist.
@@ -156,3 +195,22 @@
   loop: '{{ _mounted.results }}'
   loop_control:
     label: '{{ item.item }}'
+  # Not under `--check`, the one mode where nothing can be mounted and nothing has to be:
+  # the mount tasks above were skipped, so what this asserts is the converge's to do, and
+  # the storage roots it protects are not going to be created on this run either. The debug
+  # below says the same thing in the form a pre-flight can act on. A real converge keeps
+  # the assert, which is where it does its work.
+  when: not ansible_check_mode
+
+- name: What is not mounted, on a pre-flight that cannot mount it
+  ansible.builtin.debug:
+    msg: >-
+      Nothing is mounted at {{ _unmounted | join(', ') }} right now. A real converge mounts
+      each of them before host_base creates the storage roots below
+      {{ storage.pool.mount }} -- and refuses rather than creating those roots on the root
+      filesystem if it cannot.
+  vars:
+    _unmounted: "{{ _mounted.results | rejectattr('rc', 'eq', 0) | map(attribute='item') | list }}"
+  when:
+    - ansible_check_mode
+    - _mounted.results | rejectattr('rc', 'eq', 0) | list | length > 0

@@ -89,6 +89,12 @@
     creates: /etc/storagebaby/traefik/certs/default.crt
   when: not (acme | bool)
 
+- name: Look for the default certificate
+  ansible.builtin.stat:
+    path: /etc/storagebaby/traefik/certs/default.crt
+  register: _default_cert
+  when: not (acme | bool)
+
 # 0644 on a private key, deliberately. Traefik is rootless: the container's root is
 # `svc-traefik` on the host, so the key has to be readable by a non-root user, and the
 # alternatives are worse -- chowning it to one service user makes the platform's one
@@ -103,7 +109,14 @@
     group: root
     mode: '0644'
   loop: [default.crt, default.key]
-  when: not (acme | bool)
+  when:
+    - not (acme | bool)
+    # The `openssl` above carries `creates:` and is skipped under `--check`, so on a host
+    # that has never converged there is no file here to re-permission and `file` without a
+    # `state:` refuses an absent path -- which aborted the pre-flight of a first converge on
+    # an `acme: false` host. The certificate is generated once and then never regenerated, so
+    # a run that would create it is exactly the run that cannot describe this task.
+    - _default_cert.stat.exists or not ansible_check_mode
 
 - name: Traefik serves it as the default certificate
   ansible.builtin.copy:

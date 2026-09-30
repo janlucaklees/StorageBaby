@@ -109,6 +109,25 @@
     daemon_reload: true
   when: _maintenance_units.changed
 
+# Same reason as the mount units in mounts.yml: `systemd` refuses a unit whose LoadState is
+# `not-found`, in check mode as well, and under `--check` the template above wrote nothing.
+# So a pre-flight of a host that has never carried this timer says what the converge will
+# enable instead of dying on it. Read off the path, because in check mode the `template`
+# result carries no `dest`.
+- name: Look for the maintenance timer on the host
+  ansible.builtin.stat:
+    path: /etc/systemd/system/storage-maintenance.timer
+  register: _maintenance_timer_file
+
+- name: What a converge would enable on a host that has no maintenance timer yet
+  ansible.builtin.debug:
+    msg: >-
+      storage-maintenance.timer is not on this host yet: a real converge writes it, enables
+      it and starts it, and the nightly run is at {{ storage.snapraid.maintenance.on_calendar }} from then on.
+  when:
+    - ansible_check_mode
+    - not _maintenance_timer_file.stat.exists
+
 # `state: started` on the timer, never the service: starting the service *is* the nightly
 # run, and a converge that synced parity would turn every deploy into a maintenance job.
 - name: Maintenance timer enabled
@@ -116,6 +135,7 @@
     name: storage-maintenance.timer
     enabled: true
     state: started
+  when: _maintenance_timer_file.stat.exists or not ansible_check_mode
 
 # systemd keeps running the schedule it read at load time, so a changed OnCalendar only
 # takes effect after the timer itself is restarted -- otherwise a schedule change in git
@@ -124,4 +144,6 @@
   ansible.builtin.systemd:
     name: storage-maintenance.timer
     state: restarted
-  when: _maintenance_units.changed
+  when:
+    - _maintenance_units.changed
+    - _maintenance_timer_file.stat.exists or not ansible_check_mode

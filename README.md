@@ -358,12 +358,29 @@ doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
 ```
 
 `--check --diff` over the whole playbook is expected to end `failed=0` and to change
-nothing — every probe in every role carries `check_mode: false` for exactly this, and a
-test on the VM holds it. Read all of it: the storage role's diff and its remount warning
-are printed by the first role in the play, and the units below it are the rest of the
-phase. **If it aborts at `storage/tasks/mail.yml` with a decryption error**, the host's age
-recipient is not in `.sops.yaml` yet — "New host" below has that half, and it now surfaces
-in the storage role rather than in the first service, because storage runs first.
+nothing — every probe in every role carries `check_mode: false` for exactly this, and the
+Molecule harness runs this same command on a fresh VM before its first converge and
+asserts the recap.
+
+What it prints on a **first** converge is less than it prints later, and that is not a
+fault:
+
+- the `storage` role's whole diff — the five mount units, `/etc/snapraid.conf`, the
+  maintenance scripts, the timer and `/etc/msmtprc` — plus a line naming the units that
+  are not on the host yet and the filesystems the real run will mount. It cannot enable or
+  mount anything it did not write, so it says so instead of failing;
+- `host_base`'s diff;
+- then **one line per service**, `svc-<name> does not exist on this host yet`, and what the
+  first converge will create for it. Nothing of a service can be described before its user
+  exists: the uid is the name of its unit directory. Every later pre-flight — a pool option,
+  an image tag, anything pushed at a converged host — shows the units, the drop-ins and the
+  route files in full.
+
+**If it aborts in `storage/tasks/mail.yml` with a sops error**, that is the one thing this
+run is a real test of: the host cannot decrypt what the push carries. Either
+`/etc/storagebaby/age.key` is missing (bootstrap writes it) or this host's age recipient is
+not in `.sops.yaml` yet — "New host" below has that half. It surfaces in the storage role
+rather than in the first service, because storage runs first.
 
 Then the outage itself:
 

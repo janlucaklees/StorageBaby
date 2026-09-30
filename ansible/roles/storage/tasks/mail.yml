@@ -10,11 +10,26 @@
     group: root
     mode: '0600'
 
+# Under `--check` the copy above is skipped, so on a host that has never converged the
+# host path does not exist -- and the decrypt below would report "no such file" while the
+# assert explained it as a `.sops.yaml` recipient problem. So the pre-flight reads the
+# checkout's own copy instead: the same bytes the copy would have written, on the same
+# machine -- every run that pre-flights a host is run *on* it, by the operator before the
+# first converge or by `ansible-pull` itself, so the controller path and the host are one.
+# It also keeps the one thing this block is worth pre-flighting: that the host's age key
+# can really decrypt what the push carries. After this, an abort here with a sops error
+# is the recipient (or the missing `/etc/storagebaby/age.key`) and nothing else.
+- name: Where the mail secrets are read from
+  ansible.builtin.set_fact:
+    _mail_secrets_file: >-
+      {{ (storagebaby_repo_root ~ '/hosts/' ~ inventory_hostname ~ '/secrets/mail.sops.yaml')
+         if ansible_check_mode else '/etc/storagebaby/mail.secrets.sops.yaml' }}
+
 # `check_mode: false` for the reason every probe in this role carries it: `command` reports
 # itself skipped under `--check`, and the `set_fact` below would then read `stdout` off a
 # result that has none.
 - name: Decrypt the mail secrets
-  ansible.builtin.command: sops --decrypt --output-type json /etc/storagebaby/mail.secrets.sops.yaml
+  ansible.builtin.command: sops --decrypt --output-type json {{ _mail_secrets_file }}
   environment:
     SOPS_AGE_KEY_FILE: /etc/storagebaby/age.key
   register: _mail_secrets
@@ -30,9 +45,9 @@
   ansible.builtin.assert:
     that: _mail_secrets.rc == 0
     fail_msg: >-
-      sops could not decrypt hosts/{{ inventory_hostname }}/secrets/mail.sops.yaml:
-      {{ _mail_secrets.stderr }}. Is this host's age recipient in .sops.yaml, and has
-      `sops updatekeys` run over the file?
+      sops could not decrypt {{ _mail_secrets_file }}:
+      {{ _mail_secrets.stderr }}. Is /etc/storagebaby/age.key there, is this host's age
+      recipient in .sops.yaml, and has `sops updatekeys` run over the file?
     quiet: true
 
 - name: Read the SMTP password

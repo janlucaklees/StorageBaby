@@ -476,3 +476,49 @@
         git remote add origin /srv/storagebaby.git
         git push -qf origin stable
       changed_when: true
+
+# The pre-flight of a host that has never converged, run before the converge that makes it
+# one -- the last thing `prepare` does and the only assertion it makes. storagebaby's own
+# first converge is exactly this situation: an operator reads `--check --diff` over the
+# whole playbook before letting the real run touch the pool, and every role is then looking
+# at a host where no service user, no rendered unit and no copied secret exists yet. A
+# check-mode run against the *converged* host is what `test_deploy.py` holds; that one
+# passed for four tasks while this one could not get past the storage role's mail secrets.
+#
+# Here and not in `verify`: by then the host is converged and the case is gone.
+- name: The whole playbook in check mode, on the host before its first converge
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    # `/srv/src` and not `/var/lib/storagebaby/repo`: the checkout `ansible-pull` maintains
+    # does not exist until the first deploy. It is the same tree, the same inventory and the
+    # same command `test_deploy.py::CHECK` runs, so the two cannot drift.
+    - name: Run the playbook with --check --diff from the seeded checkout
+      ansible.builtin.command:
+        cmd: >-
+          timeout 900 ansible-playbook -i ansible/inventory/hosts.yml
+          --limit {{ inventory_hostname }} --check --diff ansible/playbook.yml
+        chdir: /srv/src
+      register: _preflight
+      changed_when: false
+      failed_when: false
+
+    # rc *and* the recap: a play that fails a host reports it in the recap and exits
+    # non-zero, and a `--check` that aborted half way through reports fewer recap lines
+    # than it has hosts -- so the presence of a `failed=0` line is part of the claim.
+    - name: The pre-flight ended failed=0
+      ansible.builtin.assert:
+        that:
+          - _preflight.rc == 0
+          - _recap | length > 0
+          - _recap | select('search', 'failed=[1-9]') | list | length == 0
+          - _recap | select('search', 'unreachable=[1-9]') | list | length == 0
+        fail_msg: >-
+          `--check --diff` over the whole playbook does not survive a host that has never
+          converged. This is the pre-flight README.md step 9 tells the operator to run
+          before the first converge, so it has to reach the end of the play:
+          {{ _preflight.stdout[-6000:] }}{{ _preflight.stderr[-2000:] }}
+        quiet: true
+      vars:
+        _recap: "{{ _preflight.stdout_lines | select('search', 'failed=') | list }}"

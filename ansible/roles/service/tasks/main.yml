@@ -97,6 +97,42 @@
   ansible.builtin.include_tasks: render.yml
   when: render_only | bool
 
+# A `--check --diff` pre-flight of a host that has never converged has no `svc-<name>`
+# user yet: the task that creates it is skipped like every other write. Nothing below can
+# then be described, let alone attempted -- the uid is the unit directory's own name, the
+# image probe and the pull go through `podman-as`, and `systemctl --user -M svc-<name>@`
+# has no machine to reach, so `getent` fails, the user-manager wait exhausts its retries
+# and the run dies in the middle of the first service. `fail_key: false` asks the question
+# instead, and the include below is skipped for that service with a line saying so. A
+# pre-flight of a *converged* host -- the run the mode exists for, a pool option or an
+# image tag about to be pushed -- finds every user and is unaffected.
+- name: Look for the service user (a first converge has none yet)
+  ansible.builtin.getent:
+    database: passwd
+    key: '{{ svc_user }}'
+    fail_key: false
+  when: not (render_only | bool)
+
+- name: Record whether the service user exists
+  ansible.builtin.set_fact:
+    svc_user_exists: '{{ getent_passwd[svc_user] is not none }}'
+  when: not (render_only | bool)
+
 - name: Converge host
   ansible.builtin.include_tasks: host.yml
-  when: not (render_only | bool)
+  when:
+    - not (render_only | bool)
+    - (svc_user_exists | default(false) | bool) or not ansible_check_mode
+
+- name: What the first converge will do for this service
+  ansible.builtin.debug:
+    msg: >-
+      {{ svc_user }} does not exist on this host yet, so --check can show nothing of
+      {{ service.name }}. The first converge creates that user with its subordinate ids,
+      linger and user manager, fetches the images its units name, writes {{ config_dir }},
+      its podman secrets and its Quadlet units under
+      /etc/containers/systemd/users/<its uid>/, and starts them.
+  when:
+    - not (render_only | bool)
+    - ansible_check_mode
+    - not (svc_user_exists | bool)
