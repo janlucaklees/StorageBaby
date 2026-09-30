@@ -103,10 +103,10 @@ Two halves make it work, and they are rendered in two different places:
 - **The entrypoints** are Traefik's own static configuration, so they live in
   `hosts/shared/services/traefik/quadlet/traefik.container.j2` and come from the
   playbook's `placed_tcp_ports` — every port of every service placed on the host, ranges
-  expanded, unique and sorted. One entrypoint `tcp-<port>` on `:<port>` each. Because it
-  is rendered into traefik's unit, placing or unplacing a TCP port changes that unit and
-  restarts Traefik once; the sorted, de-duplicated list is what keeps it from restarting
-  on every converge.
+  expanded, unique and sorted. One entrypoint `tcp-<port>` on `<tcp_bind_address>:<port>`
+  each. Because it is rendered into traefik's unit, placing or unplacing a TCP port changes
+  that unit and restarts Traefik once; the sorted, de-duplicated list is what keeps it from
+  restarting on every converge.
 - **The routers** are dynamic, so the role renders them per service into
   `/etc/storagebaby/traefik/dynamic.d/<name>-tcp.yml`: one TCP router and one TCP service
   per port, both named `<name>-tcp-<port>`, the router on `entryPoints: [tcp-<port>]` with
@@ -115,7 +115,28 @@ Two halves make it work, and they are rendered in two different places:
   would keep forwarding a port the service no longer owns, to whatever has since been
   published on it.
 
-Three consequences worth knowing before declaring one:
+**Why the entrypoint binds one address and not the wildcard.** A wildcard listener
+(`:<port>`, which is what `--entrypoints.<name>.address=:<port>` means) and a listener on
+`127.0.0.1:<port>` are mutually exclusive on Linux: whichever binds second gets EADDRINUSE,
+`SO_REUSEADDR` or not, and that holds for the IPv6 dual-stack wildcard Go really opens. So
+a wildcard entrypoint rules out every entry where `target == port` — and that is precisely
+the shape an FTP passive range has no choice about, because an FTP server advertises the
+port it is itself listening on. Traefik therefore binds one concrete address,
+`tcp_bind_address`, and the service publishes the same number on loopback; the two coexist,
+and Traefik is still the only process on a routable address. `tcp_bind_address` defaults to
+`ansible_default_ipv4.address` — the address of the host's default route — and a host that
+has several, or whose default route is not the one clients arrive on, sets it as a top-level
+key in its `host.yml`. It is also what an application that has to advertise its own address
+should be given (Task 4's FTP `pasv_address`), because it is the address a client reached.
+
+Two things follow from binding a concrete address. The value is a _fact_, so it cannot be
+rendered on the controller: the static render passes a placeholder
+(`tests/static/conftest.py`, `RENDER_TCP_BIND_ADDRESS`) and asserts only that the flag
+carries `<address>:<port>`. And Traefik has to be restarted when the host's address changes
+— a converge re-renders the unit and does exactly that, and until it runs `Restart=always`
+retries a listener that cannot bind.
+
+Three more consequences worth knowing before declaring one:
 
 - **A port belongs to exactly one service per host.** `HostSNI(`*`)` is the only rule a
   non-TLS TCP router can carry, so the entrypoint is the whole of what selects the

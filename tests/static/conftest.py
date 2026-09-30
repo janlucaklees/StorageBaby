@@ -8,6 +8,15 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 HOSTS = REPO / "hosts"
 
+# The address Traefik's TCP entrypoints bind, for a render on the controller. On a host the
+# playbook's default is `ansible_default_ipv4.address`, a fact no render can have -- and the
+# devtools container's own address would be a number that means nothing. So the render is
+# given a documentation-range placeholder (RFC 5737) and the tests assert the flag carries
+# `<address>:<port>`, which is the one thing about it that is knowable from the repo.
+# Passed as an extra var, so it also overrides a `host.yml` that sets `tcp_bind_address`:
+# a static render cannot show what that host binds, only that the address reaches the flag.
+RENDER_TCP_BIND_ADDRESS = "203.0.113.1"
+
 
 def load_yaml(path: Path) -> dict:
     with path.open() as fh:
@@ -129,6 +138,8 @@ def rendered(tmp_path_factory) -> Path:
                 f"render_output={out / host}",
                 "-e",
                 "ansible_become=false",
+                "-e",
+                f"tcp_bind_address={RENDER_TCP_BIND_ADDRESS}",
             ],
             check=True,
             cwd=str(REPO),

@@ -6,6 +6,15 @@
     storagebaby_repo_root: '{{ playbook_dir }}/..'
     render_only: false
     render_output: ''
+    # The address Traefik's plain-TCP entrypoints bind. Not the wildcard: an entrypoint on
+    # `:<port>` and a pod publishing `127.0.0.1:<port>` are mutually exclusive on Linux
+    # (EADDRINUSE, whichever binds second), and `target == port` is exactly what an FTP
+    # passive range needs -- the server advertises the port it listens on, so the two sides
+    # have to agree. One concrete address for Traefik and loopback for the pod keeps both.
+    # A lazy default: it is only evaluated where a template really reads it, so a host that
+    # places no TCP port never needs the fact. `host.yml` overrides it (include_vars outranks
+    # play vars) on a host whose default route is not the address a client comes in on.
+    tcp_bind_address: '{{ ansible_default_ipv4.address }}'
   pre_tasks:
     - name: Load host configuration
       ansible.builtin.include_vars:
@@ -114,6 +123,22 @@
     - name: The host's TCP entrypoint ports, in a stable order
       ansible.builtin.set_fact:
         placed_tcp_ports: '{{ _tcp_expanded | default([]) | unique | sort | list }}'
+
+    # The one fact this play needs, gathered only where it is needed. `gather_facts: false`
+    # at the top is deliberate -- this play runs every five minutes from the deploy timer --
+    # so the network subset is collected here and only on a host that really renders a TCP
+    # entrypoint. A host with no default route (or one whose default route is not the address
+    # clients arrive on) sets `tcp_bind_address` in its `host.yml`; without either, the
+    # traefik template fails loudly on `ansible_default_ipv4` having no `address`, which is
+    # the right outcome -- the wildcard it would otherwise fall back to is the collision this
+    # exists to avoid. Not under `render_only`: there are no host facts worth gathering on
+    # the controller, and the render passes `tcp_bind_address` in as a placeholder instead.
+    - name: Gather the network facts the TCP entrypoint address comes from
+      ansible.builtin.setup:
+        gather_subset: ['!all', 'network']
+      when:
+        - placed_tcp_ports | length > 0
+        - not (render_only | bool)
   roles:
     # Before host_base, which creates the storage class roots *below* the pool: nothing
     # may write there until the pool is mounted, and asserting that is what this role

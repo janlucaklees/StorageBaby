@@ -16,9 +16,25 @@ reaches a backend that keeps its own TLS (kopia, nextcloud's collabora).
 
 `web` (:80), `websecure` (:443) and `traefik` (127.0.0.1:8080, the dashboard) are
 fixed. Everything else on this unit's `Exec=` line is rendered: one entrypoint
-`tcp-<port>` on `:<port>` for every plain-TCP port declared by a service placed on
-this host, collected by the playbook into `placed_tcp_ports`. storagebaby's list is
-empty until Paperless's FTP part lands; the test hosts place a `tcp-echo` fixture.
+`tcp-<port>` on `<tcp_bind_address>:<port>` for every plain-TCP port declared by a
+service placed on this host, collected by the playbook into `placed_tcp_ports`.
+storagebaby's list is empty until Paperless's FTP part lands; the test hosts place a
+`tcp-echo` fixture.
+
+A TCP entrypoint binds **one concrete address**, unlike `web` and `websecure`, which
+are on the wildcard. The reason is the other end: a service reached over plain TCP
+publishes `127.0.0.1:<target>`, and `target` equals `port` whenever the protocol
+advertises the port it listens on — an FTP passive range has no other option. A
+wildcard listener and a loopback listener on the same port cannot both exist (whichever
+binds second gets EADDRINUSE), so Traefik takes the routable address and leaves loopback
+to the service. It is still the only process on a routable address, which is the rule
+this preserves rather than bends. `tcp_bind_address` defaults to the host's default-route
+address (`ansible_default_ipv4.address`, the one fact this playbook gathers, and only on
+a host that places a TCP port) and is overridable as a top-level key in `host.yml` on a
+host with several addresses. Two consequences: the value cannot be rendered on the
+controller, so the static render checks it through a placeholder; and a host whose
+address changes needs a converge to re-render this unit — until then `Restart=always`
+keeps retrying an entrypoint that cannot bind.
 
 Entrypoints are static configuration and cannot be added through the file provider,
 which is why they are here and not in `dynamic.d` — and why **a change to the set

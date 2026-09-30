@@ -10,15 +10,19 @@ Exec=--api --ping=true \
   --providers.file.directory=/etc/traefik/dynamic.d --providers.file.watch=true \
   --entrypoints.web.address=:80 --entrypoints.websecure.address=:443 \
   --entrypoints.traefik.address=127.0.0.1:{{ service.port }} \
-{# One entrypoint per plain-TCP port placed on this host, `tcp-<port>` on `:<port>`. The
-   list is the host's placement, not this service's business, so the playbook collects it
-   into `placed_tcp_ports` -- and because it is rendered here, placing or unplacing a TCP
-   port changes this unit and restarts Traefik once. `:<port>` and not `127.0.0.1:<port>`:
-   these are the ports a scanner on the LAN connects to, and Traefik is the only process
-   allowed on a routable address. The matching routers are rendered by the `service` role
-   into `dynamic.d/<name>-tcp.yml`. #}
+{# One entrypoint per plain-TCP port placed on this host, `tcp-<port>` on the host's own
+   address. The list is the host's placement, not this service's business, so the playbook
+   collects it into `placed_tcp_ports` -- and because it is rendered here, placing or
+   unplacing a TCP port changes this unit and restarts Traefik once.
+   `<tcp_bind_address>:<port>` and not the wildcard `:<port>`: a wildcard listener and the
+   pod's `127.0.0.1:<port>` are mutually exclusive on Linux, and a port that forwards to
+   itself on loopback is what an FTP passive range needs. One concrete routable address
+   here, loopback in the pod, and both fit -- Traefik is still the only process on a
+   routable address. `tcp_bind_address` defaults to `ansible_default_ipv4.address` and is
+   overridable in `host.yml`. The matching routers are rendered by the `service` role into
+   `dynamic.d/<name>-tcp.yml`. #}
 {% for port in placed_tcp_ports | default([]) %}
-  --entrypoints.tcp-{{ port }}.address=:{{ port }} \
+  --entrypoints.tcp-{{ port }}.address={{ tcp_bind_address }}:{{ port }} \
 {% endfor %}
   --entrypoints.web.http.redirections.entrypoint.to=websecure \
   --entrypoints.web.http.redirections.entrypoint.scheme=https{% if acme %} \

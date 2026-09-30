@@ -113,6 +113,8 @@ tcp_ports:
 - Plain TCP has no hostname, so a port belongs to one service per host. `test_ports` treats `tcp_ports` and route ports as one namespace and rejects duplicates and ranges that overlap.
 - Traefik stays the only process on non-loopback ports; the pod publishes `127.0.0.1:2121` and `127.0.0.1:21100-21109`.
 
+**Amendment (2026-09-30, Task 3 review).** The entrypoints are `--entrypoints.tcp-<port>.address={{ tcp_bind_address }}:<port>`, not `:<port>`. A wildcard listener and the pod's `127.0.0.1:<port>` are mutually exclusive on Linux (EADDRINUSE, measured both orders), so the wildcard form ruled out every entry where the target equals the port — which is every port of a `range`, and the shape the FTP passive range must have, because an FTP server advertises the port it is itself listening on. `tcp_bind_address` defaults to `ansible_default_ipv4.address` and is overridable as a top-level `host.yml` key. Everything else above stands: the contract is unchanged (`target` still defaults to `port`, a range still forwards each port to itself), the pod still publishes only on loopback, and Traefik is still the only process on a routable address. The FTP part's `pasv_address` is that same address.
+
 ### Paperless
 
 - New part `paperless-ftp`: a pinned FTP server image (vsftpd or pure-ftpd, decided in the plan by which image runs unprivileged in a pod and supports a fixed passive range), one user `config.ftp_user` with `secrets: [ftp_password]`, chrooted to the consume directory, `pasv_address` from `service.config.ftp_public_address` (set per host in `service_config`: storagebaby's LAN address, the test host's VM address), passive range equal to the declared `tcp_ports` range, listening on 2121 inside the pod.

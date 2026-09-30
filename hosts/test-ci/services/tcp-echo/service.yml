@@ -14,8 +14,9 @@ name: tcp-echo
 volumes: {}
 secrets: []
 backup: none
-# 7777 is the public entrypoint Traefik binds on every address; 17777 is where the
-# container publishes on loopback. The two differ deliberately: `target` is the half an
-# FTP control port needs (21 -> 2121), and a fixture using one number for both would
-# render fine and prove nothing about it.
-tcp_ports: [{ port: 7777, target: 17777 }]
+# One number, deliberately: `target` defaults to `port`, so Traefik's `tcp-7777`
+# entrypoint forwards to `127.0.0.1:7777`, which is where the container publishes. That is
+# the shape an FTP passive range has no choice about -- the server advertises the port it
+# listens on -- and it is the shape that collides the moment the entrypoint binds the
+# wildcard instead of the host's own address. The fixture exists to hold that open.
+tcp_ports: [{ port: 7777 }]

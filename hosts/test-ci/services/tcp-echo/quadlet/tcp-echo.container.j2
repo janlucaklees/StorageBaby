@@ -9,9 +9,11 @@ ContainerName=tcp-echo
 # BusyBox's persistent server: `-lk` keeps listening after a connection closes and `-e`
 # pipes each one into `cat`, which is the whole service. It has to be the last option.
 Exec=nc -lk -p 7777 -e /bin/cat
-# The loopback target of this service's `tcp_ports` entry. Traefik's `tcp-7777`
-# entrypoint forwards here; nothing else may reach it.
-PublishPort=127.0.0.1:17777:7777
+# The loopback target of this service's `tcp_ports` entry, the same number on both sides.
+# Traefik's `tcp-7777` entrypoint binds the host's own address and forwards here; nothing
+# else may reach it. The two listeners coexist only because they are on different
+# addresses -- that is the whole point of the fixture.
+PublishPort=127.0.0.1:7777:7777
 Environment=TZ={{ tz }}
 # The listening socket, not a round trip: whether a connection really comes back out is
 # Traefik's half of the path, and `test_traefik.py` measures that from the VM. Podman runs

@@ -5,7 +5,15 @@ from pathlib import Path
 import pytest
 import yaml
 
-from conftest import host_names, placed_fqdns, placed_tcp_ports, placements, routes_of, tcp_ports
+from conftest import (
+    RENDER_TCP_BIND_ADDRESS,
+    host_names,
+    placed_fqdns,
+    placed_tcp_ports,
+    placements,
+    routes_of,
+    tcp_ports,
+)
 
 # A timer and its service unit are plain systemd user units, not Quadlet ones: the role
 # renders them beside the Quadlet units, into `timers/` of the render output.
@@ -166,10 +174,12 @@ def test_timers_rendered(rendered, p):
     assert sorted(f.name for f in timer_dir.iterdir()) == expected
 
 
-# The entrypoint the traefik template renders per placed TCP port. Both halves are
-# captured so the test can say the name and the address are the same number -- an
-# `--entrypoints.tcp-21.address=:2121` would route the wrong port and read fine.
-TCP_ENTRYPOINT = re.compile(r"--entrypoints\.tcp-(\d+)\.address=:(\d+)")
+# The entrypoint the traefik template renders per placed TCP port: name, bind address and
+# port. The name and the port are captured so the test can say they are the same number --
+# an `--entrypoints.tcp-21.address=<addr>:2121` would route the wrong port and read fine.
+# The address half is captured because it must be an address at all: the wildcard `:<port>`
+# this used to render cannot coexist with a pod publishing `127.0.0.1:<port>`.
+TCP_ENTRYPOINT = re.compile(r"--entrypoints\.tcp-(\d+)\.address=([^:\s\\]+):(\d+)")
 
 
 @pytest.mark.parametrize("host", host_names())
@@ -180,12 +190,19 @@ def test_traefik_entrypoints_are_exactly_the_hosts_tcp_ports(rendered, host):
     catching are both invisible to a per-service check: an entrypoint left over from a
     port nothing claims any more, and a port leaking onto a host that does not place the
     service -- storagebaby, whose list is empty today, is the case that proves it.
+
+    Each entrypoint also has to carry a real bind address, which is the half a render can
+    only see through the placeholder it was given: on a host the value is the primary
+    address fact, and what a static check can hold is that it reaches the flag rather than
+    being dropped for the wildcard `:<port>` -- which cannot bind beside the pod's
+    `127.0.0.1:<port>`, and is therefore the one spelling that must never come back.
     """
     unit_dir = rendered / host / "traefik"
     unit = (unit_dir / "traefik.container").read_text()
     found = TCP_ENTRYPOINT.findall(unit)
-    assert all(name == address for name, address in found), f"{host}: {found}"
-    assert sorted(int(name) for name, _ in found) == placed_tcp_ports(host), unit
+    assert all(name == port for name, _, port in found), f"{host}: {found}"
+    assert all(address == RENDER_TCP_BIND_ADDRESS for _, address, _ in found), f"{host}: {found}"
+    assert sorted(int(name) for name, _, _ in found) == placed_tcp_ports(host), unit
     # And that the lines really land in the command Quadlet generates. `Exec=` is one
     # logical line held together by backslashes and the ports are rendered into the middle
     # of it, so a loop that emitted a blank line or lost a trailing `\` would leave a unit
@@ -197,8 +214,8 @@ def test_traefik_entrypoints_are_exactly_the_hosts_tcp_ports(rendered, host):
         text=True,
     )
     assert r.returncode == 0, r.stderr
-    for name, _ in found:
-        assert f"--entrypoints.tcp-{name}.address=:{name}" in r.stdout, r.stdout
+    for name, address, _ in found:
+        assert f"--entrypoints.tcp-{name}.address={address}:{name}" in r.stdout, r.stdout
 
 
 @pytest.mark.parametrize(
@@ -222,7 +239,8 @@ def test_tcp_routes_rendered(rendered, p):
         assert service["loadBalancer"]["servers"] == [{"address": f"127.0.0.1:{entry['target']}"}]
     unit = (rendered / p.host / "traefik" / "traefik.container").read_text()
     for entry in expected:
-        assert f"--entrypoints.tcp-{entry['port']}.address=:{entry['port']}" in unit, unit
+        flag = f"--entrypoints.tcp-{entry['port']}.address={RENDER_TCP_BIND_ADDRESS}:{entry['port']}"
+        assert flag in unit, unit
 
 
 @pytest.mark.parametrize(
@@ -234,5 +252,10 @@ def test_no_tcp_file_for_a_service_that_claims_none(rendered, p):
     Traefik reads the whole directory, so a file rendered for a service that claims no
     TCP port would be a router on an entrypoint that does not exist -- and on the host it
     is the file the role has to remove, which is the same claim from the other side.
+
+    The directory is asserted first, or the whole case would pass on a render that produced
+    nothing at all: `not (...).exists()` cannot tell an absent file from an absent tree.
     """
-    assert not (rendered / p.host / "traefik-dynamic.d" / f"{p.name}-tcp.yml").exists()
+    dynamic_d = rendered / p.host / "traefik-dynamic.d"
+    assert dynamic_d.is_dir(), f"{dynamic_d} was never rendered"
+    assert not (dynamic_d / f"{p.name}-tcp.yml").exists()

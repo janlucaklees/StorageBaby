@@ -5,9 +5,11 @@ timer, unit active, container healthy, the FQDN answering over HTTPS) are covere
 every service by test_service.py -- this file only asserts what is specific to Traefik.
 """
 
+import re
+
 import pytest
 from conftest import run_as
-from test_service import placed_tcp_entries
+from test_service import HOSTS, load_spec, placed_tcp_entries
 
 
 def test_secrets_mounted(host):
@@ -34,23 +36,99 @@ def test_no_root_containers(host):
     assert r.stdout.strip() == ""
 
 
-def test_traefik_is_the_only_listener_on_every_placed_tcp_port(host):
-    """Traefik listens on each declared port, on every address, and the pod only on loopback.
+# `--entrypoints.tcp-<port>.address=<address>:<port>` as the rendered unit carries it.
+TCP_ENTRYPOINT = re.compile(r"--entrypoints\.tcp-(\d+)\.address=([^:\s\\]+):(\d+)")
 
-    Both halves matter: a port Traefik does not listen on is a scanner that cannot
-    connect, and a service that published the same port on 0.0.0.0 would be reachable
-    past Traefik -- which is the rule the whole platform is built on.
+
+def traefik_tcp_bind_address(host) -> str:
+    """The address Traefik was told to bind its TCP entrypoints on, from its rendered unit.
+
+    Read from the unit rather than recomputed here, because the unit is what Traefik was
+    started with -- and the value is a fact of the host (`ansible_default_ipv4.address`),
+    which a test on the controller cannot derive. What the assertions below then add is
+    that the address is really the VM's own routable one and that Traefik really holds it.
+    """
+    unit = host.file(f"/etc/containers/systemd/users/{host.user('svc-traefik').uid}/traefik.container")
+    assert unit.exists, unit.path
+    found = TCP_ENTRYPOINT.findall(unit.content_string)
+    assert found, f"traefik's unit renders no TCP entrypoint:\n{unit.content_string}"
+    addresses = {address for _, address, _ in found}
+    assert len(addresses) == 1, f"traefik binds its TCP entrypoints on several addresses: {addresses}"
+    return addresses.pop()
+
+
+def listener_addresses(host) -> list[tuple[str, str]]:
+    """(local address:port, the rest of the line) for every listening TCP socket.
+
+    The local address is column 3 of `ss -H -lntp` and it is taken as a whole: a substring
+    search for `:<port>` also matches `127.0.0.1:<port>`, which is precisely the line a
+    port forwarded to itself adds -- and the old form of this test would then have blamed
+    the pod for holding Traefik's port.
+    """
+    out = []
+    for line in host.check_output("ss -H -lntp").splitlines():
+        fields = line.split()
+        if len(fields) >= 4:
+            out.append((fields[3], line))
+    return out
+
+
+WILDCARDS = ("*", "0.0.0.0", "[::]", "::")
+
+
+def test_traefik_is_the_only_routable_listener_on_every_placed_tcp_port(host):
+    """Traefik holds `<tcp_bind_address>:<port>`, the service holds `127.0.0.1:<target>`.
+
+    Three claims, and each is a different failure. A port Traefik does not hold is a
+    scanner that cannot connect. A wildcard listener on that port -- Traefik's own, or a
+    service that published past loopback -- breaks the rule the whole platform rests on,
+    that Traefik is the only process on a routable address, and it is also the collision
+    that made this necessary: a wildcard and `127.0.0.1:<port>` cannot both bind, so
+    whichever of the two started second would be dead. And a missing loopback listener is
+    a router forwarding to nothing.
+
+    The bind address is asserted to be the host's own: the default is the primary-address
+    fact, and a `host.yml` that overrides it says so here too.
     """
     entries = placed_tcp_entries(host)
     if not entries:
         pytest.skip("no service on this host claims a TCP port")
-    listeners = host.check_output("ss -H -lntp")
+    bind = traefik_tcp_bind_address(host)
+    hostvars = load_spec(HOSTS / host.check_output("uname -n") / "host.yml")
+    assert bind == hostvars.get("tcp_bind_address", vm_address(host)), bind
+    assert bind not in WILDCARDS, f"traefik's TCP entrypoints are on the wildcard: {bind}"
+    listeners = listener_addresses(host)
     for _, port, target in entries:
-        public = [ln for ln in listeners.splitlines() if f":{port} " in ln]
-        assert public, f"nothing listens on {port}:\n{listeners}"
-        assert all("traefik" in ln for ln in public), f"something other than traefik holds {port}:\n{public}"
-        loopback = [ln for ln in listeners.splitlines() if f"127.0.0.1:{target} " in ln]
+        public = [line for local, line in listeners if local == f"{bind}:{port}"]
+        assert public, f"traefik does not listen on {bind}:{port}:\n{listeners}"
+        assert all("traefik" in line for line in public), f"something other than traefik holds {port}:\n{public}"
+        wildcard = [line for local, line in listeners if local in [f"{w}:{port}" for w in WILDCARDS]]
+        assert not wildcard, f"{port} is bound on a wildcard address:\n{wildcard}"
+        loopback = [line for local, line in listeners if local == f"127.0.0.1:{target}"]
         assert loopback, f"nothing listens on 127.0.0.1:{target}:\n{listeners}"
+
+
+def test_no_tcp_port_was_lost_to_an_address_collision(host):
+    """Neither journal says "address already in use" for a placed TCP port.
+
+    The assertions above read the sockets that exist now; this one reads what happened
+    when they were bound. A listener lost to EADDRINUSE does not stay lost -- both units
+    carry `Restart=always`, so the pair flaps rather than failing, and a converge that
+    happened to catch the good half of the cycle would pass everything above.
+
+    Read per service *user* rather than per unit: the error can come from either side and
+    from either process -- Traefik's own listener, or the rootlessport helper podman starts
+    for a `PublishPort=` -- and a unit filter would have to guess which unit of a pod
+    service logs it. Everything a service user logs belongs to that service anyway.
+    """
+    entries = placed_tcp_entries(host)
+    if not entries:
+        pytest.skip("no service on this host claims a TCP port")
+    users = ["svc-traefik"] + sorted({f"svc-{name}" for name, _, _ in entries})
+    for user in users:
+        uid = host.user(user).uid
+        r = host.run(f"journalctl _UID={uid} --no-pager -q | grep -i 'address already in use'")
+        assert r.rc == 1, f"{user} could not bind a port:\n{r.stdout}"
 
 
 def vm_address(host) -> str:
@@ -95,9 +173,10 @@ def test_traefik_forwards_a_placed_tcp_port_to_its_backend(host):
     r = host.run(f"cat > /tmp/tcp-echo-probe.py <<'PY'\n{ECHO_PROBE}\nPY")
     assert r.rc == 0, r.stderr
     address = vm_address(host)
-    # Through the VM's routable address on purpose: 127.0.0.1 would also reach Traefik's
-    # `:<port>` entrypoint, but only the routable one is the path a scanner on the LAN
-    # takes, and it is the one a `PublishPort` bound to 0.0.0.0 would silently win.
+    # The VM's routable address is now the only address that reaches Traefik at all: the
+    # entrypoint binds it and nothing else, so `127.0.0.1:<port>` is the service's own
+    # publish -- a connect there would echo back without Traefik in the path and prove
+    # nothing. It is also the path a scanner on the LAN takes.
     r = host.run(f"timeout 60 python3 /tmp/tcp-echo-probe.py {address} {port}")
     assert r.rc == 0, f"no echo from {address}:{port}: {r.stderr}"
     assert r.stdout.strip() == "storagebaby-tcp", repr(r.stdout)

@@ -2085,6 +2085,11 @@ PublishPort=127.0.0.1:2121:2121
 PublishPort=127.0.0.1:21100-21109:21100-21109
 ```
 
+> **Task 3 amendment.** These publish lines stay exactly as written: the entrypoints now bind
+> `{{ tcp_bind_address }}:<port>` instead of the wildcard, which is what lets a port be
+> forwarded to itself on loopback. `service_config.paperless.ftp_public_address` is that same
+> address — `tcp_bind_address` — since it is the address the client reached Traefik on.
+
 `quadlet/paperless-ftp.container.j2`:
 
 ```ini

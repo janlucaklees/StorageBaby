@@ -20,6 +20,16 @@ REQUIRED = {
     "packages",
     "service_config",
 }
+# Keys a host may carry and does not have to. The set exists for the same reason
+# `SPEC_KEYS` does in `test_contract.py`: without an upper bound a misspelling is silent
+# and the override simply never happens -- `tcp_bind_addres` would leave Traefik binding
+# the default-route address on a host that was configured away from it.
+OPTIONAL = {
+    # The address Traefik's plain-TCP entrypoints bind, when the host's default-route
+    # address is not the one clients arrive on. Defaults to `ansible_default_ipv4.address`
+    # in the playbook; no host declares it today.
+    "tcp_bind_address",
+}
 CLASSES = {"pool", "fast"}
 
 
@@ -28,6 +38,8 @@ def test_host_contract(host):
     cfg = load_yaml(HOSTS / host / "host.yml")
     missing = REQUIRED - set(cfg)
     assert not missing, f"{host}: missing keys {missing}"
+    assert set(cfg) <= REQUIRED | OPTIONAL, f"{host}: unknown host keys {set(cfg) - REQUIRED - OPTIONAL}"
+    assert isinstance(cfg.get("tcp_bind_address", ""), str)
     assert isinstance(cfg["acme"], bool)
     assert isinstance(cfg["deploy_timer"], bool)
     assert isinstance(cfg["gpu"], bool)
