@@ -4,9 +4,24 @@ domain: paperless
 volumes:
   data: { class: pool }
   media: { class: pool }
+  # The scanner's inbox, and the only volume of this service that is meant to be empty:
+  # the consumer deletes every file it has ingested, so nothing here outlives an import.
+  # `fast` for that reason -- it is a spool, not an archive -- and it is deliberately
+  # absent from `backup.paths` below.
+  consume: { class: fast }
   database: { class: fast }
   broker: { class: fast }
   backups: { class: fast }
+tcp_ports:
+  # Traefik listens on 21 and forwards to the pod's 2121: the control connection. 21
+  # because that is the only port a printer's FTP client offers to speak, and it is why
+  # `host_base` lowers the unprivileged-port sysctl on this host.
+  - { port: 21, target: 2121 }
+  # The passive data connections. Each port is forwarded to itself, which a range always
+  # is: the server advertises the port it is listening on in its PASV reply, and a
+  # rewritten port would send the client somewhere nothing answers. Ten of them is ten
+  # simultaneous transfers, which is nine more than one scanner needs.
+  - { range: [21100, 21109] }
 config:
   database_name: paperless
   database_user: paperless
@@ -14,7 +29,10 @@ config:
   # Empty on purpose, and measured: see "Trusted proxies" in the README. A host that
   # really does sit behind a second proxy sets it through `service_config.paperless`.
   trusted_proxies: ''
-secrets: [database_password, secret_key]
+  # The one FTP account. Its password is the `ftp_password` secret, and the two together
+  # are the whole of what the scanner is configured with.
+  ftp_user: scanner
+secrets: [database_password, secret_key, ftp_password]
 host_secrets:
   kopia_password: kopia-clients.paperless
 hooks:

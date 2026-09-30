@@ -18,8 +18,8 @@ reaches a backend that keeps its own TLS (kopia, nextcloud's collabora).
 fixed. Everything else on this unit's `Exec=` line is rendered: one entrypoint
 `tcp-<port>` on `<tcp_bind_address>:<port>` for every plain-TCP port declared by a
 service placed on this host, collected by the playbook into `placed_tcp_ports`.
-storagebaby's list is empty until Paperless's FTP part lands; the test hosts place a
-`tcp-echo` fixture.
+storagebaby's list is Paperless's FTP drop — 21 plus the passive range 21100–21109; the
+test hosts place that and a `tcp-echo` fixture.
 
 A TCP entrypoint binds **one concrete address**, unlike `web` and `websecure`, which
 are on the wildcard. The reason is the other end: a service reached over plain TCP

@@ -1,5 +1,14 @@
 [Pod]
 PodName=paperless
-{# Literal, not `{{ service.port }}`: the static check reads this line out of the raw
-   template to compare the published ports against the declared routes. #}
+{# Literal, not `{{ service.port }}` or a loop over `tcp_ports`: the static check reads
+   these lines out of the raw template to compare the published ports against the
+   declared routes and TCP targets, and a templated line would make it compare the
+   contract with itself. #}
 PublishPort=127.0.0.1:8000:8000
+{# The FTP control port. Traefik owns 21 on the host's own address and forwards here. #}
+PublishPort=127.0.0.1:2121:2121
+{# The passive range, one line for the whole of it, port-to-port because the server
+   advertises the port it listens on. These coexist with Traefik's entrypoints on the
+   same numbers only because those bind `tcp_bind_address` and not the wildcard --
+   `ansible/roles/service/README.md`, "Why the entrypoint binds one address". #}
+PublishPort=127.0.0.1:21100-21109:21100-21109

@@ -127,7 +127,9 @@ and Traefik is still the only process on a routable address. `tcp_bind_address` 
 `ansible_default_ipv4.address` — the address of the host's default route — and a host that
 has several, or whose default route is not the one clients arrive on, sets it as a top-level
 key in its `host.yml`. It is also what an application that has to advertise its own address
-should be given (Task 4's FTP `pasv_address`), because it is the address a client reached.
+should be given, because it is the address a client reached: paperless's FTP part renders
+`-P {{ tcp_bind_address }}` for exactly that reason, and an FTP transfer behind a TCP proxy
+hangs with no error on either side when the advertised address is wrong.
 
 Two things follow from binding a concrete address. The value is a _fact_, so it cannot be
 rendered on the controller: the static render passes a placeholder

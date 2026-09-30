@@ -164,7 +164,7 @@ def test_traefik_forwards_a_placed_tcp_port_to_its_backend(host):
     `tcp-echo` is named because it is the one placed service whose payload is knowable:
     it echoes. The port and target are still read off its spec, so the connection is the
     contract's and not a constant. A service that carried a real protocol would need its
-    own client, which is what Task 4 does for FTP.
+    own client, which is what `test_ftp.py` does for paperless's FTP drop.
     """
     entries = [e for e in placed_tcp_entries(host) if e[0] == "tcp-echo"]
     if not entries:

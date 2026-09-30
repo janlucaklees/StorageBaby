@@ -18,6 +18,16 @@ Environment=PAPERLESS_TIKA_GOTENBERG_ENDPOINT=http://127.0.0.1:3000
 Environment=PAPERLESS_TIKA_ENDPOINT=http://127.0.0.1:9998
 Environment=PAPERLESS_OCR_LANGUAGE={{ service.config.ocr_language }}
 Environment=PAPERLESS_URL=https://{{ routes[0].fqdn }}
+Environment=PAPERLESS_CONSUMPTION_DIR=/usr/src/paperless/consume
+{# Polling, not inotify: the file is written by another container of this pod through the
+   same bind mount, and an inotify watch does not reliably see a write that came from the
+   other side of a second mount namespace. 10 s is the scanner's latency budget, not the
+   platform's. #}
+Environment=PAPERLESS_CONSUMER_POLLING=10
+{# The scanner drops files in the top of the directory and nothing creates
+   subdirectories in it. Explicit because it is also the default: a recursive watch over a
+   spool the FTP user can create directories in is a larger surface than this needs. #}
+Environment=PAPERLESS_CONSUMER_RECURSIVE=false
 {# Rendered only when a host declares one. `trusted_proxies` is empty by design here --
    paperless hands the value to python-ipware as the *X-Forwarded-For* proxy list, and
    Traefik puts no entry of its own into that header, so any value makes the chain too
@@ -31,6 +41,9 @@ Secret=database_password
 Secret=secret_key
 Volume={{ volumes.data }}:/usr/src/paperless/data
 Volume={{ volumes.media }}:/usr/src/paperless/media
+{# The same directory `paperless-ftp` writes into, read-write because the consumer deletes
+   what it has ingested -- which is what keeps the volume a spool and not an archive. #}
+Volume={{ volumes.consume }}:/usr/src/paperless/consume
 HealthCmd=curl -fs -S --max-time 2 http://127.0.0.1:8000 || exit 1
 HealthOnFailure=kill
 HealthStartPeriod=120s

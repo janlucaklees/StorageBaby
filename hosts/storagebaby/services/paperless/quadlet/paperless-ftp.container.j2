@@ -1,0 +1,59 @@
+[Unit]
+Description=Paperless FTP drop (the scanner's inbox)
+
+[Container]
+Image=docker.io/stilliard/pure-ftpd:trixie-1.0.50
+ContainerName=paperless-ftp
+Pod=paperless.pod
+{# Measured, not copied: under podman's default capability set this image exits 252 with
+   no diagnostic anywhere -- pure-ftpd logs to syslog and there is none in the container.
+   The missing capability is CAP_AUDIT_WRITE, which is in *Docker's* default set and not
+   in podman's, which is why the image's own documented `docker run` works. Bisected one
+   capability at a time on the test VM; sys_nice, sys_resource and dac_read_search all
+   still exit, audit_write alone starts. Rootless it is a capability inside
+   `svc-paperless`'s own user namespace and nothing on the host -- the kernel's audit
+   subsystem answers to the initial namespace -- exactly like `AddCapability=MKNOD` on
+   nextcloud's Collabora. The README has the table. #}
+AddCapability=AUDIT_WRITE
+Environment=TZ={{ tz }}
+Environment=FTP_USER_NAME={{ service.config.ftp_user }}
+Environment=FTP_USER_HOME=/usr/src/paperless/consume
+{# The uid paperless-ngx runs as inside its own container. Both parts of the pod resolve
+   container uid 1000 to the same host subuid, so a file the scanner uploads is written by
+   the uid the consumer expects to own it -- and the consumer deletes it once the document
+   is ingested. `run.sh` chowns the home directory to this uid on every start, which is
+   the same thing paperless-ngx's own entrypoint does to its data trees. #}
+Environment=FTP_USER_UID=1000
+Environment=FTP_USER_GID=1000
+{# `type=env`, and this is the one place on the platform that does it: run.sh feeds the
+   password to `pure-pw` on stdin and reads it from the environment, with no file form to
+   point at. #}
+Secret=ftp_password,type=env,target=FTP_USER_PASS
+{# The image has no ENTRYPOINT -- its whole command is `/bin/sh -c "/run.sh ..."` -- so
+   `Exec=` replaces it, and `/run.sh` is a bash script that passes its arguments through
+   to pure-ftpd. `-S 2121` because Traefik owns 21 on the host (and the bare number is the
+   form pure-ftpd accepts; `-S ,2121` makes it exit). `-p` is the declared passive range,
+   read out of `tcp_ports` so the unit and the contract cannot drift. `-P` is the address
+   the PASV reply advertises, which behind a TCP proxy the server cannot work out for
+   itself: it has to be the address the *client* reached, which is the address Traefik's
+   entrypoints bind. #}
+{% set passive = (service.tcp_ports | selectattr('range', 'defined') | first).range %}
+Exec=/run.sh -l puredb:/etc/pure-ftpd/pureftpd.pdb -E -j -R -S 2121 -P {{ tcp_bind_address }} -p {{ passive[0] }}:{{ passive[1] }}
+Volume={{ volumes.consume }}:/usr/src/paperless/consume
+{# The image declares a VOLUME for both; a tmpfs keeps podman from making an anonymous
+   volume per start for a virtual-user database that is rebuilt from the environment on
+   every start anyway. #}
+Tmpfs=/etc/pure-ftpd/passwd
+Tmpfs=/home/ftpusers
+{# No curl in the image, and its `/bin/sh` is dash, which has no /dev/tcp -- the same
+   shape as paperless-tika's probe, which names the shell that does. `bash` is in the
+   image. #}
+HealthCmd=bash -c "exec 3<>/dev/tcp/127.0.0.1/2121"
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

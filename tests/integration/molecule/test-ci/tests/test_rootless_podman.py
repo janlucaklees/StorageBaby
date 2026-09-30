@@ -15,11 +15,17 @@ def test_service_user_manager_reachable_from_root(host):
 
 
 def test_rootless_container_holds_the_privileged_ports(host):
-    # The platform's whole port story in one assertion: the sysctl is what lets a
-    # rootless container bind 80/443 on the host network, and Traefik -- a rootless
-    # container -- is what actually holds them. No separate probe binds them, because
-    # Traefik is already there and a second listener would only conflict.
-    assert host.run("sysctl -n net.ipv4.ip_unprivileged_port_start").stdout.strip() == "80"
+    # The platform's port story: the unprivileged-port sysctl is what lets a rootless
+    # container bind 80/443 on the host network, and Traefik -- a rootless container --
+    # is what actually holds them. No separate probe binds them, because Traefik is
+    # already there and a second listener would only conflict.
+    #
+    # The sysctl's *value* is asserted by `test_host_base.py::test_unprivileged_ports`
+    # and deliberately not here: it is `min(80, every placed TCP port)`, so paperless's
+    # FTP control port pulls it to 21, and a second copy of the claim pinned at 80 is a
+    # test that fails the day the platform works as designed. What this one adds is the
+    # consequence -- whatever the line is, a rootless container is above it and holds
+    # the two ports the whole platform routes through.
     listeners = host.check_output("ss -Hltnp")
     for port in ("80", "443"):
         # Field 4 of `ss -ltn` is the local address; `*:80` for a dual-stack bind.

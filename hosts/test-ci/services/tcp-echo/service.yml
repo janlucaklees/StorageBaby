@@ -1,9 +1,10 @@
 # A test-only fixture, placed on the test hosts and nowhere else.
 #
-# It is the one service on the platform that claims a `tcp_ports` entry until Paperless's
-# FTP part lands, and it exists so the TCP path can be measured end to end rather than
-# only rendered: it echoes back whatever is sent to it, which is a payload a test can
-# check without speaking a protocol. `test_traefik.py` connects to the VM's own routable
+# It exists so the TCP path can be measured end to end rather than only rendered: it
+# echoes back whatever is sent to it, which is a payload a test can check without
+# speaking a protocol. Paperless's FTP part is the real user of `tcp_ports`, and
+# `test_ftp.py` measures that one -- but it can only measure FTP, and a protocol the
+# test itself has to speak is a second thing that can be wrong. `test_traefik.py` connects to the VM's own routable
 # address on 7777 -- through Traefik's entrypoint, not to the container's loopback -- and
 # asserts the echo comes back.
 #
