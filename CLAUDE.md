@@ -162,7 +162,7 @@ bash /opt/storagebaby/maintenance/balance_disks.sh [0-100] # balance only
 
 ## Networking
 
-Traefik runs rootless as `svc-traefik` with `Network=host` and is the only process on 80/443 (unprivileged-port sysctl lowered to 80). Every other service binds `127.0.0.1:<port>` — the port declared in its `service.yml`, unique per host and checked by a test.
+Traefik runs rootless as `svc-traefik` with `Network=host` and is the only process on a routable port — 80 and 443 always, plus any declared TCP port (the unprivileged-port sysctl is lowered to the lowest of them: 80 normally, 21 on storagebaby). Every other service binds `127.0.0.1:<port>` — the port declared in its `service.yml`, unique per host and checked by a test.
 
 Traefik's only provider is the file provider: the `service` role renders one route file per route into `/etc/storagebaby/traefik/dynamic.d/<name>-<domain>.yml` — one per `routes:` entry, so a two-route service gets two — pointing at `http://127.0.0.1:<port>`. No labels, no Docker socket, no shared container network — rootless containers of different users cannot reach each other's loopback, so cross-service traffic goes through Traefik and the public FQDN.
 
