@@ -63,6 +63,30 @@ def route_ports(spec: dict) -> list[int]:
     return [spec["port"]] if "port" in spec else []
 
 
+def tcp_ports(spec: dict) -> list[dict]:
+    """Every plain-TCP port a service claims, normalised to `{port, target}`.
+
+    `{port, target}` is the explicit form -- Traefik listens on `port` and forwards to
+    `127.0.0.1:target`. `{range: [lo, hi]}` expands to one entry per port, each
+    forwarded to the same number, because the only thing that needs a range is an FTP
+    passive port range, where the server advertises the port it is listening on and the
+    two sides have to agree.
+    """
+    out = []
+    for entry in spec.get("tcp_ports", []):
+        if "range" in entry:
+            lo, hi = entry["range"]
+            out += [{"port": p, "target": p} for p in range(lo, hi + 1)]
+        else:
+            out.append({"port": entry["port"], "target": entry.get("target", entry["port"])})
+    return out
+
+
+def placed_tcp_ports(host: str) -> list[int]:
+    """Every TCP entrypoint port placed on a host -- the list traefik's unit renders."""
+    return sorted({e["port"] for p in placements() if p.host == host for e in tcp_ports(p.spec)})
+
+
 def host_cfg(host: str) -> dict:
     return load_yaml(HOSTS / host / "host.yml")
 

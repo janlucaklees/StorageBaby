@@ -435,6 +435,45 @@ def placed_route_fqdns(host) -> list[str]:
     return sorted(found)
 
 
+def placed_tcp_entries(host) -> list[tuple[str, int, int]]:
+    """(service, entrypoint port, loopback target) for every TCP port placed on this VM."""
+    hostname = host.check_output("uname -n")
+    found = []
+    for owner, spec_path in SPECS:
+        if owner not in ("shared", hostname):
+            continue
+        spec = load_spec(spec_path)
+        for entry in spec.get("tcp_ports", []):
+            if "range" in entry:
+                found += [(spec["name"], p, p) for p in range(entry["range"][0], entry["range"][1] + 1)]
+            else:
+                found.append((spec["name"], entry["port"], entry.get("target", entry["port"])))
+    return sorted(found)
+
+
+@service_case
+def test_tcp_route_file_matches_the_spec(host, owner, spec_path):
+    """`<name>-tcp.yml` exists exactly for a service that claims TCP ports.
+
+    The file is the half of the plumbing that lives outside the service's own unit
+    directory, so a service that stopped claiming a port and kept its routers would keep
+    forwarding an entrypoint Traefik no longer has -- or, worse, one another service has
+    since been given.
+    """
+    placed(host, owner)
+    spec = load_spec(spec_path)
+    f = host.file(f"/etc/storagebaby/traefik/dynamic.d/{spec['name']}-tcp.yml")
+    entries = [e for e in placed_tcp_entries(host) if e[0] == spec["name"]]
+    if not entries:
+        assert not f.exists, f"{f.path} exists for a service that declares no tcp_ports"
+        return
+    assert f.exists and f.mode == 0o644, f.path
+    body = f.content_string
+    for _, port, target in entries:
+        assert f"{spec['name']}-tcp-{port}:" in body, body
+        assert f"tcp-{port}" in body and f"127.0.0.1:{target}" in body, body
+
+
 def container_env(host, user: str, container: str) -> dict[str, str]:
     """`NAME -> value` from the environment podman starts a container with.
 

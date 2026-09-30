@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from conftest import placements
+from conftest import placements, tcp_ports
 
 REQUIRED = {"name", "volumes", "secrets", "backup"}
 # Every key a `service.yml` may carry. Without this a misspelling is silent and the
@@ -25,6 +25,7 @@ SPEC_KEYS = {
     "host_secrets",
     "hooks",
     "backup",
+    "tcp_ports",
 }
 CLASSES = {"pool", "fast"}
 MODES = {"ro", "rw"}
@@ -99,6 +100,24 @@ def test_service_contract(p):
     else:
         # The one-route shorthand: the block is the whole of what the route resolves to.
         check_backend(p, block)
+    for entry in spec.get("tcp_ports", []):
+        assert set(entry) <= {"port", "target", "range"}, f"{p.name}: unknown tcp_ports keys"
+        if "range" in entry:
+            assert set(entry) == {"range"}, f"{p.name}: a tcp range takes neither port nor target"
+            lo, hi = entry["range"]
+            assert isinstance(lo, int) and isinstance(hi, int), f"{p.name}: a tcp range is two integers"
+            assert 1024 <= lo <= hi <= 65535, f"{p.name}: tcp range {lo}-{hi} out of bounds"
+            # One entrypoint per port is one listener in Traefik and one PublishPort on
+            # the pod; a range of hundreds is a configuration mistake, not a feature.
+            assert hi - lo < 64, f"{p.name}: a tcp range of {hi - lo + 1} ports is too many entrypoints"
+        else:
+            assert isinstance(entry["port"], int) and 1 <= entry["port"] <= 65535
+            assert isinstance(entry.get("target", entry["port"]), int)
+    # The forwarding side is a loopback port like any other, so two of this service's own
+    # entrypoints pointing at one backend port is the same mistake as two services sharing
+    # a route port -- and `test_ports` only sees a `target` that differs from its `port`.
+    targets = [e["target"] for e in tcp_ports(spec)]
+    assert len(set(targets)) == len(targets), f"{p.name}: two tcp ports forward to the same loopback port"
     for secret, ref in spec.get("host_secrets", {}).items():
         assert GROUP_RE.match(secret), f"{p.name}: invalid host secret name {secret}"
         assert re.match(r"^[a-z0-9-]+\.[A-Za-z0-9_-]+$", ref), f"{p.name}: host secret {secret} must reference <set>.<key>"

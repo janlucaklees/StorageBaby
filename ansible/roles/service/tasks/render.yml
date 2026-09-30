@@ -62,3 +62,10 @@
   loop_control:
     loop_var: route
     label: '{{ route.domain }}'
+
+- name: Render the service's TCP routes
+  ansible.builtin.template:
+    src: traefik-tcp.yml.j2
+    dest: '{{ render_output }}/traefik-dynamic.d/{{ service.name }}-tcp.yml'
+    mode: '0644'
+  when: tcp_enabled | bool

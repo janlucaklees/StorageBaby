@@ -232,6 +232,25 @@
     path: '/etc/storagebaby/traefik/dynamic.d/{{ service.name }}.yml'
     state: absent
 
+- name: Render the service's TCP routes
+  ansible.builtin.template:
+    src: traefik-tcp.yml.j2
+    dest: '/etc/storagebaby/traefik/dynamic.d/{{ service.name }}-tcp.yml'
+    owner: root
+    group: root
+    mode: '0644'
+  when: tcp_enabled | bool
+
+# Same rule as the pre-Phase-3 route file: a stale *configuration* file is not the inert
+# thing a stale unit is. Traefik reads the whole directory, so a left-behind router would
+# keep forwarding a port the service no longer claims -- to whatever else has since been
+# published on it.
+- name: Remove the TCP routes of a service that claims none
+  ansible.builtin.file:
+    path: '/etc/storagebaby/traefik/dynamic.d/{{ service.name }}-tcp.yml'
+    state: absent
+  when: not (tcp_enabled | bool)
+
 - name: Map rendered files to systemd unit names
   ansible.builtin.set_fact:
     mapped_units: "{{ mapped_units + [{'unit': unit_name, 'kind': _ext,

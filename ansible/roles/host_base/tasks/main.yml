@@ -3,10 +3,14 @@
     name: "{{ ['podman', 'passt', 'sops', 'age', 'ansible', 'git', 'openssh', 'make'] + (packages | default([])) }}"
     state: present
 
-- name: Allow unprivileged binding from port 80 (rootless Traefik on host network)
+# Traefik is rootless, so every port it binds has to be above this line. 80 is the
+# baseline (the web entrypoint); a placed service that claims a lower TCP port -- FTP's
+# control port 21 is the case this exists for -- brings it down to that port and no
+# further, which is why it is a `min` over the placement rather than a constant.
+- name: Allow unprivileged binding from the lowest port Traefik must listen on
   ansible.posix.sysctl:
     name: net.ipv4.ip_unprivileged_port_start
-    value: '80'
+    value: '{{ ([80] + (placed_tcp_ports | default([]))) | min }}'
     sysctl_set: true
     state: present
     reload: true

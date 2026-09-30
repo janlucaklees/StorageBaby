@@ -5,7 +5,9 @@ timer, unit active, container healthy, the FQDN answering over HTTPS) are covere
 every service by test_service.py -- this file only asserts what is specific to Traefik.
 """
 
+import pytest
 from conftest import run_as
+from test_service import placed_tcp_entries
 
 
 def test_secrets_mounted(host):
@@ -30,3 +32,23 @@ def test_no_root_containers(host):
     r = host.run("podman ps -q")
     assert r.rc == 0, r.stderr
     assert r.stdout.strip() == ""
+
+
+def test_traefik_is_the_only_listener_on_every_placed_tcp_port(host):
+    """Traefik listens on each declared port, on every address, and the pod only on loopback.
+
+    Both halves matter: a port Traefik does not listen on is a scanner that cannot
+    connect, and a service that published the same port on 0.0.0.0 would be reachable
+    past Traefik -- which is the rule the whole platform is built on.
+    """
+    entries = placed_tcp_entries(host)
+    if not entries:
+        pytest.skip("no service on this host claims a TCP port")
+    listeners = host.check_output("ss -H -lntp")
+    for _, port, target in entries:
+        public = [ln for ln in listeners.splitlines() if f":{port} " in ln]
+        assert public, f"nothing listens on {port}:\n{listeners}"
+        assert all("traefik" in ln for ln in public), f"something other than traefik holds {port}:\n{public}"
+        loopback = [ln for ln in listeners.splitlines() if f"127.0.0.1:{target} " in ln]
+        assert loopback, f"nothing listens on 127.0.0.1:{target}:\n{listeners}"
+

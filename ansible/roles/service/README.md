@@ -73,6 +73,54 @@ keys: the server makes its own certificate, Traefik re-encrypts to it and skips 
 verification nothing could pass. `insecure_skip_verify` renders a Traefik
 `serversTransport` named after the route and attaches it to that route's loadBalancer.
 
+## TCP ports
+
+A service that has to be reached by something other than HTTP declares `tcp_ports`:
+
+```yaml
+tcp_ports:
+  - { port: 21, target: 2121 } # Traefik listens on 21, forwards to 127.0.0.1:2121
+  - { range: [21100, 21109] } # each port forwarded to the same port on loopback
+```
+
+`target` defaults to `port`. The `range` form exists for an FTP passive port range, where
+the server advertises the port it is listening on and the two sides therefore have to
+agree — so a range forwards each port to itself and takes no `target`. Both forms are
+plain TCP: no TLS, no host name, nothing Traefik can inspect.
+
+Two halves make it work, and they are rendered in two different places:
+
+- **The entrypoints** are Traefik's own static configuration, so they live in
+  `hosts/shared/services/traefik/quadlet/traefik.container.j2` and come from the
+  playbook's `placed_tcp_ports` — every port of every service placed on the host, ranges
+  expanded, unique and sorted. One entrypoint `tcp-<port>` on `:<port>` each. Because it
+  is rendered into traefik's unit, placing or unplacing a TCP port changes that unit and
+  restarts Traefik once; the sorted, de-duplicated list is what keeps it from restarting
+  on every converge.
+- **The routers** are dynamic, so the role renders them per service into
+  `/etc/storagebaby/traefik/dynamic.d/<name>-tcp.yml`: one TCP router and one TCP service
+  per port, both named `<name>-tcp-<port>`, the router on `entryPoints: [tcp-<port>]` with
+  `rule: HostSNI(`*`)` and the service pointing at `127.0.0.1:<target>`. A service that
+  claims no ports has the file removed, like the pre-Phase-3 route file — a stale router
+  would keep forwarding a port the service no longer owns, to whatever has since been
+  published on it.
+
+Three consequences worth knowing before declaring one:
+
+- **A port belongs to exactly one service per host.** `HostSNI(`*`)` is the only rule a
+  non-TLS TCP router can carry, so the entrypoint is the whole of what selects the
+  backend: there is no second thing to route on. `tests/static/test_ports.py` treats route
+  ports, TCP entrypoints and TCP targets as one namespace per host and rejects a
+  duplicate, an overlapping range and 80 or 443.
+- **The pod must publish every target on loopback**, exactly as it publishes its route
+  ports — `PublishPort=127.0.0.1:<target>:<container port>`, or one
+  `127.0.0.1:<lo>-<hi>:<lo>-<hi>` line for a range.
+  `test_pod_publishes_exactly_the_route_ports` holds both sides.
+- **A port below 80 moves the unprivileged-port sysctl.** Traefik is rootless, and
+  `host_base` sets `net.ipv4.ip_unprivileged_port_start` to the minimum of 80 and the
+  host's declared TCP ports for that reason — FTP's control port 21 is the case it exists
+  for.
+
 ## Reaching another service through Traefik
 
 A template never writes an `AddHost=<name>:host-gateway` line, and a static test says

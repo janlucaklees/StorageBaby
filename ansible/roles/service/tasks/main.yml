@@ -51,6 +51,14 @@
     routes: '{{ routes_out }}'
     fqdn: "{{ (routes_out | first).fqdn if routes_out | length > 0 else '' }}"
 
+# Whether there is a `<name>-tcp.yml` to write, or one to remove. The `{port, target}` and
+# `{range: [lo, hi]}` forms are expanded in the template and nowhere else: it is their only
+# consumer, and Jinja turns a range into entries far more readably than a chain of
+# `set_fact`s would.
+- name: Whether this service claims plain TCP ports
+  ansible.builtin.set_fact:
+    tcp_enabled: '{{ (service.tcp_ports | default([])) | length > 0 }}'
+
 # Which units carry the host-gateway drop-in: the pod when the service has one,
 # otherwise every container of the service. Podman refuses `--add-host` on a container
 # that joins a pod, so a pod service can only carry it on the pod -- which covers every

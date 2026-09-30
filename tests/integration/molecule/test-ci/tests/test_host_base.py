@@ -1,5 +1,5 @@
 import pytest
-from test_service import HOSTS, load_spec
+from test_service import HOSTS, load_spec, placed_tcp_entries
 
 CERTS = "/etc/storagebaby/traefik/certs"
 DEFAULT_CERT = "/etc/storagebaby/traefik/dynamic.d/00-default-certificate.yml"
@@ -39,7 +39,14 @@ def test_packages(host, pkg):
 
 
 def test_unprivileged_ports(host):
-    assert host.run("sysctl -n net.ipv4.ip_unprivileged_port_start").stdout.strip() == "80"
+    """80 unless a placed service claims a lower TCP port, and then that port.
+
+    Derived rather than pinned at 80: rootless Traefik cannot bind below this line, so the
+    day a service declares FTP's control port 21 the sysctl has to come down with it --
+    and a constant here would pass on a host where the entrypoint silently failed to bind.
+    """
+    expected = min([80] + [port for _, port, _ in placed_tcp_entries(host)])
+    assert host.run("sysctl -n net.ipv4.ip_unprivileged_port_start").stdout.strip() == str(expected)
 
 
 def test_platform_dirs(host):

@@ -78,6 +78,42 @@
         placed_fqdns: >-
           {{ _placed_route_domains | default([]) | unique
              | product(['.' ~ domain]) | map('join') | sort | list }}
+
+    # The host's TCP listeners, collected here for the same reason `placed_fqdns` is: a
+    # service's spec knows its own ports, and what traefik's unit and the unprivileged
+    # port sysctl need is the *host's* whole list.
+    - name: Collect the TCP port declarations of every placed service
+      ansible.builtin.set_fact:
+        _placed_tcp: >-
+          {{ (_placed_tcp | default([])) + (_spec.tcp_ports | default([])) }}
+      vars:
+        _spec: "{{ lookup('file', placed_service) | from_yaml }}"
+      loop: '{{ placed_services }}'
+      loop_control:
+        loop_var: placed_service
+        label: '{{ placed_service | dirname | basename }}'
+
+    # A range expands to one port per entry, because one Traefik entrypoint binds one
+    # port -- there is no range form of `--entrypoints.<name>.address`. Only the
+    # entrypoint side is collected: where each port forwards to is the service's own
+    # business and stays in the route template.
+    - name: Expand every declared TCP port, ranges included
+      ansible.builtin.set_fact:
+        _tcp_expanded: >-
+          {{ (_tcp_expanded | default([]))
+             + (range(tcp_entry.range[0], tcp_entry.range[1] + 1) | list
+                if tcp_entry.range is defined else [tcp_entry.port]) }}
+      loop: '{{ _placed_tcp | default([]) }}'
+      loop_control:
+        loop_var: tcp_entry
+        label: '{{ tcp_entry }}'
+
+    # Sorted and de-duplicated, like placed_fqdns and for the same reason: it is rendered
+    # into traefik's unit, and a list in a different order every run would restart traefik
+    # on every converge.
+    - name: The host's TCP entrypoint ports, in a stable order
+      ansible.builtin.set_fact:
+        placed_tcp_ports: '{{ _tcp_expanded | default([]) | unique | sort | list }}'
   roles:
     # Before host_base, which creates the storage class roots *below* the pool: nothing
     # may write there until the pool is mounted, and asserting that is what this role

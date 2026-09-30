@@ -12,6 +12,25 @@ entry may override them: `internal: api@internal` and `wildcard_cert: true` are
 traefik's own, `scheme: https` + `insecure_skip_verify: true` are how Traefik
 reaches a backend that keeps its own TLS (kopia, nextcloud's collabora).
 
+## TCP entrypoints
+
+`web` (:80), `websecure` (:443) and `traefik` (127.0.0.1:8080, the dashboard) are
+fixed. Everything else on this unit's `Exec=` line is rendered: one entrypoint
+`tcp-<port>` on `:<port>` for every plain-TCP port declared by a service placed on
+this host, collected by the playbook into `placed_tcp_ports`. storagebaby's list is
+empty until Paperless's FTP part lands; the test hosts place a `tcp-echo` fixture.
+
+Entrypoints are static configuration and cannot be added through the file provider,
+which is why they are here and not in `dynamic.d` — and why **a change to the set
+restarts Traefik**, once: the port list reaches this template, the template is the
+unit, and the `service` role restarts a unit whose file changed. The list is sorted
+and de-duplicated in the playbook so that a converge which placed nothing new
+renders the same bytes and restarts nothing.
+
+The routers behind those entrypoints are dynamic and belong to the services: the
+`service` role renders `dynamic.d/<name>-tcp.yml`. See
+`ansible/roles/service/README.md`, "TCP ports".
+
 ## Certificates
 
 With `acme: true` in the host's `host.yml`, the dashboard router carries the

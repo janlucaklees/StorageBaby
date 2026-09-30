@@ -10,6 +10,16 @@ Exec=--api --ping=true \
   --providers.file.directory=/etc/traefik/dynamic.d --providers.file.watch=true \
   --entrypoints.web.address=:80 --entrypoints.websecure.address=:443 \
   --entrypoints.traefik.address=127.0.0.1:{{ service.port }} \
+{# One entrypoint per plain-TCP port placed on this host, `tcp-<port>` on `:<port>`. The
+   list is the host's placement, not this service's business, so the playbook collects it
+   into `placed_tcp_ports` -- and because it is rendered here, placing or unplacing a TCP
+   port changes this unit and restarts Traefik once. `:<port>` and not `127.0.0.1:<port>`:
+   these are the ports a scanner on the LAN connects to, and Traefik is the only process
+   allowed on a routable address. The matching routers are rendered by the `service` role
+   into `dynamic.d/<name>-tcp.yml`. #}
+{% for port in placed_tcp_ports | default([]) %}
+  --entrypoints.tcp-{{ port }}.address=:{{ port }} \
+{% endfor %}
   --entrypoints.web.http.redirections.entrypoint.to=websecure \
   --entrypoints.web.http.redirections.entrypoint.scheme=https{% if acme %} \
   --certificatesresolvers.porkbun.acme.email={{ acme_email }} \

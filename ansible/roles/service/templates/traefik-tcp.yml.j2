@@ -1,0 +1,30 @@
+{# Every plain-TCP port this service claims, as one Traefik TCP router and one TCP
+   service each. Plain TCP carries no hostname, so `HostSNI(`*`)` is the rule -- the one
+   Traefik requires for a non-TLS TCP router -- and the entrypoint is what selects the
+   backend. That is also why a port belongs to exactly one service per host: there is no
+   second thing to route on. `test_ports` is what holds that. #}
+{% set entries = [] %}
+{% for e in service.tcp_ports %}
+{%   if e.range is defined %}
+{%     for p in range(e.range[0], e.range[1] + 1) %}
+{%       set _ = entries.append({'port': p, 'target': p}) %}
+{%     endfor %}
+{%   else %}
+{%     set _ = entries.append({'port': e.port, 'target': e.target | default(e.port)}) %}
+{%   endif %}
+{% endfor %}
+tcp:
+  routers:
+{% for entry in entries %}
+    {{ service.name }}-tcp-{{ entry.port }}:
+      rule: "HostSNI(`*`)"
+      entryPoints: [tcp-{{ entry.port }}]
+      service: {{ service.name }}-tcp-{{ entry.port }}
+{% endfor %}
+  services:
+{% for entry in entries %}
+    {{ service.name }}-tcp-{{ entry.port }}:
+      loadBalancer:
+        servers:
+          - address: "127.0.0.1:{{ entry.target }}"
+{% endfor %}

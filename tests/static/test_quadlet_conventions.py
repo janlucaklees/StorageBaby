@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import REPO, placements, route_ports
+from conftest import REPO, placements, route_ports, tcp_ports
 
 ROLE_TEMPLATES = REPO / "ansible/roles/service/templates"
 
@@ -78,6 +78,19 @@ def test_environment_values_with_whitespace_are_quoted(path):
             assert assignment.startswith('"') and assignment.endswith('"'), f"{path.name}: {ln}"
 
 
+# A range is one `PublishPort=127.0.0.1:lo-hi:lo-hi` line, which is how an FTP passive
+# range reaches the pod without ten lines of it.
+PUBLISH = re.compile(r"^PublishPort=127\.0\.0\.1:(\d+)(?:-(\d+))?:", flags=re.M)
+
+
+def published_ports(pod_text: str) -> list[int]:
+    """Every host port a pod publishes, a `lo-hi` range counted port by port."""
+    out = []
+    for lo, hi in PUBLISH.findall(pod_text):
+        out += list(range(int(lo), int(hi or lo) + 1))
+    return out
+
+
 @pytest.mark.parametrize(
     "p",
     [p for p in placements() if list((p.dir / "quadlet").glob("*.pod.j2"))],
@@ -88,8 +101,12 @@ def test_pod_publishes_exactly_the_route_ports(p):
     # its own would fail to start, and a pod that publishes more or fewer than the
     # routes declare is either exposed past Traefik or unreachable through it.
     pod = next((p.dir / "quadlet").glob("*.pod.j2")).read_text()
-    published = re.findall(r"^PublishPort=127\.0\.0\.1:(\d+):", pod, flags=re.M)
-    assert sorted(int(x) for x in published) == sorted(route_ports(p.spec))
+    # A `tcp_ports` target is published like a route port and for the same reason: the
+    # Traefik TCP service this role renders forwards to `127.0.0.1:<target>`, so a target
+    # the pod does not publish is an entrypoint that accepts a connection and then has
+    # nothing to hand it to.
+    expected = route_ports(p.spec) + [e["target"] for e in tcp_ports(p.spec)]
+    assert sorted(published_ports(pod)) == sorted(expected)
     assert not re.search(r"^PublishPort=(?!127\.0\.0\.1:)", pod, flags=re.M)
     for tpl in (p.dir / "quadlet").glob("*.container.j2"):
         text = tpl.read_text()

@@ -3,8 +3,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
-from conftest import placed_fqdns, placements, routes_of
+from conftest import host_names, placed_fqdns, placed_tcp_ports, placements, routes_of, tcp_ports
 
 # A timer and its service unit are plain systemd user units, not Quadlet ones: the role
 # renders them beside the Quadlet units, into `timers/` of the render output.
@@ -162,3 +163,61 @@ def test_timers_rendered(rendered, p):
     timer_dir = rendered / p.host / p.name / "timers"
     expected = sorted(t.name[:-3] for t in (p.dir / "quadlet").glob("*.j2") if t.name.endswith(TIMER_SUFFIXES))
     assert sorted(f.name for f in timer_dir.iterdir()) == expected
+
+
+# The entrypoint the traefik template renders per placed TCP port. Both halves are
+# captured so the test can say the name and the address are the same number -- an
+# `--entrypoints.tcp-21.address=:2121` would route the wrong port and read fine.
+TCP_ENTRYPOINT = re.compile(r"--entrypoints\.tcp-(\d+)\.address=:(\d+)")
+
+
+@pytest.mark.parametrize("host", host_names())
+def test_traefik_entrypoints_are_exactly_the_hosts_tcp_ports(rendered, host):
+    """Traefik's unit carries one TCP entrypoint per placed port, and not one more.
+
+    Asserted as a set per host rather than per service, because the two failures worth
+    catching are both invisible to a per-service check: an entrypoint left over from a
+    port nothing claims any more, and a port leaking onto a host that does not place the
+    service -- storagebaby, whose list is empty today, is the case that proves it.
+    """
+    unit = (rendered / host / "traefik" / "traefik.container").read_text()
+    found = TCP_ENTRYPOINT.findall(unit)
+    assert all(name == address for name, address in found), f"{host}: {found}"
+    assert sorted(int(name) for name, _ in found) == placed_tcp_ports(host), unit
+
+
+@pytest.mark.parametrize(
+    "p", [p for p in placements() if p.spec.get("tcp_ports")], ids=lambda p: f"{p.host}/{p.name}"
+)
+def test_tcp_routes_rendered(rendered, p):
+    """One router and one service per declared port, and an entrypoint for each in traefik's unit.
+
+    The two halves have to agree or the port is dead in a way nothing reports: a router
+    on an entrypoint that does not exist is ignored by Traefik with a log line, and an
+    entrypoint with no router accepts the connection and closes it.
+    """
+    doc = yaml.safe_load((rendered / p.host / "traefik-dynamic.d" / f"{p.name}-tcp.yml").read_text())
+    expected = tcp_ports(p.spec)
+    assert set(doc["tcp"]["routers"]) == {f"{p.name}-tcp-{e['port']}" for e in expected}
+    for entry in expected:
+        router = doc["tcp"]["routers"][f"{p.name}-tcp-{entry['port']}"]
+        assert router["rule"] == "HostSNI(`*`)"
+        assert router["entryPoints"] == [f"tcp-{entry['port']}"]
+        service = doc["tcp"]["services"][router["service"]]
+        assert service["loadBalancer"]["servers"] == [{"address": f"127.0.0.1:{entry['target']}"}]
+    unit = (rendered / p.host / "traefik" / "traefik.container").read_text()
+    for entry in expected:
+        assert f"--entrypoints.tcp-{entry['port']}.address=:{entry['port']}" in unit, unit
+
+
+@pytest.mark.parametrize(
+    "p", [p for p in placements() if not p.spec.get("tcp_ports")], ids=lambda p: f"{p.host}/{p.name}"
+)
+def test_no_tcp_file_for_a_service_that_claims_none(rendered, p):
+    """The other half of the cleanup task: nothing is written for a service without ports.
+
+    Traefik reads the whole directory, so a file rendered for a service that claims no
+    TCP port would be a router on an entrypoint that does not exist -- and on the host it
+    is the file the role has to remove, which is the same claim from the other side.
+    """
+    assert not (rendered / p.host / "traefik-dynamic.d" / f"{p.name}-tcp.yml").exists()
