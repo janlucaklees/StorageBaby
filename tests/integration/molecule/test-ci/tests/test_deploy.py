@@ -13,6 +13,7 @@ other test would otherwise have to account for.
 import re
 import shlex
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 from conftest import run_as
@@ -37,9 +38,56 @@ JOURNAL = "journalctl -u storagebaby-deploy.service --no-pager | tail -80"
 DASHBOARD = "curl -sk -o /dev/null -w '%{http_code}' -H 'Host: traefik.test.local' https://127.0.0.1/dashboard/"
 
 
-def active_since(host, user, unit):
-    cmd = f"systemctl --user -M {user}@ show {unit} -p ActiveEnterTimestampMonotonic --value"
-    return host.run(cmd).stdout.strip()
+class Marks(NamedTuple):
+    """What a unit looks like before and after a deploy, for the restart claims below."""
+
+    active_since: str
+    restarts: str
+
+
+def unit_marks(host, user, unit) -> Marks:
+    """`ActiveEnterTimestampMonotonic` and `NRestarts` of a user unit, read in one call.
+
+    Both, because "the timestamp did not move" and "the role did not restart it" are not
+    the same claim -- see `assert_the_role_did_not_restart`. Parsed as `KEY=value` rather
+    than asked for with `--value`, so the two values cannot be told apart by position.
+    `systemctl show` answers for a unit it does not know with a 0 timestamp, which is why
+    every caller that needs a *real* reading asserts against `"0"` itself.
+    """
+    out = host.run(f"systemctl --user -M {user}@ show {unit} -p ActiveEnterTimestampMonotonic -p NRestarts").stdout
+    props = dict(ln.split("=", 1) for ln in out.splitlines() if "=" in ln)
+    return Marks(props.get("ActiveEnterTimestampMonotonic", "0").strip(), props.get("NRestarts", "0").strip() or "0")
+
+
+def assert_the_role_did_not_restart(host, user, unit, before: Marks, what: str):
+    """Fail only when *the role* restarted `unit` since `before`.
+
+    A moved `ActiveEnterTimestampMonotonic` used to be the whole evidence, and it is not
+    enough. `systemctl restart` is all the role ever issues, and it moves that timestamp
+    -- but so does a restart nothing in this repository asked for: every container here
+    declares `HealthOnFailure=kill` and `Restart=always`, so one health check that times
+    out under the load of back-to-back image pulls on a 2-vCPU test VM has systemd kill
+    and restart the container by itself, outside any converge. That is how jellyfin made
+    this assertion fail on test-a on a run whose role behaviour was correct.
+
+    The two are told apart by the counter: a systemd auto-restart *increments*
+    `NRestarts`, a manual `systemctl restart` resets it to 0. Hence `>` and not `!=` -- a
+    unit that health-cycled earlier in the run sits at 1, and a role restart afterwards
+    would take it back to 0, which `!=` would excuse as "systemd did it" and let a real
+    regression through.
+
+    The blind spot, stated plainly: a deploy in which the role restarts the unit *and* a
+    health cycle bumps the counter is excused. That is the trade. Each of these is the
+    negative half of a claim whose positive half is asserted on its own, and a case that
+    fails on the VM's timing says nothing about the role.
+    """
+    now = unit_marks(host, user, unit)
+    if now.active_since == before.active_since:
+        return
+    assert int(now.restarts) > int(before.restarts), (
+        f"{what}: {unit} was restarted by the role (ActiveEnterTimestampMonotonic "
+        f"{before.active_since} -> {now.active_since}, NRestarts {before.restarts} -> {now.restarts})"
+    )
 
 
 def other_placed_service(host) -> tuple[str, str] | None:
@@ -88,11 +136,11 @@ def check_recap(result) -> list[str]:
 def test_deploy_service_is_a_noop_when_nothing_changed(host):
     # The checkout renders byte for byte what the converge already put on the host, so
     # nothing is reported changed and no unit is restarted -- that is the whole claim.
-    before = active_since(host, "svc-traefik", "traefik.service")
+    before = unit_marks(host, "svc-traefik", "traefik.service")
     r = host.run(DEPLOY)
     assert r.rc == 0, host.run(JOURNAL).stdout
     assert host.file("/var/lib/storagebaby/repo/ansible/playbook.yml").exists
-    assert active_since(host, "svc-traefik", "traefik.service") == before
+    assert_the_role_did_not_restart(host, "svc-traefik", "traefik.service", before, "a deploy that changed nothing")
 
 
 # Declared after the case above and not before it, although it changes nothing itself:
@@ -127,7 +175,7 @@ def test_the_whole_playbook_runs_clean_in_check_mode(host):
     found = single_container_service(host)
     if not found:
         pytest.skip("no single-container service is placed on this host")
-    name, stem, _, _ = found
+    name, stem, _, _, template = found
     path = f"/etc/containers/systemd/users/{host.user(f'svc-{name}').uid}/{stem}.container"
     backup = f"{path}.harness-backup"
     assert host.run(f"cp -a {path} {backup}").rc == 0
@@ -150,7 +198,6 @@ def test_the_whole_playbook_runs_clean_in_check_mode(host):
     # behind it must not, and the run still has to reach the end. The bump is made in the
     # pulled checkout rather than pushed to the remote, because nothing here is supposed
     # to converge: `git checkout` takes it back without a deploy.
-    template = container_template_of(name)
     relative = str(Path(template).relative_to("/repo"))
     image = next(
         ln.split("=", 1)[1].strip() for ln in host.file(path).content_string.splitlines() if ln.startswith("Image=")
@@ -173,14 +220,33 @@ def test_the_whole_playbook_runs_clean_in_check_mode(host):
     assert missing not in host.file(f"{PULLED}/{relative}").content_string, f"{relative} was not put back"
 
 
+# `Image=` may name another Quadlet unit instead of a registry reference -- `<stem>.build`
+# for an image this host builds, `<stem>.image` for a `.image` unit. The role's pre-pull
+# skips both, so a service backed by one is no use to the two cases below: each of them
+# rewrites the tag of the single `Image=` and expects the role to try to fetch it.
+UNIT_BACKED = re.compile(r"^Image=\S+\.(build|image)$", flags=re.M)
+
+
 def single_container_service(host):
-    """(name, unit file stem, unit, container) of the first placed one-container service.
+    """(name, unit stem, unit, container, template) of the first placed one-container service.
 
     Derived like `other_placed_service`, and for the same reason. A one-container
     service is where the host-gateway drop-in sits on the container itself, so "exactly
     this unit came back" is a single timestamp; on a pod service the drop-in is the
     pod's and a restart moves every member. traefik is excluded because it is the unit
     the other half of the claim -- "and nothing else restarted" -- watches.
+
+    The template is returned rather than looked up again by service name: two of the
+    cases below edit it, and a lookup by name alone would take the *first* spec folder
+    with that name, which for a service placed on a test host is the storagebaby one and
+    is only the same file because the placements are symlinks. A real per-host copy would
+    have them editing a template the host does not read and then asserting about a
+    converge that changed nothing. Selected here, it is the placed service's own by
+    construction.
+
+    A `.build`- or `.image`-backed service is skipped for the reason above `UNIT_BACKED`.
+    Today the filter changes nothing -- test-a lands on jellyfin and test-ci on kopia --
+    but with neither placed it would fall through to `paperless-upload`.
     """
     hostname = host.check_output("uname -n")
     for owner, spec_path in SPECS:
@@ -188,9 +254,10 @@ def single_container_service(host):
         if name == "traefik" or owner not in ("shared", hostname) or pod_unit(spec_path):
             continue
         containers = quadlets(spec_path, "container")
-        if len(containers) == 1:
-            stem = unit_stem(containers[0])
-            return name, stem, f"{stem}.service", container_name(containers[0])
+        if len(containers) != 1 or UNIT_BACKED.search(containers[0].read_text()):
+            continue
+        stem = unit_stem(containers[0])
+        return name, stem, f"{stem}.service", container_name(containers[0]), containers[0]
     return None
 
 
@@ -215,7 +282,7 @@ def test_deploy_restores_a_drifted_host_gateway_dropin(host):
     found = single_container_service(host)
     if not found:
         pytest.skip("no single-container service is placed on this host")
-    name, stem, unit, container = found
+    name, stem, unit, container, _ = found
     user = f"svc-{name}"
     path = f"/etc/containers/systemd/users/{host.user(user).uid}/{stem}.container.d/10-storagebaby-hosts.conf"
     before = host.file(path).content_string
@@ -223,9 +290,9 @@ def test_deploy_restores_a_drifted_host_gateway_dropin(host):
     assert len(mapped) > 1, f"{path} maps {mapped}: too few names to drop one and still prove anything"
     dropped = mapped[-1]
 
-    unit_before = active_since(host, user, unit)
-    traefik_before = active_since(host, "svc-traefik", "traefik.service")
-    assert unit_before != "0", f"{unit} has no ActiveEnterTimestamp: is that the right unit name?"
+    unit_before = unit_marks(host, user, unit)
+    traefik_before = unit_marks(host, "svc-traefik", "traefik.service")
+    assert unit_before.active_since != "0", f"{unit} has no ActiveEnterTimestamp: is that the right unit name?"
 
     r = host.run(f"sed -i '/^AddHost={dropped}:/d' {path}")
     assert r.rc == 0, r.stderr
@@ -239,8 +306,10 @@ def test_deploy_restores_a_drifted_host_gateway_dropin(host):
     assert r.rc == 0, host.run(JOURNAL).stdout
 
     assert host.file(path).content_string == before, f"the deploy did not restore {path}"
-    assert active_since(host, user, unit) != unit_before, f"{unit} was not restarted by its changed drop-in"
-    assert active_since(host, "svc-traefik", "traefik.service") == traefik_before, "traefik restarted too"
+    assert unit_marks(host, user, unit).active_since != unit_before.active_since, (
+        f"{unit} was not restarted by its changed drop-in"
+    )
+    assert_the_role_did_not_restart(host, "svc-traefik", "traefik.service", traefik_before, "traefik restarted too")
     # The file on disk is only half of it: Quadlet merges the drop-in into the unit at
     # generation time, so the mapping reaches a running container through the
     # daemon-reload and the restart, and this is where that is visible.
@@ -252,25 +321,21 @@ def test_deploy_restores_a_drifted_host_gateway_dropin(host):
     )
 
 
-def container_template_of(name: str):
-    """The first `*.container.j2` of a placed service, by service name."""
-    for _, spec_path in SPECS:
-        if spec_path.parent.name == name:
-            return quadlets(spec_path, "container")[0]
-    return None
-
-
 @pytest.mark.order(-1)
 def test_an_unpullable_image_fails_the_deploy_without_stopping_anything(host):
     """A tag that does not exist stops the converge at the pull, with the service still up.
 
-    This is the ordering claim of "Images are pulled before units change"
-    (`ansible/roles/service/README.md`) made from outside: the role pulls every image a
-    unit names *before* it writes a unit file, reloads the user manager or restarts
-    anything, so an image that cannot be fetched costs a red deploy and nothing else. Get
-    the order wrong and the first symptom is the opposite -- the unit is rewritten, the
-    container is stopped, and then the pull fails, leaving a service that was healthy a
-    minute ago down until someone notices.
+    This is the ordering claim of "Images are pulled before anything of a service is
+    written" (`ansible/roles/service/README.md`) made from outside: the role pulls every
+    image a unit names before it copies the service's config, syncs a `podman secret`,
+    writes a unit file, reloads the user manager or restarts anything -- so an image that
+    cannot be fetched costs a red deploy and nothing else. Get the order wrong and the
+    first symptom is the opposite: the unit is rewritten, the container is stopped, and
+    then the pull fails, leaving a service that was healthy a minute ago down until
+    someone notices. Get it half right -- the units pulled first but the config and the
+    secrets written before that -- and the symptom is worse than a down service, because
+    the *next* deploy finds them already on disk, restarts nothing, and reports green over
+    a pod still running the old ones.
 
     A single-container service is used for the same reason the drop-in case uses one: its
     unit is the only thing that would move, so "it did not move" is one timestamp rather
@@ -282,8 +347,7 @@ def test_an_unpullable_image_fails_the_deploy_without_stopping_anything(host):
     found = single_container_service(host)
     if not found:
         pytest.skip("no single-container service is placed on this host")
-    name, stem, unit, container = found
-    template = container_template_of(name)
+    name, stem, unit, container, template = found
     user = f"svc-{name}"
 
     # The reference the host is running now, read off the rendered unit: the template may
@@ -295,8 +359,8 @@ def test_an_unpullable_image_fails_the_deploy_without_stopping_anything(host):
     missing = f"{image.split('@')[0].rsplit(':', 1)[0]}:does-not-exist"
     assert run_as(host, user, f"podman image exists {missing}").rc != 0, f"{missing} is in the store already"
 
-    unit_before = active_since(host, user, unit)
-    assert unit_before != "0", f"{unit} has no ActiveEnterTimestamp: is that the right unit name?"
+    unit_before = unit_marks(host, user, unit)
+    assert unit_before.active_since != "0", f"{unit} has no ActiveEnterTimestamp: is that the right unit name?"
 
     relative = str(Path(template).relative_to("/repo"))
     r = host.run(
@@ -313,7 +377,7 @@ def test_an_unpullable_image_fails_the_deploy_without_stopping_anything(host):
     # Both halves of "nothing was touched": the unit was never restarted, and the
     # container it owns is still the running one. A restart that failed would also leave
     # the timestamp alone -- by leaving the unit down.
-    assert active_since(host, user, unit) == unit_before, f"{unit} was restarted before the pull failed"
+    assert_the_role_did_not_restart(host, user, unit, unit_before, "the pull failed after a restart")
     assert host.run(f"systemctl --user -M {user}@ is-active {unit}").stdout.strip() == "active"
     running = run_as(host, user, f"podman ps --quiet --filter name={container}")
     assert running.stdout.strip(), f"{container} is not in `podman ps` any more: {running.stderr}"
@@ -326,7 +390,7 @@ def test_an_unpullable_image_fails_the_deploy_without_stopping_anything(host):
     assert r.rc == 0, r.stderr
     r = host.run(DEPLOY)
     assert r.rc == 0, host.run(JOURNAL).stdout
-    assert active_since(host, user, unit) == unit_before, f"{unit} was restarted by a revert that changed nothing"
+    assert_the_role_did_not_restart(host, user, unit, unit_before, "the revert restarted it")
 
 
 @pytest.mark.order(-1)
@@ -347,13 +411,13 @@ def test_deploy_restarts_only_the_changed_service(host):
     tree on every run, and it is destroyed with the VM in any case.
     """
     other = other_placed_service(host)
-    before = active_since(host, "svc-traefik", "traefik.service")
-    other_before = active_since(host, f"svc-{other[0]}", other[1]) if other else None
+    before = unit_marks(host, "svc-traefik", "traefik.service")
+    other_before = unit_marks(host, f"svc-{other[0]}", other[1]) if other else None
     # `systemctl show` answers for a unit it does not know with a 0 timestamp, and 0 ==
     # 0 would make the "and nothing else restarted" assertion below pass without ever
     # looking at a running service. So the reading itself has to be a real one.
     if other:
-        assert other_before != "0", f"{other[1]} has no ActiveEnterTimestamp: is that the right unit name?"
+        assert other_before.active_since != "0", f"{other[1]} has no ActiveEnterTimestamp: is that the right unit name?"
     r = host.run(
         "cd /srv/src && sed -i 's|^port: .*|port: 8081|' hosts/shared/services/traefik/service.yml "
         "&& git -c user.name=t -c user.email=t@t commit -qam 'change traefik port' && git push -q origin stable"
@@ -361,9 +425,9 @@ def test_deploy_restarts_only_the_changed_service(host):
     assert r.rc == 0, r.stderr
     r = host.run(DEPLOY)
     assert r.rc == 0, host.run(JOURNAL).stdout
-    assert active_since(host, "svc-traefik", "traefik.service") != before
+    assert unit_marks(host, "svc-traefik", "traefik.service").active_since != before.active_since
     if other:
-        assert active_since(host, f"svc-{other[0]}", other[1]) == other_before, f"{other[0]} restarted too"
+        assert_the_role_did_not_restart(host, f"svc-{other[0]}", other[1], other_before, f"{other[0]} restarted too")
     assert host.run("systemctl --user -M svc-traefik@ is-active traefik.service").stdout.strip() == "active"
     # Polled, not a single shot: the restart is synchronous but Traefik's own startup
     # is not, so the first request after it can still be refused.
@@ -503,7 +567,7 @@ def test_deploy_refuses_to_converge_with_a_declared_device_missing(host):
     disk = s["disks"][-1]
     device = disk["device"]
     assert host.file(device).exists, f"{device} is not there to begin with"
-    traefik_before = active_since(host, "svc-traefik", "traefik.service")
+    traefik_before = unit_marks(host, "svc-traefik", "traefik.service")
 
     assert host.run(f"rm -f {device}").rc == 0
     assert not host.file(device).exists, f"{device} survived its own removal"
@@ -515,7 +579,9 @@ def test_deploy_refuses_to_converge_with_a_declared_device_missing(host):
     # `"d3" in journal` over two hundred lines of Ansible output is true whatever the role
     # said. The path cannot collide, and it is what the role's failure message prints.
     assert device in journal, journal
-    assert active_since(host, "svc-traefik", "traefik.service") == traefik_before, "a service was restarted anyway"
+    assert_the_role_did_not_restart(
+        host, "svc-traefik", "traefik.service", traefik_before, "a service was restarted anyway"
+    )
 
     assert host.run("udevadm trigger --subsystem-match=block --action=change && udevadm settle").rc == 0
     assert host.file(device).exists, f"udev did not put {device} back"
