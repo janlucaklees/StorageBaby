@@ -332,8 +332,13 @@ each branch unit's `Description=` differs), which is why step 9 exists.
   the host's default-route address, and that is right on a host with one address. On a host
   with several — a second NIC, a VPN interface, a bridge — set it explicitly to the address
   the scanner reaches, because it is both what Traefik's TCP entrypoints bind and what the
-  FTP server advertises in its `PASV` reply. Wrong value, and the printer connects, logs in
-  and then hangs on the transfer.
+  FTP server advertises in its `PASV` reply. A wrong-but-local value is the printer
+  connecting, logging in and then hanging on the transfer. A value the host does **not**
+  hold is worse, and was measured: Traefik treats an entrypoint it cannot bind as fatal,
+  exits 1 and restart-loops, and while it does, **no** route on the host answers — 80 and
+  443 with the rest. So give a host that declares a TCP port a static address or a DHCP
+  reservation: a lease that moves takes every service down until the next converge
+  re-renders the unit.
 - **The printer's profile**: FTP (not SFTP, not FTPS), host `<that address>`, port 21, user
   `scanner` (`config.ftp_user`), the `ftp_password` from step 1, **passive mode**. Nothing
   else is needed — the consumer picks up whatever lands in the consume volume and deletes

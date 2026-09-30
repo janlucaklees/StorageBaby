@@ -33,8 +33,28 @@ address (`ansible_default_ipv4.address`, the one fact this playbook gathers, and
 a host that places a TCP port) and is overridable as a top-level key in `host.yml` on a
 host with several addresses. Two consequences: the value cannot be rendered on the
 controller, so the static render checks it through a placeholder; and a host whose
-address changes needs a converge to re-render this unit — until then `Restart=always`
-keeps retrying an entrypoint that cannot bind.
+address changes needs a converge to re-render this unit.
+
+**An entrypoint Traefik cannot bind is fatal to Traefik, not to that entrypoint.**
+Measured on the test VM with Traefik v3.7.13: one TCP entrypoint pointed at an address the
+host does not hold, the rest of the unit untouched.
+
+```
+ERR Command error error="command traefik error: error while building entryPoint tcp-7777:
+building listener: error opening listener: listen tcp <that address>:7777: bind: cannot
+assign requested address"
+```
+
+The process exits 1 (`Result=exit-code`, `ExecMainStatus=1`), `Restart=always` brings it
+back, it fails the same way, and `ss -ltn` shows **no** listener of this service at all —
+80, 443 and every other TCP entrypoint are down with it, for as long as the value is wrong.
+So a stale `tcp_bind_address` is not "FTP will not transfer"; it is "this host serves
+nothing". The two ways it goes stale are a DHCP lease that moves and a NIC that is
+replaced, and the fix for both is upstream of Traefik: give the host a static address or a
+reservation, or pin `tcp_bind_address` in `host.yml`. No code change: an entrypoint the
+operator declared and the kernel refuses is a configuration error, and a Traefik that
+carried on without it would serve the other routes while the FTP drop silently accepted
+nothing.
 
 Entrypoints are static configuration and cannot be added through the file provider,
 which is why they are here and not in `dynamic.d` — and why **a change to the set

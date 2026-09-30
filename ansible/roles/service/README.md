@@ -134,9 +134,16 @@ hangs with no error on either side when the advertised address is wrong.
 Two things follow from binding a concrete address. The value is a _fact_, so it cannot be
 rendered on the controller: the static render passes a placeholder
 (`tests/static/conftest.py`, `RENDER_TCP_BIND_ADDRESS`) and asserts only that the flag
-carries `<address>:<port>`. And Traefik has to be restarted when the host's address changes
-— a converge re-renders the unit and does exactly that, and until it runs `Restart=always`
-retries a listener that cannot bind.
+carries `<address>:<port>`. And a host whose address changes needs a converge to re-render
+the unit — with a consequence worth knowing before it happens, **measured** on the test VM
+with Traefik v3.7.13: an entrypoint whose address the host does not hold is fatal to the
+whole process, not to that entrypoint. Traefik logs
+`error while building entryPoint tcp-<port>: … bind: cannot assign requested address`, exits
+1, comes back on `Restart=always`, fails the same way — and while it does, **nothing** of
+that host is served: `ss -ltn` shows no listener of the service at all, 80 and 443 included.
+A stale `tcp_bind_address` is therefore a host-wide outage, not an FTP problem, and the
+answer is a static address or a DHCP reservation for a host that declares a TCP port.
+`hosts/shared/services/traefik/README.md` has the transcript.
 
 Three more consequences worth knowing before declaring one:
 
