@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Git-driven configuration for a home NAS/media server ("StorageBaby") running Arch Linux. It covers the full stack: physical disk management, parity/redundancy, file sharing, and media services as rootless Podman containers. A host is set up once with `bootstrap.sh` and converges itself from this repository after that; nothing is changed on a host by hand. Design: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design.md`.
 
-Migrated: traefik (shared), and on storagebaby yuzukam, stirling-pdf, jellyfin, kopia and the four multi-container stacks as pods — paperless, openarchiver, immich and nextcloud. Their `docker-compose.yml` directories are gone from the repo root; what is left there is `samba/` and `snapraid/`, Phase 4, still hand-stowed units and scripts. A new service goes under `hosts/`, never beside them. `paperless-upload` is retired: the scanner logs in to the `paperless-ftp` part of the paperless pod and writes into its `consume` volume, so the API hop and the `/pool/shared/scans` share are gone.
+Migrated: traefik (shared), and on storagebaby yuzukam, stirling-pdf, jellyfin, kopia and the four multi-container stacks as pods — paperless, openarchiver, immich and nextcloud. The migration is complete: **nothing on a host is hand-stowed any more**, and the repo root holds no service, unit or script directory at all — `samba/` and `snapraid/`, the last two, are retired. The mounts, the mergerfs pool, the snapraid array and the nightly maintenance run are the `storage` role; Samba was dropped entirely rather than migrated, and its share trees stay on disk with nothing serving them. `paperless-upload` is retired too: the scanner logs in to the `paperless-ftp` part of the paperless pod and writes into its `consume` volume, so the API hop and the `/pool/shared/scans` share are gone. A new service goes under `hosts/`.
 
 ## Managing services
 
@@ -21,8 +21,8 @@ Placement is the folder:
 A service folder is a contract, not a script:
 
 ```
-service.yml        name, port (loopback) + domain or routes, volumes, binds, devices, groups, config,
-                   secrets, host_secrets, hooks, backup policy
+service.yml        name, port (loopback) + domain or routes, tcp_ports, volumes, binds, devices,
+                   groups, config, secrets, host_secrets, hooks, backup policy
 quadlet/*.j2       Podman Quadlet units (.pod, .container, .build), rendered per host
                    (vars: volumes.<name>, binds, config_dir, port, routes, fqdn, hostname, tz)
 quadlet/*.timer.j2 plain systemd user units, with their *.service.j2 half — not Quadlet
@@ -39,6 +39,7 @@ secrets.sops.yaml  sops+age encrypted key/value pairs
 - **`config`** — free-form, readable in templates as `service.config.*`, and overridable per host through `service_config: { <service>: { ... } }` in `host.yml` (host wins, deep-merged in the playbook). That is how the test host gives kopia a filesystem repository while storagebaby uses S3.
 - **`port`** is optional, and required only when there is a `domain`. The `build-echo` fixture has neither.
 - **`routes`** — `[{domain, port}, ...]` when one service answers on several names (nextcloud: `nextcloud` and `collabora`); `domain:` + `port:` is the one-route shorthand. One Traefik file and one router per entry, `<name>-<domain>`. `route:` is a block of backend options for all of them, and a `routes[]` entry may override it: `scheme: https` + `insecure_skip_verify: true` is how Traefik reaches a backend that keeps its own TLS (kopia, because gRPC needs HTTP/2; collabora, because its distroless image has no plain-HTTP probe).
+- **`tcp_ports`** — `[{port: 21, target: 2121}, {range: [21100, 21109]}]`: plain-TCP ports Traefik listens on and forwards to `127.0.0.1:<target>` (a `range` forwards each port to itself, which is what an FTP passive range needs). Paperless is the only service that declares any. Plain TCP carries no hostname, so a port belongs to exactly one service per host — route ports, entrypoints and targets are one namespace, checked by `tests/static/test_ports.py` — and the pod must publish every target on loopback. See "Networking" below.
 - **`host_secrets`** — `<podman secret name>: <set>.<key>`, resolved against `hosts/<host>/secrets/<set>.sops.yaml`. One string, two services: the kopia server declares `client_paperless: kopia-clients.paperless`, paperless declares `kopia_password: kopia-clients.paperless`.
 - **`hooks.after_change`** — `podman exec` commands the role runs, in order, after it restarted the service's units, each waiting for its container's health check first (60 × 10 s). `when: unit_changed` (the default) makes a hook a deploy step and not a nightly one — a version bump runs nextcloud's five `occ` commands, the nightly no-op does not.
 - **`backup`** — consumed by the role, not by a template: it generates `<name>-backup.container` into the service's pod, mounts each named volume read-only at `/data/<volume>`, connects to `https://kopia.<domain>` as `<name>@<host>` and keeps a scheduler running. Hence `backup` requires a `<name>.pod.j2`. A database is dumped into a `backups` volume by a timer, never snapshotted as a data directory.
@@ -105,55 +106,58 @@ Once hooks are installed, staged files are auto-formatted and re-staged on every
 
 ## Storage architecture
 
+Declared in `hosts/<host>/host.yml` under `storage`, realised by `ansible/roles/storage` — which runs **before `host_base`** and is skipped on a host that declares no `storage`. `ansible/roles/storage/README.md` is the reference; this is the shape.
+
 ```
-Physical disks
-  /mnt/data/data1, data2, data3   ← data disks (ext4, systemd .mount units)
-  /mnt/parity/parity1             ← snapraid parity disk
+Physical disks                     one rendered .mount unit per entry, What= a stable
+  /mnt/data/data1, data2, data3    /dev/disk/by-partuuid (parity: by-id) path
+  /mnt/parity/parity1
 
 mergerfs pool
-  /pool                           ← union FS over /mnt/data/* (create policy: eplfs)
-  /pool/apps/<service>/<volume>   ← service volumes (pool class), resolved by the service role
-  /pool/shared/media              ← media library (Jellyfin + Samba)
-  /pool/shared/scans, /pool/jlk/backups, etc.
+  /pool                            union over the data disks only (parity is not a branch)
+  /pool/apps/<service>/<volume>    pool-class service volumes (storage_roots.pool)
+  /pool/shared/media               the media library Jellyfin reads
+  /pool/shared/scans, /pool/jlk/backups, …   former Samba trees, now data nothing serves
 
-Snapraid
+Snapraid                           /etc/snapraid.conf, rendered from the same block
   parity file on /mnt/parity/parity1/snapraid.parity
-  content files mirrored on each disk + /etc/snapraid.content
+  content files on each data disk + /etc/snapraid.content
 ```
 
-mergerfs uses `eplfs` (existing path, least free space) as the create policy, meaning files in an existing directory stay together on the same disk, and new directories go to the disk with least free space (to balance usage).
+- **The role never partitions, formats or wipes.** No `mkfs`, `parted`, `wipefs`, `sgdisk`, ever. A declared device that is not there fails the converge naming the entry, and after mounting it asserts every declared path really is a mount point — the pair that replaced `host_base`'s `mountpoints` list, and what keeps an unmounted `/pool` from being recreated as empty directories on the root filesystem by the nightly deploy timer.
+- **The create policy is `pfrd`** (proportional free random distribution: a branch chosen at random, weighted by free space) — **not** `eplfs`, which this file claimed for a long time and the deployed `pool.mount` never said. The option string is `storage.pool.options` in `host.yml` and is copied into the unit verbatim; that file is the source of truth for it.
+- **A changed `pool.options`, branch or `fstype` remounts the union**, and every container holding a bind mount under it comes back reading an empty directory until it is restarted. The role warns before it does so; `--check --diff` first, then stop the pool-class services.
+- **Packages:** mergerfs from Chaotic-AUR, snapraid and `mergerfs-tools` built from the AUR by the role, each pinned by AUR commit and `state: present`. The role never runs `pacman -Syu` and never reboots.
 
 ## Storage maintenance pipeline
 
-A systemd timer runs daily at 02:00 via `storage-maintenance.service` → `/opt/scripts/storage-maintenance-unattended.sh`. That wrapper handles logging to `/var/log/storage-maintenance/` and emails results via `mutt`.
+`storage-maintenance.timer` (`OnCalendar` from `storage.snapraid.maintenance.on_calendar`, 02:00, `Persistent=true`) runs `storage-maintenance.service`, a oneshot that `Requires=` the pool and execs `/opt/storagebaby/maintenance/storage-maintenance-unattended.sh`. The role installs that whole directory, 0755 root: the wrapper, the orchestrator, `sync.sh`, `scrub.sh`, `balance_disks.sh`, the `plugins/` tree and `maintenance.env`.
 
-The core orchestrator is `snapraid/storage-maintenance/storage-maintenance.sh`, which runs these steps in order:
+The wrapper logs to `/var/log/storage-maintenance/` and mails the log with `mutt`, which is told to send through `msmtp` explicitly — the host runs no MTA. `/etc/msmtprc` (0600 root) is rendered from `storage.mail` plus `smtp_password` out of `hosts/<host>/secrets/mail.sops.yaml`; msmtp logs to the journal, so `journalctl -t msmtp` is where a refused relay shows up. If the pool does not come up, the unit's start job fails before the wrapper runs at all, which is what `storage-maintenance-failed.service` on `OnFailure=` exists to mail.
+
+The orchestrator runs these steps in order, unchanged from the hand-stowed original:
 
 1. `on-start` hook
 2. Snapraid status print
-3. `on-before-balance` hook → `balance_disks.sh` (mergerfs.balance, default ≤5% imbalance)
+3. `on-before-balance` hook → `balance_disks.sh` (mergerfs.balance, `balance_threshold`)
 4. `on-before-sync` hook → `sync.sh` (snapraid touch + sync)
 5. `on-after-sync` hook
-6. `scrub.sh` (scrub new files, then scrub 8% of old files older than 12 days)
+6. `scrub.sh` (new blocks, then `scrub_percent` of anything older than `scrub_older_days`)
 7. `on-after-scrub` hook
 8. Final status + SMART report + `on-finish` hook
 
-If any step or hook script fails, the orchestrator runs the `on-failure` hook before aborting. Unlike other hooks, `on-failure` is best-effort: a failing plugin script there doesn't stop the remaining plugins' `on-failure` scripts from running, so e.g. samba still gets restarted even if jellyfin's restart script breaks. `on-failure` also fires if the script is killed by SIGINT/SIGTERM (e.g. a systemd stop or timeout mid-run), so services stopped by `on-before-balance` don't get left down.
+If any step or hook fails, the orchestrator runs the `on-failure` hook before aborting; that one is best-effort, so one broken recovery script does not stop the others. It also fires on SIGINT/SIGTERM (a systemd stop or a timeout mid-run), so a service stopped by `on-before-balance` is never left down.
 
-**Plugin system:** Drop a script at `snapraid/storage-maintenance/plugins/<plugin-name>/<hook>.sh` to participate in any hook. Existing plugins:
+**The hook contract is still `plugins/<name>/<hook>.sh`, but nothing hand-writes one any more.** `storage.snapraid.maintenance.stop_services` is the list (storagebaby: `[jellyfin]`); the role creates one directory per name and drops the same three scripts in — `on-before-balance.sh` (stop), `on-after-scrub.sh` and `on-failure.sh` (start) — which read the service name off their own directory, so they are byte-identical on every host, and resolve `<name>-pod.service` against `<name>.service` the way `make stop SERVICE=` does. A directory for a name no longer in the list is removed. The old `samba` and `snapshot-*` plugins are gone with the tree that held them: Samba is retired and Kopia is the only backup path.
 
-- `jellyfin/` — stops Jellyfin before balance, starts it again after scrub or on failure
-- `samba/` — stops smb/nmb before balance, starts again after scrub or on failure
-- `snapshot-nextcloud/` — SSHes to `cloud.janlucaklees.de`, takes a DB snapshot, rsyncs it locally
-- `snapshot-immich/`, `snapshot-paperless/` — similar remote snapshot/rsync patterns
-
-To run maintenance manually:
+**No parameter is rendered into a script.** They all come from `/opt/storagebaby/maintenance/maintenance.env`, which every script sources, so a threshold changes in git and a hand-run script behaves exactly like the timer's. To run maintenance manually, on the host:
 
 ```bash
-bash snapraid/storage-maintenance/storage-maintenance.sh   # full run
-bash snapraid/storage-maintenance/sync.sh                  # sync only
-bash snapraid/storage-maintenance/scrub.sh                 # scrub only
-bash snapraid/storage-maintenance/balance_disks.sh [0-100] # balance only
+doas systemctl start storage-maintenance.service           # the real nightly run, blocking
+bash /opt/storagebaby/maintenance/storage-maintenance.sh   # the same, without wrapper or mail
+bash /opt/storagebaby/maintenance/sync.sh                  # sync only
+bash /opt/storagebaby/maintenance/scrub.sh                 # scrub only
+bash /opt/storagebaby/maintenance/balance_disks.sh [0-100] # balance only
 ```
 
 ## Networking
@@ -172,16 +176,14 @@ Updates are Podman's: floating tag plus `AutoUpdate=registry` and the user's `po
 
 ## Adding a new disk
 
-See `snapraid/README.md` for the full procedure: partition → ext4 → systemd mount unit → snapraid.conf update → mergerfs pool.mount update.
-
-The root `install.sh` that used to `yay -S` the storage packages and `stow` those units is removed — the container half of it is what the platform replaced. Until Phase 4 ports mounts, mergerfs, snapraid and samba into Ansible roles, that half stays a manual `stow -vv -t / <dir>` per the procedure above.
+`ansible/roles/storage/README.md`, "Adding a disk", has the procedure: partition and `mkfs.ext4` the disk by hand on the host (the role refuses to do either), read its `PARTUUID` off `lsblk`, add the entry to `storage.disks` in `hosts/<host>/host.yml`, push. The role mounts it, folds it into the pool and into `snapraid.conf`, and the next nightly `snapraid sync` writes its content file. Adding a branch changes `pool.mount`, so that converge remounts the pool — do it with the pool-class services stopped.
 
 ## Deployment
 
-`bootstrap.sh` runs once as root on a fresh host: installs git/ansible/sops/age/podman, generates `/etc/storagebaby/age.key` and an ed25519 deploy key, prints both public keys, installs `storagebaby-deploy.service` and `.timer`. The operator adds the deploy key to the repository as a read-only deploy key, adds the age recipient to `.sops.yaml` twice — under that host's own rule and under the `hosts/shared/**` rule, because every host runs the shared services — runs `sops updatekeys` over every affected `*.sops.yaml` (`make sops FILE=...` for editing), and pushes.
+`bootstrap.sh` runs once as root on a fresh host: adds the Chaotic-AUR repository (same key, same package URLs and same marker lines as the `storage` role, held in agreement by `tests/static/test_bootstrap.py`) **before** its one `pacman -Syu`, so the upgrade already knows it and the first converge finds its own markers unchanged; installs git/ansible/sops/age/podman, generates `/etc/storagebaby/age.key` and an ed25519 deploy key, prints both public keys, installs `storagebaby-deploy.service` and `.timer`. That `-Syu` is the only full upgrade this repository ever runs: **keeping a host's packages current is the operator's job**, and no role upgrades or reboots one. The operator adds the deploy key to the repository as a read-only deploy key, adds the age recipient to `.sops.yaml` twice — under that host's own rule and under the `hosts/shared/**` rule, because every host runs the shared services — runs `sops updatekeys` over every affected `*.sops.yaml` (`make sops FILE=...` for editing), and pushes.
 
 From then on the host deploys itself: the timer runs `ansible-pull` as root every 5 minutes (2 min after boot), checking out the `stable` branch into `/var/lib/storagebaby/repo` and running `ansible/playbook.yml --limit <hostname>`, only when the checkout changed.
 
-`stable` is moved by CI, never by hand: `.github/workflows/ci.yml` runs the static checks and the `test-ci` Molecule scenario, and fast-forwards `stable` to the tested commit on a green master push. Until a host's age recipient is in `.sops.yaml`, its first converge fails at secret decryption — expected.
+`stable` is moved by CI, never by hand: `.github/workflows/ci.yml` runs the static checks and the `test-ci` Molecule scenario, and fast-forwards `stable` to the tested commit on a green master push. Until a host's age recipient is in `.sops.yaml`, its first converge fails at secret decryption — expected, and now in the `storage` role's mail task rather than in the first service, because `storage` runs first and `mail.sops.yaml` is the first secret the play reads.
 
 Secrets are sops+age at rest and `podman secret`s at runtime. A host can only decrypt what it runs: `hosts/<h>/**` is encrypted to the operator's key plus that host's key, `hosts/shared/**` to the operator's key plus every host key. CI never holds a key; it only verifies each file's recipient list against `.sops.yaml`.

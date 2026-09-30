@@ -5,8 +5,9 @@ run on. Design: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design
 
 ## Layout
 
-- `hosts/<host>/host.yml` — everything specific to one host (domain, storage
-  roots, later disks/snapraid/samba).
+- `hosts/<host>/host.yml` — everything specific to one host: domain, storage
+  roots, and the `storage` block that declares the filesystems the host is made
+  of (disks, parity, the mergerfs pool, the snapraid array and its nightly run).
 - `hosts/<host>/services/<name>/` — a service placed on that host.
 - `hosts/shared/services/<name>/` — a service that runs on every host.
 - `ansible/` — the site playbook and roles that turn the above into a running host.
@@ -68,21 +69,138 @@ dumps, never as data directories: a `<name>-dump.timer` writes `pg_dump -Fc` int
 `backups` volume half an hour before the snapshot, and that volume is what the sidecar
 carries.
 
-What is left of the old repository is Phase 4: `samba/` and `snapraid/` at the root,
-still hand-stowed units and scripts. Nothing else at the root is a service any more —
-a new one goes under `hosts/`.
+Nothing is left of the old repository. `samba/` and `snapraid/` were the last two
+directories at the root, and both are retired: the mounts, the pool, the array and the
+nightly maintenance run are the `storage` role below, and Samba is dropped entirely
+rather than migrated. A new service goes under `hosts/`.
+
+## Storage
+
+The filesystems a host is made of are declared, not stowed: `storage` in
+`hosts/<host>/host.yml` names the data disks, the parity disk and the mergerfs pool over
+them, and the `storage` role mounts exactly those.
+
+```yaml
+storage:
+  disks:
+    - {
+        name: d1,
+        device: /dev/disk/by-partuuid/…,
+        mount: /mnt/data/data1,
+        fstype: ext4
+      }
+  parity:
+    - {
+        name: parity1,
+        device: /dev/disk/by-id/…,
+        mount: /mnt/parity/parity1,
+        fstype: ext4
+      }
+  pool:
+    mount: /pool
+    options: defaults,allow_other,use_ino,category.create=pfrd,…
+  snapraid: { block_size: 256, excludes: [...], maintenance: { ... } }
+  mail: { to: …, from: …, smtp_host: …, smtp_port: 587, smtp_user: … }
+```
+
+```
+/mnt/data/data1, data2, data3   data disks (ext4, one rendered .mount unit each)
+/mnt/parity/parity1             the snapraid parity disk
+/pool                           the mergerfs union over the data disks
+/pool/apps/<service>/<volume>   pool-class service volumes (storage_roots.pool)
+/pool/shared/media              the media library Jellyfin reads
+```
+
+- **The role never partitions, formats or wipes.** There is no `mkfs`, `parted` or
+  `wipefs` anywhere in it. A declared device that is not there **fails the converge**,
+  naming the entry, and after mounting it asserts that every declared path really is a
+  mount point. That pair is what keeps a converge with `/pool` unmounted from recreating
+  `/pool/apps` — empty, unattended, from the nightly deploy timer — on the root filesystem.
+  It runs **before `host_base`**, which is what creates those directories.
+- **The pool's create policy is `pfrd`** — proportional free random distribution: a branch
+  is picked at random, weighted by how much free space it has. (Everything this repository
+  said about `eplfs` was wrong: the deployed `pool.mount` never said that.) The option
+  string is one line in `host.yml` and is copied into the unit verbatim.
+- **Changing `pool.options`, or adding or moving a branch, remounts the pool**, and every
+  container holding a bind mount under it comes back reading an empty directory until it
+  is restarted. Run the playbook with `--check --diff` first, stop the pool-class services,
+  converge, start them.
+- **mergerfs comes from Chaotic-AUR; snapraid and `mergerfs-tools` are built from the AUR**
+  by the role itself, each pinned by AUR commit and bumped like an image tag. The role
+  never runs `pacman -Syu` and never reboots — upgrading a host is the operator's job.
+
+`ansible/roles/storage/README.md` is the full reference, including **"Adding a disk"**:
+partition and `mkfs.ext4` it by hand, read its `PARTUUID` off `lsblk`, add the entry to
+`host.yml`, push. The role does the rest, and the next nightly `snapraid sync` folds the
+disk into the array.
+
+### The nightly maintenance run
+
+`storage-maintenance.timer` fires at 02:00 (`Persistent=true`, so a host that was off
+catches up) and runs the orchestrator in `/opt/storagebaby/maintenance/`: snapraid status,
+`mergerfs.balance` while the branches are more than 5 % apart, `snapraid touch` + `sync`,
+a scrub of the new blocks and 8 % of anything older than 12 days, then a final status and
+a SMART report. Logs land in `/var/log/storage-maintenance/` and `/var/log/snapraid/`, and
+the whole run is mailed — `mutt` composing, `msmtp` sending through the relay in
+`storage.mail`, with the password in `hosts/<host>/secrets/mail.sops.yaml`.
+
+Services that must not be running while files move between branches are named in
+`storage.snapraid.maintenance.stop_services` (storagebaby: `jellyfin`). The role turns each
+name into a plugin directory that stops it before the balance and starts it again after the
+scrub — **and on failure**, so a run that aborts never leaves a service down. If the pool
+does not come up at all, the maintenance unit's start job fails before the wrapper ever
+runs and nothing would be sent; `storage-maintenance-failed.service`, hooked on
+`OnFailure=`, is the mail that says so.
+
+Every parameter above is `storage.snapraid.maintenance` in `host.yml`, rendered into one
+file (`maintenance.env`) that every script sources — so a threshold is changed in git, and
+running `bash /opt/storagebaby/maintenance/sync.sh` by hand behaves exactly like the
+timer's run.
+
+## Networking
+
+Traefik is the only process on a routable port. It runs rootless as `svc-traefik` with
+`Network=host`, owns 80 and 443, and every other service publishes on `127.0.0.1:<port>`
+only — rootless containers of different users cannot reach each other's loopback, so
+service-to-service traffic goes out through Traefik and the public name.
+
+Plain TCP goes through the same door. A service declares `tcp_ports` (paperless:
+`{port: 21, target: 2121}` plus the passive range `21100–21109`), the playbook collects
+every placed port, and Traefik gets one entrypoint per port forwarding to that service's
+loopback port. Two consequences worth knowing before the first converge:
+
+- **A TCP entrypoint binds one concrete address**, `tcp_bind_address`, which defaults to
+  the host's default-route address (`ansible_default_ipv4.address`) and is overridable as
+  a top-level key in `host.yml`. A wildcard listener and a pod publishing
+  `127.0.0.1:<same port>` cannot coexist, and an FTP passive range needs exactly that
+  shape. It is also the address the FTP server advertises in its `PASV` reply, so on a
+  host with several addresses it has to be **the one the scanner reaches**, or transfers
+  connect, log in and then hang.
+- **A declared port below 80 pulls the unprivileged-port sysctl down with it.** Traefik is
+  rootless and binds 21 for paperless, so `host_base` sets
+  `net.ipv4.ip_unprivileged_port_start` to the minimum of 80 and the host's declared TCP
+  ports — 21 on storagebaby. That is host-wide and not Traefik's: **every** unprivileged
+  user on the host may then bind 21–79, 25 and 53 included. Single-tenant NAS, and the
+  value is derived from the placement, so it returns to 80 the converge after the
+  declaration goes.
+- **The FTP drop carries no TLS.** Printers speak plain FTP, and explicit FTPS cannot be
+  terminated by a TCP proxy, so the scanner's credentials and the scans themselves cross
+  the LAN in the clear. That is the exposure, and it is bounded by it being one account
+  that can only write into paperless's consume directory.
 
 ## Operator steps before and right after the first storagebaby deploy
 
 Everything in this section is a secret, a piece of data, a permission or a check — the
-things that cannot live in git or in a role. Steps 1–6 have to be done **before**
-storagebaby converges the first time. Steps 7 and 8 can only be done **after**: one
-needs groups the converge creates, the other checks what the converge cannot.
+things that cannot live in git or in a role. Steps 1–8 have to be done **before**
+storagebaby converges the first time; step 9 **is** that converge, and it is a planned
+outage run by hand rather than something to let the timer walk into. Steps 10–12 can only
+be done after it: they need groups and units the converge creates, or they check what the
+converge cannot.
 
 There is no grace period to do it in afterwards. CI fast-forwards `stable` on a green
 push and the deploy timer pulls it within five minutes, unattended, as root — so the
 ordering is: fill the secrets and move the data, **then** let the commit that places
-the service land on `master`.
+the service land on `master`, with the deploy timer stopped until step 9 says otherwise.
 
 ### 1. Fill the placeholders
 
@@ -102,6 +220,7 @@ service was migrated. Each file is opened with `make sops FILE=<path>`.
 | `hosts/storagebaby/services/nextcloud/secrets.sops.yaml`    | `database_password`                                | `REPLACE_ME`. The password of the database being migrated in.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 |                                                             | `collabora_username`, `collabora_password`         | `REPLACE_ME`. Collabora's admin console login, the old stack's `collabora_*.secret`.                                                                                                                                                                                                                                                                                                                                                                                                                           |
 |                                                             | `admin_user`, `admin_password`                     | `REPLACE_ME`. Read only when the image **installs**, which on storagebaby it must never do — read step 5 before this one.                                                                                                                                                                                                                                                                                                                                                                                      |
+| `hosts/storagebaby/secrets/mail.sops.yaml`                  | `smtp_password`                                    | `REPLACE_ME`. The password of the relay the nightly maintenance report is sent through. `storage.mail.smtp_host` and `smtp_user` in `hosts/storagebaby/host.yml` are `REPLACE_ME` beside it, and all three have to be filled: the deployed wrapper used whatever MTA the host happened to have, which this repository never captured. Until they are real, the maintenance run succeeds and its mail step fails — nightly, silently.                                                                           |
 | `hosts/storagebaby/secrets/kopia-clients.sops.yaml`         | `paperless`, `openarchiver`, `immich`, `nextcloud` | All `REPLACE_ME`, and all a **free choice**: each is one string that the Kopia server and that service's backup sidecar both read, so it only has to be the same on both sides. It would otherwise be the one placeholder that fails **silently** — both sides match, the account works, and the repository endpoint is public at `https://kopia.<domain>` — so `config/start.sh` refuses to register a client whose password is still `REPLACE_ME`, and the kopia server restart-loops until they are filled. |
 
 A postgres password is not a free choice because the image only applies
@@ -169,7 +288,144 @@ by it — but check the live stack before migrating, because a "working" archive
 may not have been one. `hosts/storagebaby/services/openarchiver/README.md` has the
 symptom and the log lines.
 
-### 7. Converge once, then open the media tree to Jellyfin
+### 7. Check the storage declaration against the running host
+
+`hosts/storagebaby/host.yml`'s `storage` block was written from the deployed mount units
+and `/etc/snapraid.conf`, not from a measurement of the live machine — so read it back
+before it is converged. Four device paths, three mount points, one pool option string:
+
+```sh
+lsblk -o NAME,SIZE,PARTUUID,PARTLABEL,MOUNTPOINTS
+ls -l /dev/disk/by-id/ | grep -i wdc
+findmnt /pool -o SOURCE,FSTYPE,OPTIONS
+```
+
+- The three data disks are `by-partuuid` paths, the parity disk a `by-id` one. All four
+  have to resolve on the host, and to the disk the entry names.
+- **`pool.options` has to stay byte-identical to the deployed `pool.mount`**,
+  `category.create=pfrd` included. It is copied into the rendered unit verbatim; a
+  difference here is a different pool.
+- **The disk names `d1`, `d2`, `d3` are snapraid's identity for those disks** and must not
+  be changed. Renaming one makes snapraid treat the whole disk as new — a full parity
+  rewrite on the next sync.
+
+The rendered units still cannot be byte-identical to the stowed ones (`pool.mount`'s
+`What=` is the explicit branch list where the stowed one had the glob `/mnt/data/*`, and
+each branch unit's `Description=` differs), which is why step 9 exists.
+
+### 8. Fill in the FTP side, and point the scanner at the host
+
+`ftp_password` is in the table above. Two more things, neither of them a secret:
+
+- **`tcp_bind_address`**, a top-level key in `hosts/storagebaby/host.yml`. It defaults to
+  the host's default-route address, and that is right on a host with one address. On a host
+  with several — a second NIC, a VPN interface, a bridge — set it explicitly to the address
+  the scanner reaches, because it is both what Traefik's TCP entrypoints bind and what the
+  FTP server advertises in its `PASV` reply. Wrong value, and the printer connects, logs in
+  and then hangs on the transfer.
+- **The printer's profile**: FTP (not SFTP, not FTPS), host `<that address>`, port 21, user
+  `scanner` (`config.ftp_user`), the `ftp_password` from step 1, **passive mode**. Nothing
+  else is needed — the consumer picks up whatever lands in the consume volume and deletes
+  it once the document is ingested.
+
+### 9. The first converge is a planned outage — run it by hand
+
+The first converge replaces the hand-stowed storage units with rendered ones. None of the
+five can be byte-identical to what is there (step 7), so **all four branch units and
+`/pool` are remounted, once**. Every container holding a bind mount under `/pool` comes
+back reading an empty directory until it is restarted, and `systemctl stop pool.mount` is
+a plain `umount`: it fails with `EBUSY` while anything at all still holds `/pool` open —
+which `smbd` does, serving `/pool/shared/*`, right up until step 10 retires it.
+
+So this one converge does not belong to the deploy timer. Stop the timer **before** the
+placing commit reaches `stable`:
+
+```sh
+doas systemctl stop storagebaby-deploy.timer
+```
+
+then, with the commit on `stable`, bring the checkout to it and read the whole diff first:
+
+```sh
+doas git -C /var/lib/storagebaby/repo fetch origin stable
+doas git -C /var/lib/storagebaby/repo checkout --detach FETCH_HEAD
+cd /var/lib/storagebaby/repo
+doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
+	--check --diff ansible/playbook.yml
+```
+
+`--check --diff` over the whole playbook is expected to end `failed=0` and to change
+nothing — every probe in every role carries `check_mode: false` for exactly this, and a
+test on the VM holds it. Read all of it: the storage role's diff and its remount warning
+are printed by the first role in the play, and the units below it are the rest of the
+phase. **If it aborts at `storage/tasks/mail.yml` with a decryption error**, the host's age
+recipient is not in `.sops.yaml` yet — "New host" below has that half, and it now surfaces
+in the storage role rather than in the first service, because storage runs first.
+
+Then the outage itself:
+
+```sh
+# 1. every service with a pool-class volume
+for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
+	make stop SERVICE=$s
+done
+# 2. the other holder of /pool
+doas systemctl stop smb nmb
+# 3. converge for real, reading the same diff again
+doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
+	--diff ansible/playbook.yml
+# 4. back up
+for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
+	make start SERVICE=$s
+done
+doas systemctl start storagebaby-deploy.timer
+```
+
+Three things about that run, none of them a problem:
+
+- **Traefik restarts once**, because the TCP entrypoints are static configuration on its
+  unit's `Exec=` line. Every route is down for that restart and nothing else changes.
+- **Packages move.** The role adds the Chaotic-AUR repository (`chaotic-keyring`,
+  `chaotic-mirrorlist`, one `pacman -Sy` database refresh — never a `-Syu`, never a
+  reboot), and if the host's `snapraid` is not the pinned `14.9-1` it builds that version
+  from the AUR and `pacman -U`s it over what is installed. `pacman -Q snapraid mergerfs
+mergerfs-tools-git` before the run says whether anything will move. The AUR build also
+  installs `base-devel` and leaves it installed.
+- **The old timer is already replaced, not disabled.** `storage-maintenance.timer` and
+  `.service` keep their names; the role overwrote both, so there is no second run to
+  disable. Step 10 is what removes the half that is now orphaned.
+
+### 10. After that converge, retire the hand-stowed half and Samba
+
+Verify first that the unit really is the new one:
+
+```sh
+systemctl cat storage-maintenance.service | grep ExecStart
+# ExecStart=/opt/storagebaby/maintenance/storage-maintenance-unattended.sh
+```
+
+Once it says that, the old wrapper and its checkout are dead weight and can go:
+
+```sh
+doas rm -rf /opt/scripts
+```
+
+and with them the old `~/StorageBaby` working copy the wrapper pointed at, once nothing
+else is being read out of it (`make pull` / `make push` are the only things that ever
+wrote to it).
+
+Samba is retired by hand, because the role does not remove a package it never installed:
+
+```sh
+doas systemctl disable --now smb nmb
+doas pacman -Rns samba
+```
+
+The share trees — `/pool/shared/utility`, `/pool/shared/maki`, `/pool/mk`,
+`/pool/jlk/backups`, `/pool/shared/scans` — stay exactly where they are, untouched data
+with nothing serving them.
+
+### 11. Open the media tree to Jellyfin
 
 This one is deliberately after the first converge: the `media` group does not
 exist on the host until the `service` role creates it, so a `chgrp` run before it
@@ -189,19 +445,49 @@ writer inherits whatever that writer gives it.
 The `o+rX` is what Jellyfin actually reads through: the linuxserver image drops
 its supplementary groups when s6 switches to its own user, so group access never
 reaches the app process — `hosts/storagebaby/services/jellyfin/README.md` has the
-measurement. The `chgrp` still matters anyway, because the `media` group is what
-Samba and the rest of the host use, and it is what the role itself would set on a
-tree it creates.
+measurement. The `chgrp` still matters anyway: it is what the role itself would set
+on a tree it creates, and what anything else on the host that has to reach the
+library goes through.
 
 `/pool/shared/scans` needs nothing any more. It was the Samba drop the retired
 `paperless-upload` watched; the scanner now logs in by FTP and writes into
 paperless's own `consume` volume, so the tree is data nothing serves and no group
-on the host has to reach it.
+on the host has to reach it. With Samba gone (step 10), the same is true of every
+other share tree.
 
-### 8. After the first converge, check the certificate and the backups
+### 12. After the first converge, check the storage, the certificate and the backups
 
-Both are things that fail **silently** — the host looks converged, every unit is
-active, and neither problem shows up until it is needed.
+These are the things that fail **silently** — the host looks converged, every unit is
+active, and the problem does not show up until it is needed.
+
+**Is everything mounted, and is the array running?**
+
+```sh
+findmnt /mnt/data/data1 /mnt/data/data2 /mnt/data/data3 /mnt/parity/parity1
+findmnt /pool -o SOURCE,FSTYPE,OPTIONS # fuse.mergerfs, the declared option string
+systemctl is-enabled storage-maintenance.timer && systemctl list-timers storage-maintenance.timer
+```
+
+Then run the nightly job once, by hand, rather than waiting for 02:00 — it is the only
+thing that proves the array, the balance, the scrub **and** the mail at the same time.
+It takes as long as a sync takes, and it stops jellyfin for the duration:
+
+```sh
+doas systemctl start storage-maintenance.service # blocking: it is a oneshot
+journalctl -u storage-maintenance.service -b
+```
+
+A mail has to arrive, subject `[SUCCESS] SnapRAID Sync Report`. If none does, the run
+itself was still fine — `journalctl -t msmtp` is where a refused relay or a rejected
+sender says why, and `storage.mail` is what to correct. Check afterwards that
+`snapraid.content` exists on all three data disks and `snapraid.parity` on the parity
+disk, and that jellyfin came back up (`make ps SERVICE=jellyfin`).
+
+**Does a scan reach Paperless?** Send one page from the printer. It should appear as a
+document within a minute or two — the consumer polls rather than watching inotify,
+because an FTP write is not inotify-friendly — and the consume volume should be empty
+again afterwards, because the consumer deletes what it has ingested. If the transfer
+hangs after the login instead, re-read step 8: that is `tcp_bind_address`.
 
 **Is the wildcard certificate issued?** Traefik's ACME run is router-driven and
 happens after the converge has finished, so nothing in the play reports on it. Every
