@@ -1,0 +1,27 @@
+[Unit]
+Description=Build-unit fixture (runs the image its own .build produces)
+
+[Container]
+# The unit reference and not the tag the build writes: Quadlet turns this into a
+# `Requires=`/`After=` on `build-echo-build.service`, which is the ordering the role's
+# restart list mirrors. Naming `localhost/build-echo:latest` here instead would start the
+# container against whatever tag happened to exist, and the role's pre-pull would try to
+# fetch it -- `localhost/` is rejected there for exactly that spelling.
+Image=build-echo.build
+ContainerName=build-echo
+# busybox has no long-running service to be, and this is the shortest thing that stays
+# up without a shell loop. Not `sleep infinity`: busybox's sleep takes a number.
+Exec=tail -f /dev/null
+Environment=TZ={{ tz }}
+# The file the Containerfile adds, and nothing else. A check that only asked whether the
+# container was up would pass just as happily on the unmodified busybox base image, which
+# is precisely what a build that silently did nothing would leave running.
+HealthCmd=test -f /build-echo-marker
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -245,8 +245,10 @@ def single_container_service(host):
     construction.
 
     A `.build`- or `.image`-backed service is skipped for the reason above `UNIT_BACKED`.
-    Today the filter changes nothing -- test-a lands on jellyfin and test-ci on kopia --
-    but with neither placed it would fall through to `paperless-upload`.
+    The filter earns its keep: `build-echo` sorts first among the services of both test
+    hosts, so without it every case below would pick the one service whose `Image=` names
+    a unit and cannot be repointed at a tag. With it, test-a lands on jellyfin and test-ci
+    on kopia.
     """
     hostname = host.check_output("uname -n")
     for owner, spec_path in SPECS:

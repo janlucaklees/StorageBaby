@@ -1,0 +1,20 @@
+# A test-only fixture, placed on the test hosts and nowhere else.
+#
+# It exists for one line of the role: `Image=<stem>.build`, an image the host builds
+# itself instead of pulling. That path has rules of its own -- the build unit runs before
+# the containers that use its image, a changed build restarts every one of them, and a
+# Quadlet `.build` is a `Type=oneshot` *without* `RemainAfterExit`, so "has it run" is
+# `Result=success` plus a non-zero start timestamp rather than `is-active`. The only
+# service that ever exercised any of it was `paperless-upload`, which Phase 4 retires --
+# and its coverage belongs here rather than on a NAS service that happens to build an
+# image: the fixture builds a two-line image and runs it, and every generic `.build`
+# assertion in the integration suite lands on it.
+#
+# A real folder under each test host and not a symlink, like `tcp-echo`: there is no
+# storagebaby service to link to and there must never be one, because a container whose
+# whole job is to sit still has no business on the NAS. The copy under the other test
+# host is byte-identical, and a static test says so.
+name: build-echo
+volumes: {}
+secrets: []
+backup: none

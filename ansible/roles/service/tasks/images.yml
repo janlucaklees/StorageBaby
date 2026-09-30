@@ -50,8 +50,8 @@
     label: '{{ item | basename }}'
 
 # An `Image=` does not have to be a registry reference. Quadlet also accepts the name
-# of another unit -- `<stem>.build` for an image this host builds (paperless-upload
-# does), `<stem>.image` for a `.image` unit -- and a `.build`'s own `ImageTag=` is a
+# of another unit -- `<stem>.build` for an image this host builds (the `build-echo`
+# fixture does), `<stem>.image` for a `.image` unit -- and a `.build`'s own `ImageTag=` is a
 # tag that exists only once that build has run. None of the three can be pulled, and
 # none of them needs to be: Quadlet writes a `.build` as `Type=oneshot`, which systemd
 # starts with no timeout at all, so whatever its Containerfile pulls cannot hit the

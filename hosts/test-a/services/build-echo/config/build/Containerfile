@@ -1,0 +1,11 @@
+# Fully qualified on purpose: a rootless build has no containers-registries.conf, so a
+# short name resolves to nothing and the build dies before STEP 1. Pinned for the same
+# reason `tcp-echo` is -- a floating tag would let the thing a test measures change
+# under the test.
+FROM docker.io/library/busybox:1.37.0
+# The whole image. `COPY` rather than a `RUN` writing the same bytes, because the file
+# has to come from somewhere: the build context is `config/build/` as the role deployed
+# it to the host (`SetWorkingDirectory=file` in the .build unit), so an image carrying
+# this marker is also proof that a service's `config/` reached `/etc/storagebaby/<name>/`
+# and that the build read its context from there.
+COPY marker /build-echo-marker
