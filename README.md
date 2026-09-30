@@ -167,7 +167,7 @@ service-to-service traffic goes out through Traefik and the public name.
 Plain TCP goes through the same door. A service declares `tcp_ports` (paperless:
 `{port: 21, target: 2121}` plus the passive range `21100–21109`), the playbook collects
 every placed port, and Traefik gets one entrypoint per port forwarding to that service's
-loopback port. Two consequences worth knowing before the first converge:
+loopback port. Three consequences worth knowing before the first converge:
 
 - **A TCP entrypoint binds one concrete address**, `tcp_bind_address`, which defaults to
   the host's default-route address (`ansible_default_ipv4.address`) and is overridable as
@@ -396,6 +396,12 @@ Three things about that run, none of them a problem:
   disable. Step 10 is what removes the half that is now orphaned.
 
 ### 10. After that converge, retire the hand-stowed half and Samba
+
+**There is nothing to unstow.** The five unit paths and `/etc/snapraid.conf` were `stow`
+symlinks into the old checkout; Ansible's `template` does not follow a symlink at its
+destination, it replaces it with a regular file — so step 9 already turned all six into
+rendered files that no longer point anywhere. Do not run `stow -D`; what is left over is
+the old checkout itself and the wrapper beside it.
 
 Verify first that the unit really is the new one:
 
