@@ -4,7 +4,7 @@ domain: jellyfin
 volumes:
   config: { class: fast }
 binds:
-  media: { host: /pool/shared/media, container: /media, mode: ro, group: media }
+  media: { host: /pool/shared/media, container: /media, mode: rw, group: media }
 devices: [/dev/dri]
 groups: [render, video]
 config:
