@@ -1,5 +1,5 @@
 keys:
-  - &operator age1wwuwdvq20fq35aku93qgw9fj2uxeu7kxlgwg4zrrr9zx4s8vuuvsjn5t3g
+  - &jlk age1wwuwdvq20fq35aku93qgw9fj2uxeu7kxlgwg4zrrr9zx4s8vuuvsjn5t3g
   # Host keys are added here by the operator after bootstrap.sh prints them, then
   # referenced from two rules: the host's own, and the hosts/shared/** rule below,
   # because every host runs the shared services. Afterwards run `sops updatekeys`
@@ -7,7 +7,7 @@ keys:
 creation_rules:
   - path_regex: ^hosts/storagebaby/.*\.sops\.yaml$
     key_groups:
-      - age: [*operator]
+      - age: [*jlk]
   - path_regex: ^hosts/shared/.*\.sops\.yaml$
     key_groups:
-      - age: [*operator]
+      - age: [*jlk]
