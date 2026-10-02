@@ -948,8 +948,8 @@ run it on the host as root:
 It is a program on the host, `/usr/local/sbin/storagebaby-svc`, installed by the
 `host_base` role from `ansible/roles/host_base/files/storagebaby-svc` — deliberately not a
 task in this repository's runner. mise is a development tool and is not installed on a
-host, and a host is not a checkout anybody runs tasks from; the five commands below are
-the only ones meant to be run on a host at all.
+host, and a host is not a checkout anybody runs tasks from. Those five actions are all it
+does.
 
 For a pod service (`paperless`, `openarchiver`, `immich`, `nextcloud`) the name resolves
 to `<name>-pod.service` and for a single-container one to `<name>.service`; which of
