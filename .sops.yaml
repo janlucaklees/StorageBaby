@@ -6,7 +6,7 @@ keys:
   # because every host runs the shared services. Afterwards run `mise run updatekeys`
   # (re-encrypts every tracked *.sops.yaml; `mise run sops <file>` edits one).
 creation_rules:
-  - path_regex: ^hosts/storagebaby/.*\.sops\.yaml$
+  - path_regex: ^hosts/StorageBaby/.*\.sops\.yaml$
     key_groups:
       - age: [*jlk, *storagebaby]
   - path_regex: ^hosts/shared/.*\.sops\.yaml$

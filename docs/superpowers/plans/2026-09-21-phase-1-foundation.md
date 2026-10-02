@@ -215,7 +215,7 @@ git commit -m "Rebuild devtools image with Ansible, Molecule, sops and test targ
 
 **Files:**
 
-- Create: `hosts/storagebaby/host.yml`, `hosts/test-a/host.yml`
+- Create: `hosts/StorageBaby/host.yml`, `hosts/test-a/host.yml`
 - Create: `hosts/shared/services/traefik/service.yml` (contract only; unit template comes in Task 8)
 - Create: `ansible/inventory/hosts.yml`, `ansible/ansible.cfg`
 - Create: `tests/static/conftest.py`, `tests/static/test_contract.py`, `tests/static/test_ports.py`
@@ -327,7 +327,7 @@ Expected: FAIL, `hosts/` does not exist (`placements()` raises or `test_at_least
 
 - [ ] **Step 3: Create hosts and the Traefik contract**
 
-`hosts/storagebaby/host.yml`:
+`hosts/StorageBaby/host.yml`:
 
 ```yaml
 domain: home.klees.io
@@ -501,7 +501,7 @@ keys:
   # Host keys are added here by the operator after bootstrap.sh prints them,
   # followed by `make sops FILE=<file> ` → `sops updatekeys` on affected files.
 creation_rules:
-  - path_regex: ^hosts/storagebaby/.*\.sops\.yaml$
+  - path_regex: ^hosts/StorageBaby/.*\.sops\.yaml$
     key_groups:
       - age: [*operator]
   - path_regex: ^hosts/shared/.*\.sops\.yaml$
@@ -2278,7 +2278,7 @@ Update `CLAUDE.md`: replace the "Managing Docker services" section with a pointe
 
 - [ ] **Step 3: Spec touch-up**
 
-In the spec's section 8, replace the sentence starting "Their folders live at `tests/integration/hosts/<name>/`" with: "Test hosts are ordinary host folders `hosts/test-a/` etc., so the deploy path is production-identical; they place services by symlinking into `hosts/storagebaby/services/`." In section 6 add the bullet: "A host may override a service's secrets with `hosts/<host>/secrets/<service>.sops.yaml`; tests use this for every placed service, encrypted to the test host's bootstrap key."
+In the spec's section 8, replace the sentence starting "Their folders live at `tests/integration/hosts/<name>/`" with: "Test hosts are ordinary host folders `hosts/test-a/` etc., so the deploy path is production-identical; they place services by symlinking into `hosts/StorageBaby/services/`." In section 6 add the bullet: "A host may override a service's secrets with `hosts/<host>/secrets/<service>.sops.yaml`; tests use this for every placed service, encrypted to the test host's bootstrap key."
 
 - [ ] **Step 4: Run everything**
 

@@ -33,7 +33,7 @@ def test_ansible_collections_present():
 
 def test_playbook_syntax():
     proc = subprocess.run(
-        ["ansible-playbook", "--syntax-check", "-i", "storagebaby,", "ansible/playbook.yml"],
+        ["ansible-playbook", "--syntax-check", "-i", "StorageBaby,", "ansible/playbook.yml"],
         check=False,
         capture_output=True,
         text=True,

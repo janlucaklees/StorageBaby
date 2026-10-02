@@ -6,7 +6,7 @@ Extends: `2026-09-21-gitops-podman-platform-design.md` and `2026-09-22-phase-2-s
 
 ## 1. Scope
 
-Migrate the four multi-container stacks onto `hosts/storagebaby/services/` as Podman pods: paperless, openarchiver, immich, nextcloud. Deliver the backup machinery the spec promised: a role-generated Kopia client sidecar per service with a `backup` block, client registration on the Kopia server, database dump timers. Add the two contract pieces the stacks need: several routes per service and post-change hooks. Retire `nextcloud/`, `paperless/`, `immich/`, `openarchiver/`.
+Migrate the four multi-container stacks onto `hosts/StorageBaby/services/` as Podman pods: paperless, openarchiver, immich, nextcloud. Deliver the backup machinery the spec promised: a role-generated Kopia client sidecar per service with a `backup` block, client registration on the Kopia server, database dump timers. Add the two contract pieces the stacks need: several routes per service and post-change hooks. Retire `nextcloud/`, `paperless/`, `immich/`, `openarchiver/`.
 
 JLK's rules for this phase: tests never use real data or secrets (generated values on test hosts; placeholders for storagebaby where the value is unknown, real values only where they already sit in the repo checkout: OpenArchiver's six); every deploy step runs on deploy, nothing by hand, with per-command control of when it runs.
 

@@ -85,7 +85,7 @@ merely still migrating.
 > the first deploy on storagebaby**, with
 >
 > ```sh
-> mise run sops hosts/storagebaby/services/paperless/secrets.sops.yaml
+> mise run sops hosts/StorageBaby/services/paperless/secrets.sops.yaml
 > ```
 >
 > - `database_password` has to be **the password of the database that is migrated
@@ -100,7 +100,7 @@ merely still migrating.
 >   and those are the only two places it exists.
 
 `kopia_password` is the client half of the shared value the Kopia server knows as
-`client_paperless`; `hosts/storagebaby/services/kopia/README.md` has the whole
+`client_paperless`; `hosts/StorageBaby/services/kopia/README.md` has the whole
 mechanism. Test hosts generate all four fresh per run.
 
 ## The FTP drop
@@ -332,7 +332,7 @@ is a queue.
 
 Being the first client, this service is what established that a Kopia repository
 client speaks **gRPC** and that Traefik therefore has to reach the server over
-TLS — `hosts/storagebaby/services/kopia/README.md` has the whole finding. Nothing
+TLS — `hosts/StorageBaby/services/kopia/README.md` has the whole finding. Nothing
 about it is visible here: the sidecar connects to `https://kopia.<domain>` like
 any other client and the server lists
 

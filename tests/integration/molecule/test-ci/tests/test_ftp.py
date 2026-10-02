@@ -44,7 +44,7 @@ PASV_REPLY = re.compile(r"227 [^(]*\((\d+,\d+,\d+,\d+),(\d+),(\d+)\)")
 def paperless(host):
     """(spec, host vars, spec path) for the paperless placed on this VM, or skip.
 
-    The spec path is the placed one -- a symlink into `hosts/storagebaby` on a test host --
+    The spec path is the placed one -- a symlink into `hosts/StorageBaby` on a test host --
     so the template read below is the file that host really renders.
     """
     hostname = host.check_output("uname -n")

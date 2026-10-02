@@ -11,6 +11,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: false
 
+# mise refuses a config it has not been told to trust, and it is a hard error rather than a
+# warning: without this every `mise run` below fails with "Config files in ... are not
+# trusted". A workstation answers `mise trust` once; a runner is a fresh checkout every time,
+# so the checkout directory is declared trusted here instead.
+env:
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+
 jobs:
   static:
     runs-on: ubuntu-latest

@@ -14,7 +14,7 @@ one-time hand step; the role mounts what the declaration names and **fails, nami
 entry**, when a declared device is not there:
 
 ```
-Disk d2 is declared in hosts/storagebaby/host.yml with device
+Disk d2 is declared in hosts/StorageBaby/host.yml with device
 /dev/disk/by-partuuid/243e…, and nothing is there. Refusing to converge: the role does
 not create, partition or format a disk.
 ```
@@ -293,7 +293,7 @@ storage:
   it. `journalctl -t msmtp` is where a refused relay or a rejected sender shows up.
 
 **Operator items on storagebaby:** `storage.mail.smtp_host` and `smtp_user` are `REPLACE_ME`,
-and `hosts/storagebaby/secrets/mail.sops.yaml` holds `smtp_password: REPLACE_ME`. The relay
+and `hosts/StorageBaby/secrets/mail.sops.yaml` holds `smtp_password: REPLACE_ME`. The relay
 was never captured in this repository — the old wrapper used whatever MTA the host happened
 to have — so all three have to be filled in before the first converge. Until they are, the
 maintenance run succeeds and its mail step fails, nightly.

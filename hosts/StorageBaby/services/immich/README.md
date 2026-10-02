@@ -57,7 +57,7 @@ mechanism.
 > deploy on storagebaby**, with
 >
 > ```sh
-> mise run sops hosts/storagebaby/services/immich/secrets.sops.yaml
+> mise run sops hosts/StorageBaby/services/immich/secrets.sops.yaml
 > ```
 >
 > It has to be **the password of the database that is migrated in**. The postgres
@@ -69,7 +69,7 @@ mechanism.
 the old stack's database is called.
 
 `kopia_password` is the client half of the shared value the Kopia server knows as
-`client_immich`; `hosts/storagebaby/services/kopia/README.md` has the whole
+`client_immich`; `hosts/StorageBaby/services/kopia/README.md` has the whole
 mechanism. Test hosts generate both fresh per run.
 
 ## Health checks

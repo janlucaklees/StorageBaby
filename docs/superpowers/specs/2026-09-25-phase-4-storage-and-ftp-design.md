@@ -95,7 +95,7 @@ storage:
 
 ## 4. Retirements
 
-- `samba/` and `snapraid/` at the repo root, `hosts/storagebaby/services/paperless-upload/` and its symlinks, the `snapshot-*` plugins, the `samba` plugin.
+- `samba/` and `snapraid/` at the repo root, `hosts/StorageBaby/services/paperless-upload/` and its symlinks, the `snapshot-*` plugins, the `samba` plugin.
 - Paperless loses the `scans` bind and its group; Jellyfin's `media` note stays.
 - `README.md`, `CLAUDE.md`, `snapraid/README.md`'s "adding a new disk" procedure (rewritten as: partition, `mkfs`, add the entry to `host.yml`, push) and the Phase 2 open item on shared-tree permissions (closed: only Jellyfin's `media` tree remains, `o+rX` as documented).
 
@@ -161,7 +161,7 @@ tcp_ports:
 As implemented. `README.md`, "Operator steps before and right after the first storagebaby deploy", carries these as numbered steps 7–12 with the commands; this list is the summary.
 
 - **Check the declaration against the running host** (step 7): the three data disks are `by-partuuid` paths and the parity disk a `by-id` one — four devices, not four partuuids — and the block was written from the deployed units in Task 1 rather than left for the operator to copy, so what is left is to read it back. `pool.options` has to stay byte-identical to the deployed `pool.mount`, and the disk names `d1`/`d2`/`d3` are snapraid's identity for those disks.
-- **Fill `hosts/storagebaby/secrets/mail.sops.yaml` (`smtp_password`) and `storage.mail.smtp_host`/`smtp_user`**, plus the paperless `ftp_password` (step 1's table). The relay was never captured in this repository; until it is real the maintenance run succeeds and its mail step fails, nightly.
+- **Fill `hosts/StorageBaby/secrets/mail.sops.yaml` (`smtp_password`) and `storage.mail.smtp_host`/`smtp_user`**, plus the paperless `ftp_password` (step 1's table). The relay was never captured in this repository; until it is real the maintenance run succeeds and its mail step fails, nightly.
 - **Set `tcp_bind_address` if the host has more than one address** (step 8). This replaces the spec's `service_config.paperless.ftp_public_address`: the address is Traefik's to bind as well as the FTP server's to advertise, so it became one top-level `host.yml` key (§5's amendment) and the pod template reads it.
 - **Point the printer at `<that address>:21`**, user `config.ftp_user` (`scanner`), passive mode.
 - **The first converge is a planned outage, run by hand** (step 9): stop the deploy timer, pre-flight the whole playbook with `--check --diff`, stop every pool-class service **and `smb`/`nmb`** — `systemctl stop pool.mount` is a plain `umount` and fails `EBUSY` while `smbd` holds `/pool` — converge, start everything, start the timer. The rendered units cannot be byte-identical to the stowed ones, so all four branches and the pool are remounted once. That converge also adds Chaotic-AUR, refreshes the package databases once and may `pacman -U` the pinned snapraid over the installed one, leaving `base-devel` behind; Traefik restarts once for the new TCP entrypoints. A first converge that cannot decrypt now aborts in the `storage` role's mail task, because `storage` runs before the services.

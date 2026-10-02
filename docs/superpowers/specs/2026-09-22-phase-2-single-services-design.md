@@ -6,7 +6,7 @@ Extends: `2026-09-21-gitops-podman-platform-design.md` (sections 5 and 8). Phase
 
 ## 1. Scope
 
-Migrate kopia (server only), jellyfin, stirling-pdf, yuzukam and paperless-upload onto `hosts/storagebaby/services/`, placed on `test-a` by symlink so the integration scenario runs all five. Retire the old `kopia/`, `jellyfin/`, `stirling-pdf/`, `yuzukam/`, `paperless-upload/`, `watchtower/`, `ofelia/` directories. Kopia backup clients (the per-service sidecar) move to Phase 3, where the first pods appear.
+Migrate kopia (server only), jellyfin, stirling-pdf, yuzukam and paperless-upload onto `hosts/StorageBaby/services/`, placed on `test-a` by symlink so the integration scenario runs all five. Retire the old `kopia/`, `jellyfin/`, `stirling-pdf/`, `yuzukam/`, `paperless-upload/`, `watchtower/`, `ofelia/` directories. Kopia backup clients (the per-service sidecar) move to Phase 3, where the first pods appear.
 
 Harness work first, because the final Phase 1 review found it: unit-active, container-healthy and HTTPS checks generalised over placed services; `.build` units ordered before the containers that use their image; `make` installed on hosts.
 

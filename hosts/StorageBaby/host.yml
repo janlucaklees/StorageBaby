@@ -84,7 +84,7 @@ storage:
   # deployed wrapper used whatever MTA the host happened to have, which this repository
   # never captured, so the relay has to be filled in before the first converge --
   # otherwise the mail step fails nightly while the run itself succeeds. The password is
-  # hosts/storagebaby/secrets/mail.sops.yaml, key `smtp_password`.
+  # hosts/StorageBaby/secrets/mail.sops.yaml, key `smtp_password`.
   mail:
     to: email@janlucaklees.de
     from: storagebaby@janlucaklees.de

@@ -47,7 +47,7 @@ Spec §2, §3 (1–4), §6 harness, §7 step 1. Mounts and pool only — snaprai
 - Create: `ansible/roles/storage/defaults/main.yml`, `ansible/roles/storage/tasks/{main,tools,aur_build,mounts,render}.yml`, `ansible/roles/storage/templates/{disk.mount.j2,pool.mount.j2}`, `ansible/roles/storage/README.md`
 - Modify: `ansible/playbook.yml` (include the role before `host_base`)
 - Modify: `ansible/roles/host_base/tasks/main.yml` (drop the `mountpoints` check)
-- Modify: `hosts/storagebaby/host.yml`, `hosts/test-a/host.yml`, `hosts/test-ci/host.yml`
+- Modify: `hosts/StorageBaby/host.yml`, `hosts/test-a/host.yml`, `hosts/test-ci/host.yml`
 - Modify: `tests/integration/molecule/test-ci/molecule.yml`, `create.yml`, `destroy.yml`, `prepare.yml`, `tests/integration/molecule/templates/domain.xml.j2`
 - Create: `tests/integration/molecule/test-ci/tests/test_storage.py`
 
@@ -195,7 +195,7 @@ Run `make test-static`: `test_storage.py` fails (no `storage` block anywhere yet
 
 - [ ] **Step 2: `host.yml` on all three hosts**
 
-`hosts/storagebaby/host.yml` — replace the `mountpoints: [/pool]` block (comment included) with the declaration, copied from the units this phase retires (`snapraid/config/etc/systemd/system/*.mount`). The partuuids and the parity `by-id` path are taken verbatim from those files; the names are what `snapraid.conf` already calls the disks:
+`hosts/StorageBaby/host.yml` — replace the `mountpoints: [/pool]` block (comment included) with the declaration, copied from the units this phase retires (`snapraid/config/etc/systemd/system/*.mount`). The partuuids and the parity `by-id` path are taken verbatim from those files; the names are what `snapraid.conf` already calls the disks:
 
 ```yaml
 # The filesystems this host is made of. The `storage` role mounts exactly these and
@@ -851,7 +851,7 @@ Spec §2 (`snapraid`, `mail`), §3 (5–7), §6, §7 step 2.
 - Create: `ansible/roles/storage/templates/{snapraid.conf.j2,msmtprc.j2,storage-maintenance.service.j2,storage-maintenance.timer.j2}`
 - Create: `ansible/roles/storage/templates/maintenance/{storage-maintenance-unattended.sh.j2,balance_disks.sh.j2,scrub.sh.j2,plugin-stop.sh.j2,plugin-start.sh.j2}`
 - Create: `ansible/roles/storage/files/maintenance/{storage-maintenance.sh,sync.sh}`
-- Create: `hosts/storagebaby/secrets/mail.sops.yaml`
+- Create: `hosts/StorageBaby/secrets/mail.sops.yaml`
 - Modify: `hosts/{storagebaby,test-a,test-ci}/host.yml` (`storage.snapraid`, `storage.mail`)
 - Modify: `ansible/roles/storage/tasks/{main,tools,render}.yml`, `defaults/main.yml`, `README.md`
 - Modify: `devtools/Dockerfile` (snapraid, for the static parse check), `tests/static/test_smoke.py`
@@ -1345,10 +1345,10 @@ account default : default
 - [ ] **Step 4: Secrets — storagebaby's file and the test hosts' generator**
 
 ```bash
-make sops FILE=hosts/storagebaby/secrets/mail.sops.yaml
+make sops FILE=hosts/StorageBaby/secrets/mail.sops.yaml
 ```
 
-with a single key, `smtp_password: REPLACE_ME` (the operator's age key has to be present; `test_recipients_match_sops_config` then checks it against the `hosts/storagebaby/**` rule).
+with a single key, `smtp_password: REPLACE_ME` (the operator's age key has to be present; `test_recipients_match_sops_config` then checks it against the `hosts/StorageBaby/**` rule).
 
 `tests/integration/molecule/test-ci/prepare.yml`, in the secret-generating play, after the host-secret-set task:
 
@@ -1989,10 +1989,10 @@ Spec §5 Paperless, §4 (paperless-upload, the `scans` bind), §7 step 4.
 
 **Files:**
 
-- Modify: `hosts/storagebaby/services/paperless/service.yml`, `quadlet/paperless.pod.j2`, `quadlet/paperless-app.container.j2`, `secrets.sops.yaml`, `README.md`
-- Create: `hosts/storagebaby/services/paperless/quadlet/paperless-ftp.container.j2`
-- Modify: `hosts/storagebaby/host.yml` (`service_config.paperless.ftp_public_address`), `hosts/test-a/host.yml`, `hosts/test-ci/host.yml`
-- Delete: `hosts/storagebaby/services/paperless-upload/` (whole folder), `hosts/test-a/services/paperless-upload`, `hosts/test-ci/services/paperless-upload` (symlinks)
+- Modify: `hosts/StorageBaby/services/paperless/service.yml`, `quadlet/paperless.pod.j2`, `quadlet/paperless-app.container.j2`, `secrets.sops.yaml`, `README.md`
+- Create: `hosts/StorageBaby/services/paperless/quadlet/paperless-ftp.container.j2`
+- Modify: `hosts/StorageBaby/host.yml` (`service_config.paperless.ftp_public_address`), `hosts/test-a/host.yml`, `hosts/test-ci/host.yml`
+- Delete: `hosts/StorageBaby/services/paperless-upload/` (whole folder), `hosts/test-a/services/paperless-upload`, `hosts/test-ci/services/paperless-upload` (symlinks)
 - Modify: `tests/static/test_storage.py` (nothing), `tests/static/test_contract.py` (a config check, below)
 - Create: `tests/integration/molecule/test-ci/tests/test_ftp.py`
 - Modify: `tests/integration/molecule/test-ci/tests/test_service.py` (drop the uploader hop test), `README.md` (services table row)
@@ -2033,7 +2033,7 @@ config:
 secrets: [database_password, secret_key, ftp_password]
 ```
 
-`hosts/storagebaby/host.yml`:
+`hosts/StorageBaby/host.yml`:
 
 ```yaml
 service_config:
@@ -2154,13 +2154,13 @@ Volume={{ volumes.consume }}:/usr/src/paperless/consume
 `secrets.sops.yaml` gains `ftp_password` — generated, not `REPLACE_ME`: it is a free choice, like the kopia client passwords, and the only other place it exists is the scanner's configuration.
 
 ```bash
-make sops FILE=hosts/storagebaby/services/paperless/secrets.sops.yaml
+make sops FILE=hosts/StorageBaby/services/paperless/secrets.sops.yaml
 ```
 
 - [ ] **Step 4: Retire `paperless-upload`**
 
 ```bash
-git rm -r hosts/storagebaby/services/paperless-upload
+git rm -r hosts/StorageBaby/services/paperless-upload
 git rm hosts/test-a/services/paperless-upload hosts/test-ci/services/paperless-upload
 ```
 
@@ -2292,7 +2292,7 @@ grep -h What= snapraid/config/etc/systemd/system/*.mount
 grep -e '^disk' -e '^parity' -e '^content' -e '^block_size' snapraid/config/etc/snapraid.conf
 ```
 
-against `hosts/storagebaby/host.yml`'s `storage` block. Every device path, every mount point, every `disk <name> <path>/` and the parity path must match. The disk **names** especially: snapraid identifies a disk by the name in the config, and renaming `d1` to something else would make it treat the whole disk as new — a full parity rewrite on the first sync.
+against `hosts/StorageBaby/host.yml`'s `storage` block. Every device path, every mount point, every `disk <name> <path>/` and the parity path must match. The disk **names** especially: snapraid identifies a disk by the name in the config, and renaming `d1` to something else would make it treat the whole disk as new — a full parity rewrite on the first sync.
 
 ```bash
 git rm -r samba snapraid
@@ -2307,8 +2307,8 @@ That takes with it: the `samba` maintenance plugin, the five `snapshot-*` plugin
 - New section **"Storage"**, after "Services": the `storage` block, the role running before `host_base`, the mount assertion that replaced `mountpoints`, the maintenance timer and where its scripts and logs live, and the mail.
 - New section **"Adding a disk"** (the procedure from the deleted `snapraid/README.md`, rewritten): partition and `mkfs` by hand (`parted`, `mkfs.ext4`), read the stable path (`lsblk -o NAME,SIZE,PARTUUID,PARTLABEL`), add the entry to `host.yml`, push. The role mounts it, adds it to the pool and to `snapraid.conf`; the first `snapraid sync` after that writes its content file. Note that **adding a branch changes `pool.mount`**, so the converge that adds a disk remounts the pool — do it with the services stopped.
 - Operator steps, new entries (spec §8):
-  1. `hosts/storagebaby/secrets/mail.sops.yaml` → `smtp_password`, and `storage.mail.smtp_host`/`smtp_user` in `host.yml`, which are `REPLACE_ME`.
-  2. `hosts/storagebaby/services/paperless/secrets.sops.yaml` → `ftp_password` (generated, free choice — it is what the scanner is configured with).
+  1. `hosts/StorageBaby/secrets/mail.sops.yaml` → `smtp_password`, and `storage.mail.smtp_host`/`smtp_user` in `host.yml`, which are `REPLACE_ME`.
+  2. `hosts/StorageBaby/services/paperless/secrets.sops.yaml` → `ftp_password` (generated, free choice — it is what the scanner is configured with).
   3. `service_config.paperless.ftp_public_address` → storagebaby's LAN address.
   4. Point the scanner at `<storagebaby>:21`, user `config.ftp_user`, passive.
   5. **The first converge remounts `/pool`.** The role renders `pool.mount` from the declaration, which differs from the stowed one (its `What=` is the glob `/mnt/data/*`, and the description differs), so the unit changes and the pool is remounted once. Every service with a pool-class volume loses its bind mount across that. Run `ansible-playbook … --check --diff --limit storagebaby` first to see exactly what changes, stop the services, converge, start them.
