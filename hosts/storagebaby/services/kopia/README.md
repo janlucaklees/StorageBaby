@@ -58,7 +58,7 @@ only when that failed. So the two cases an operator can be in with a real B2 buc
   repository's password before the first deploy**:
 
   ```sh
-  make sops FILE=hosts/storagebaby/services/kopia/secrets.sops.yaml
+  mise run sops hosts/storagebaby/services/kopia/secrets.sops.yaml
   ```
 
   Getting this wrong does not quietly make a second repository beside the first: kopia
@@ -89,7 +89,7 @@ values — the registration section below has the whole mechanism.
 > credential to carry over from the old stack. Put the real ones in with
 >
 > ```sh
-> make sops FILE=hosts/storagebaby/services/kopia/secrets.sops.yaml
+> mise run sops hosts/storagebaby/services/kopia/secrets.sops.yaml
 > ```
 >
 > before the first real deploy. Until then a converge on storagebaby brings the
@@ -298,7 +298,7 @@ account this script creates has to be exactly `<service>@<host>`.
 > through argv as well. Revisit if a later kopia grows a file or envar form.
 
 **Adding a client** is therefore: put the value in the set
-(`make sops FILE=hosts/storagebaby/secrets/kopia-clients.sops.yaml`), add
+(`mise run sops hosts/storagebaby/secrets/kopia-clients.sops.yaml`), add
 `client_<service>` to this service's `host_secrets`, add `kopia_password` to the
 client's, converge. The secret change restarts `kopia.service`, which re-runs the
 registration. Nothing is typed at a shell, and a rotated password is one edit on one

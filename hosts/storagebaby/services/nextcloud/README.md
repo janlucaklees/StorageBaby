@@ -322,7 +322,7 @@ halves, then the commit:
 
 1. Move `html` and the postgres data directory in, with the ownership rules under
    "Migrating the data" below.
-2. `make sops FILE=hosts/storagebaby/services/nextcloud/secrets.sops.yaml` and
+2. `mise run sops hosts/storagebaby/services/nextcloud/secrets.sops.yaml` and
    replace all five values.
 3. Only then let the commit that places the service land on the tested branch.
 
@@ -333,7 +333,7 @@ installer waiting on a public address.
 > **All five of this folder's secrets are `REPLACE_ME`**, filled with
 >
 > ```sh
-> make sops FILE=hosts/storagebaby/services/nextcloud/secrets.sops.yaml
+> mise run sops hosts/storagebaby/services/nextcloud/secrets.sops.yaml
 > ```
 >
 > - `database_password` has to be **the password of the database that is migrated

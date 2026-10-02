@@ -85,7 +85,7 @@ merely still migrating.
 > the first deploy on storagebaby**, with
 >
 > ```sh
-> make sops FILE=hosts/storagebaby/services/paperless/secrets.sops.yaml
+> mise run sops hosts/storagebaby/services/paperless/secrets.sops.yaml
 > ```
 >
 > - `database_password` has to be **the password of the database that is migrated

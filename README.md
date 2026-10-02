@@ -215,7 +215,7 @@ the service land on `master`, with the deploy timer stopped until step 9 says ot
 ### 1. Fill the placeholders
 
 `REPLACE_ME` is the literal value in git wherever the real one was unknown when the
-service was migrated. Each file is opened with `make sops FILE=<path>`.
+service was migrated. Each file is opened with `mise run sops <path>`.
 
 | File                                                        | Keys                                               | What goes in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ----------------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -886,11 +886,10 @@ Two service-specific notes:
   secrets can only be edited on the host.
 - Edit a secret: `mise run sops <path>` (decrypts into nvim, re-encrypts on save; the
   editor is fixed in `mise.toml` so a GUI editor returning early cannot lose the edit).
-  `make sops FILE=<path>` is the same with `$EDITOR`.
 - Add a host: put its public key into `.sops.yaml` (its own rule and `hosts/shared/**`),
-  then `make updatekeys`. Only the data key is re-wrapped; the values are untouched.
+  then `mise run updatekeys`. Only the data key is re-wrapped; the values are untouched.
 - Replace your own key: `age-keygen >> ~/.config/sops/age/keys.txt`, swap your public key
-  in `.sops.yaml`, `make updatekeys` (the old identity still in `keys.txt` opens the
+  in `.sops.yaml`, `mise run updatekeys` (the old identity still in `keys.txt` opens the
   files), then delete the old identity from `keys.txt`.
 - The test VM never sees these files or keys; `prepare.yml` generates throwaway secrets.
   The static tests only compare each file's recipient list against `.sops.yaml`.
@@ -922,11 +921,11 @@ converges `--limit <hostname>` and fails loudly if no such folder exists.
 Add the printed deploy key to the repository, then add the printed age recipient
 to `.sops.yaml` in two places: the host's own rule, and the `hosts/shared/**`
 rule — every host runs the shared services and has to decrypt their secrets.
-Then `make updatekeys` re-encrypts every tracked secret file for the new recipient
-(`make sops FILE=...` opens one for editing); commit and push. The host
+Then `mise run updatekeys` re-encrypts every tracked secret file for the new recipient
+(`mise run sops ...` opens one for editing); commit and push. The host
 pulls `stable` every 5 minutes.
 
-Until the host's age recipient is in `.sops.yaml` and `make updatekeys` has run
+Until the host's age recipient is in `.sops.yaml` and `mise run updatekeys` has run
 on the secret files it needs, its first converge fails at secret decryption.
 That is expected: the host cannot read anything it was not encrypted to. It
 fails in the `storage` role's mail task rather than in the first service, because
@@ -972,22 +971,32 @@ occasional restart. The fix belongs in git.
 
 ## Working on the repo
 
-    make devtools              # build the tooling image (once)
-    make format                # prettier over the whole repo
-    make fmt-check             # check only, no writes
-    make test-static           # contract, secrets, render checks
-    make test-integration      # Molecule scenario test-ci in a KVM VM, converging hosts/test-a
-    MOLECULE_HOST=test-ci make test-integration   # same scenario, the smaller CI placement
-    make molecule CMD=converge # a single Molecule step in that scenario
-    make molecule-login        # SSH into the running test VM
-    make molecule-exec CMD='podman ps -a'   # one command on it, no TTY needed
-    make test-clean            # destroy the VM and drop the Molecule cache
-    make sops FILE=hosts/shared/services/traefik/secrets.sops.yaml
-    make updatekeys            # re-encrypt every secret file for the recipients in .sops.yaml
-    make install-hooks         # once per clone: lefthook's formatting hook
+`mise.toml` is the single entry point — there is no Makefile. `mise tasks` lists
+these with their arguments:
 
-Docker and lefthook are all the workstation needs for everything but the
-integration tests and the secrets: `make sops` and `make updatekeys` run the
+    mise run devtools               # build the tooling image (once)
+    mise run format                 # prettier over the whole repo
+    mise run fmt-check              # check only, no writes
+    mise run test-static            # contract, secrets, render checks
+    mise run test-integration       # Molecule scenario test-ci in a KVM VM, converging hosts/test-a
+    MOLECULE_HOST=test-ci mise run test-integration   # same scenario, the smaller CI placement
+    mise run molecule converge      # a single Molecule step in that scenario
+    mise run molecule-login         # SSH into the running test VM
+    mise run molecule-exec 'podman ps -a'   # one command on it, no TTY needed
+    mise run test-clean             # destroy the VM and drop the Molecule cache
+    mise run sops hosts/shared/services/traefik/secrets.sops.yaml
+    mise run updatekeys             # re-encrypt every secret file for the recipients in .sops.yaml
+    mise run install-hooks          # once per clone: lefthook's formatting hook
+
+Arguments are positional rather than `NAME=value`, and a variable override is an
+environment assignment in front of the command — `MOLECULE_HOST=test-ci mise run
+test-integration`, not `make test-integration MOLECULE_HOST=test-ci`.
+`MOLECULE_HOST`, `MOLECULE_VM_MEMORY_MIB` and `MOLECULE_VM_VCPUS` can also be set
+in `.env` (see `.env.example`); their defaults live in the Molecule scenario.
+
+mise, Docker and lefthook are all the workstation needs for everything but the
+integration tests and the secrets: mise comes from the distribution (pacman:
+`mise`), and `mise run sops` and `mise run updatekeys` run the
 distribution's own `sops` and `age` (pacman: `sops age`), because the key that opens
 the files lives on this machine. Those drive real KVM machines through the host's libvirt, so
 they additionally need `qemu-base libvirt dnsmasq iptables-nft`, `libvirtd`
