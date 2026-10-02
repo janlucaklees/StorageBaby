@@ -28,7 +28,7 @@ deploy timer off so nothing converges until you say so; `--branch` makes the hos
 follow a branch other than `stable`, which is how a rollout is tested.
 
 ```sh
-doas bash bootstrap.sh --repo git@github.com:janlucaklees/StorageBaby.git --branch < branch > --local
+doas bash bootstrap.sh --repo git@github.com:janlucaklees/StorageBaby.git --branch storagebaby-rollout --local
 ```
 
 It runs `pacman -Syu` once: reboot afterwards if the kernel changed, or no container
@@ -45,7 +45,7 @@ exactly as the machine does, case included (README → "New host").
 ## 3. Secrets
 
 ```sh
-mise run sops hosts/ < Hostname > /services/ < svc > /secrets.sops.yaml # opens nvim, re-encrypts on save
+mise run sops hosts/StorageBaby/services/paperless/secrets.sops.yaml # opens nvim, re-encrypts on save
 ```
 
 Replace every `REPLACE_ME` the README's operator table lists for the services you place.
@@ -64,14 +64,14 @@ branch; that is fine.
 On the host, with whatever used to own ports 80 and 443 stopped:
 
 ```sh
-doas systemctl start storagebaby-deploy.service       # does nothing on an unchanged checkout
+doas systemctl start storagebaby-deploy.service # does nothing on an unchanged checkout
 journalctl -u storagebaby-deploy.service -n 50
-doas storagebaby-svc ps <svc>                         # also: start stop restart logs
-curl -sI https://<svc>.<domain> | head -1
+doas storagebaby-svc ps yuzukam # also: start stop restart logs
+curl -sI https://yuzukam.home.klees.io | head -1
 ```
 
 `storagebaby-svc logs` follows; for a tail use
-`journalctl _SYSTEMD_USER_UNIT=<svc>.service -n 30` (`<svc>-pod.service` for a pod).
+`journalctl _SYSTEMD_USER_UNIT=yuzukam.service -n 30` (`paperless-pod.service` for a pod).
 
 ## 5. Bring existing data
 
@@ -84,10 +84,10 @@ Meilisearch and model caches are not copied.
 Then deploy, hand each tree to the uid the container runs as, restart:
 
 ```sh
-base=$(awk -F: '$1=="svc-<svc>"{print $2}' /etc/subuid)
-doas chown -R $((base+69)):$((base+69))   <database dir>      # postgres uid 70
-doas chown -R $((base+999)):$((base+999)) <app dirs>          # app uid 1000
-doas storagebaby-svc restart <svc>
+base=$(awk -F: '$1=="svc-paperless"{print $2}' /etc/subuid)
+doas chown -R $((base + 69)):$((base + 69)) /var/lib/storagebaby/fast/paperless/database           # postgres uid 70
+doas chown -R $((base + 999)):$((base + 999)) /pool/apps/paperless/data /pool/apps/paperless/media # app uid 1000
+doas storagebaby-svc restart paperless
 ```
 
 The first deploy of a service with copied data fails its health wait once, because of
@@ -101,7 +101,7 @@ when it starts and nightly at 03:00; a manual `kopia snapshot create` that repor
 files have been changed" is Kopia skipping an identical snapshot, not a failure:
 
 ```sh
-doas /usr/local/sbin/podman-as svc- exec kopia snapshot list < svc > podman < svc > -backup
+doas /usr/local/sbin/podman-as svc-paperless podman exec paperless-backup kopia snapshot list
 ```
 
 Restore from anywhere with the bucket credentials and `repository_password`:
