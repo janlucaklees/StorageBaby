@@ -279,10 +279,11 @@ ExecStartPost=/usr/bin/test -d /var/lib/storagebaby/repo/hosts/%H
 # The deploy tick, identical to ansible/roles/host_base/files/storagebaby-deploy (a static
 # test holds them so). Embedded because the first tick runs before host_base ever has.
 cat > /usr/local/sbin/storagebaby-deploy << 'DEPLOY_SCRIPT'
-<the whole file above, verbatim>
 DEPLOY_SCRIPT
 chmod 0755 /usr/local/sbin/storagebaby-deploy
 ```
+
+Between those two `DEPLOY_SCRIPT` lines goes the complete text of `ansible/roles/host_base/files/storagebaby-deploy` from this step, byte for byte, from its `#!/bin/bash` line to its last `printf` line. No line of the script may be `DEPLOY_SCRIPT`, and the script's own heredocs use `ASKPASS_SCRIPT` and `PY` for that reason.
 
 and replace the unit heredoc with the new unit text above. Keep the timer heredoc.
 
@@ -1255,7 +1256,8 @@ pointer_case = pytest.mark.parametrize("owner,name,source", CASES, ids=[f"{o}/{n
 def test_the_host_fetched_the_pointed_repository(host, owner, name, source):
     placed(host, owner)
     checkout = host.file(f"{SOURCES}/{name}")
-    assert checkout.is_directory and checkout.mode == 0o700 and checkout.user == "root", f"{SOURCES}/{name}"
+    # The parent is what keeps the fetched trees root-only (0700); a clone itself is 0755.
+    assert checkout.is_directory and checkout.user == "root", f"{SOURCES}/{name}"
     head = host.check_output(f"git -C {SOURCES}/{name} rev-parse HEAD")
     remote = host.check_output(f"git -C /srv/git/{name}.git rev-parse {source['ref']}")
     assert head == remote, f"{name}: fetched {head}, the remote's {source['ref']} is {remote}"
@@ -1270,7 +1272,10 @@ def test_the_secrets_came_from_the_external_tree_and_not_from_an_override(host, 
 
     A host override under hosts/<host>/secrets/ would also make the generic secret test
     pass; the point of this case is that none exists for this service and the copy on the
-    host is the fixture tree's own.
+    host is the fixture tree's own. The two can be byte-equal on either route -- the
+    Molecule converge copying from the controller's fixture tree, the deploy tick copying
+    from the fetched checkout -- because prepare generated the file *into* the fixture tree
+    and seeded the external remote from that same tree.
     """
     hostname = host.check_output("uname -n")
     placed(host, owner)
@@ -1417,7 +1422,7 @@ and change the first line of the `# Images, before anything of this service is w
 - name: Where the service user's registry login lives
   ansible.builtin.set_fact:
     registry_auth_file: '{{ svc_home }}/.config/containers/auth.json'
-    registries: '{{ service.registries | default([]) }}'
+    service_registries: '{{ service.registries | default([]) }}'
     # Reset per service: the role is included once per placed service in one play.
     _auths: {}
 
@@ -1425,10 +1430,10 @@ and change the first line of the `# Images, before anything of this service is w
   ansible.builtin.file:
     path: '{{ registry_auth_file }}'
     state: absent
-  when: registries | length == 0
+  when: service_registries | length == 0
 
 - name: Registry login for a service that declares registries
-  when: registries | length > 0
+  when: service_registries | length > 0
   block:
     - name: Only an external service can declare registries
       ansible.builtin.assert:
@@ -1498,7 +1503,7 @@ and change the first line of the `# Images, before anything of this service is w
       vars:
         _creds: '{{ _source_decrypted.stdout | from_json }}'
         _auth: "{{ (_creds.registry_user ~ ':' ~ _creds.registry_token) | b64encode }}"
-      loop: '{{ registries }}'
+      loop: '{{ service_registries }}'
       no_log: true
       when: _source_file.stat.exists
 
@@ -1517,6 +1522,8 @@ and change the first line of the `# Images, before anything of this service is w
         msg: '{{ service.name }}: the registry login will be written on the converge, once its credential file is on the host.'
       when: not _source_file.stat.exists
 ```
+
+**If the first integration run fails at the pull with an unauthorized error**, do not debug podman's lookup: the fallback is to name the file explicitly. Add `Environment=REGISTRY_AUTH_FILE=%h/.config/containers/auth.json` through a Quadlet drop-in the role renders for a service with `service_registries` (a `10-storagebaby-registry.conf` under `<unit>.d/`, beside the host-gateway drop-in and listed in `test_render.py` the same way), and export `REGISTRY_AUTH_FILE=/home/<user>/.config/containers/auth.json` in `podman-as` when that file exists. The expectation is that neither is needed: `runuser -u` resets `HOME` to the target user's, and containers/image falls back to `$HOME/.config/containers/auth.json` when the runtime directory holds none. Record which it was in the spec's Amendments.
 
 - [ ] **Step 3: The fixture pulls privately**
 
@@ -1884,6 +1891,9 @@ def test_removing_the_pointer_removes_the_fetched_repository(host):
     assert r.rc == 0, host.run(JOURNAL).stdout
     assert not host.file(f"/var/lib/storagebaby/sources/{name}").exists
     assert f"source:{name}" not in state_lines(host)
+    # The documented half of unplacing: the units stay, like every unplaced service's. A
+    # cleanup that stopped them would be a contract change and has to fail here first.
+    assert host.run(f"systemctl --user -M svc-{name}@ is-active {name}.service").stdout.strip() == "active"
 ```
 
 - [ ] **Step 2: Integration run (coordinated)**
