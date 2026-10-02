@@ -2,7 +2,7 @@ name: jellyfin
 port: 8096
 domain: jellyfin
 volumes:
-  config: { class: pool }
+  config: { class: fast }
 binds:
   media: { host: /pool/shared/media, container: /media, mode: ro, group: media }
 devices: [/dev/dri]
