@@ -39,8 +39,10 @@ Environment=KOPIA_S3_BUCKET={{ service.config.s3_bucket | default('') }}
 {# The hostname half of every client identity. Kopia matches a connecting client by
    `user@hostname`, and the sidecar announces `<service>@{{ hostname }}` -- so the
    start script has to register exactly that pair, and this is where it reads the
-   host from. Plural because it is the one host every client on this machine uses. #}
-Environment=KOPIA_CLIENT_HOSTS={{ hostname }}
+   host from. Plural because it is the one host every client on this machine uses.
+   Lowercased because kopia only accepts lowercase `user@hostname`; the sidecar
+   template lowercases the same way. #}
+Environment=KOPIA_CLIENT_HOSTS={{ hostname | lower }}
 Secret=server_password
 Secret=repository_password
 Secret=b2_key_id
