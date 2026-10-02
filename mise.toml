@@ -8,4 +8,7 @@ description = "Edit an encrypted secret file: mise run sops hosts/<...>/secrets.
 # editor is fixed here so a GUI editor that returns immediately (Zed without --wait)
 # cannot make sops see "no change" before you typed anything.
 env = { EDITOR = "nvim" }
-run = 'sops "${1:?usage: mise run sops <file>}"'
+# mise appends the invocation's arguments to a single-line `run`, so the file lands
+# after `sops` on its own -- `$1` is not set for a task script and a `${1:?}` guard
+# would fire on every call.
+run = "sops"
