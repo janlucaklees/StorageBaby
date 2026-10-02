@@ -15,8 +15,7 @@ storage_roots:
 # disks -- renaming one would make snapraid treat that disk as new. Verify all four device
 # paths against the running host before the first converge (root README, operator steps).
 volume_overrides:
-  jellyfin:
-    config: /pool/apps/jellyfin/volumes/jellyfin_config
+  jellyfin/config: /pool/apps/jellyfin/volumes/jellyfin_config
 deploy_timer: true
 gpu: true
 packages:
