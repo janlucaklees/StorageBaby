@@ -108,20 +108,22 @@ test-clean:
 	$(DEVTOOLS_RUN_VM) sh -c 'cd tests/integration && molecule destroy -s $(SCENARIO)'
 	docker volume rm -f $(MOLECULE_CACHE)
 
+# Secrets are edited with the workstation's own sops and age (pacman: `sops age`), not in
+# the devtools image: the key that opens them lives on this machine and the tools come
+# from the distribution. sops finds the key in ~/.config/sops/age/keys.txt by default.
 .PHONY: sops
 sops:
-	mkdir -p $(AGE_DIR)
-	$(subst --rm -t,--rm -it,$(DEVTOOLS_RUN_AGE)) sops $(FILE)
+	sops $(FILE)
 
 # Re-encrypt every tracked secret file for the recipients .sops.yaml names now: after a
 # host key was added or the workstation key replaced. Only the per-recipient data key is
-# rewrapped; the values are untouched. The file list is taken on the host, not in the
-# container, because `git ls-files` cannot see a worktree's .git from inside it. Needs a
-# key in $(AGE_DIR) that can still open the files (the old one, during a key swap).
+# rewrapped; the values are untouched. Needs a key that can still open the files (the old
+# one, during a key swap). sops rewrites its metadata even when nothing changed, so after
+# a no-op run discard the files.
 SOPS_FILES := $(shell git ls-files ':(glob)hosts/**/*.sops.yaml')
 .PHONY: updatekeys
 updatekeys:
-	$(DEVTOOLS_RUN_AGE) sh -c 'for f in $(SOPS_FILES); do sops updatekeys -y "$$f" || exit 1; done'
+	@for f in $(SOPS_FILES); do sops updatekeys -y "$$f" || exit 1; done
 
 .PHONY: install-hooks
 install-hooks:

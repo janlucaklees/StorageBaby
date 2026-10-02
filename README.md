@@ -980,7 +980,9 @@ occasional restart. The fix belongs in git.
     make install-hooks         # once per clone: lefthook's formatting hook
 
 Docker and lefthook are all the workstation needs for everything but the
-integration tests. Those drive real KVM machines through the host's libvirt, so
+integration tests and the secrets: `make sops` and `make updatekeys` run the
+distribution's own `sops` and `age` (pacman: `sops age`), because the key that opens
+the files lives on this machine. Those drive real KVM machines through the host's libvirt, so
 they additionally need `qemu-base libvirt dnsmasq iptables-nft`, `libvirtd`
 enabled, and libvirt's `default` network active. On a machine that also runs
 Docker, set `firewall_backend = "iptables"` in `/etc/libvirt/network.conf` —
