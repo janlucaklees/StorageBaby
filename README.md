@@ -886,11 +886,10 @@ Two service-specific notes:
   secrets can only be edited on the host.
 - Edit a secret: `make sops FILE=<path>` (decrypts into your editor, re-encrypts on save).
 - Add a host: put its public key into `.sops.yaml` (its own rule and `hosts/shared/**`),
-  then `sops updatekeys <file>` for every file it must read. Only the data key is
-  re-wrapped; the values are untouched.
+  then `make updatekeys`. Only the data key is re-wrapped; the values are untouched.
 - Replace your own key: `age-keygen >> ~/.config/sops/age/keys.txt`, swap your public key
-  in `.sops.yaml`, `sops updatekeys` every file, then delete the old identity from
-  `keys.txt`.
+  in `.sops.yaml`, `make updatekeys` (the old identity still in `keys.txt` opens the
+  files), then delete the old identity from `keys.txt`.
 - The test VM never sees these files or keys; `prepare.yml` generates throwaway secrets.
   The static tests only compare each file's recipient list against `.sops.yaml`.
 
@@ -921,11 +920,11 @@ converges `--limit <hostname>` and fails loudly if no such folder exists.
 Add the printed deploy key to the repository, then add the printed age recipient
 to `.sops.yaml` in two places: the host's own rule, and the `hosts/shared/**`
 rule — every host runs the shared services and has to decrypt their secrets.
-Then run `sops updatekeys` on every affected `*.sops.yaml` —
-`make sops FILE=...` opens one for editing — then commit and push. The host
+Then `make updatekeys` re-encrypts every tracked secret file for the new recipient
+(`make sops FILE=...` opens one for editing); commit and push. The host
 pulls `stable` every 5 minutes.
 
-Until the host's age recipient is in `.sops.yaml` and `sops updatekeys` has run
+Until the host's age recipient is in `.sops.yaml` and `make updatekeys` has run
 on the secret files it needs, its first converge fails at secret decryption.
 That is expected: the host cannot read anything it was not encrypted to. It
 fails in the `storage` role's mail task rather than in the first service, because
@@ -977,6 +976,7 @@ occasional restart. The fix belongs in git.
     make molecule-exec CMD='podman ps -a'   # one command on it, no TTY needed
     make test-clean            # destroy the VM and drop the Molecule cache
     make sops FILE=hosts/shared/services/traefik/secrets.sops.yaml
+    make updatekeys            # re-encrypt every secret file for the recipients in .sops.yaml
     make install-hooks         # once per clone: lefthook's formatting hook
 
 Docker and lefthook are all the workstation needs for everything but the
