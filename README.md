@@ -884,7 +884,9 @@ Two service-specific notes:
   with `~/.config/sops/age/keys.txt`. Encrypting needs no private key; **editing and
   adding a recipient do**, which is why your key exists. **Back it up**; without it,
   secrets can only be edited on the host.
-- Edit a secret: `make sops FILE=<path>` (decrypts into your editor, re-encrypts on save).
+- Edit a secret: `mise run sops <path>` (decrypts into nvim, re-encrypts on save; the
+  editor is fixed in `mise.toml` so a GUI editor returning early cannot lose the edit).
+  `make sops FILE=<path>` is the same with `$EDITOR`.
 - Add a host: put its public key into `.sops.yaml` (its own rule and `hosts/shared/**`),
   then `make updatekeys`. Only the data key is re-wrapped; the values are untouched.
 - Replace your own key: `age-keygen >> ~/.config/sops/age/keys.txt`, swap your public key
