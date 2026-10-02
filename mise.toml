@@ -8,8 +8,4 @@ description = "Edit an encrypted secret file: mise run sops hosts/<...>/secrets.
 # editor is fixed here so a GUI editor that returns immediately (Zed without --wait)
 # cannot make sops see "no change" before you typed anything.
 env = { EDITOR = "nvim" }
-run = '''
-set -eu
-file="${1:?usage: mise run sops <file>}"
-sops "$file" || { rc=$?; [ "$rc" -eq 200 ] && { echo unchanged; exit 0; }; exit "$rc"; }
-'''
+run = 'sops "${1:?usage: mise run sops <file>}"'

@@ -113,7 +113,7 @@ test-clean:
 # from the distribution. sops finds the key in ~/.config/sops/age/keys.txt by default.
 .PHONY: sops
 sops:
-	@sops $(FILE) || { rc=$$?; [ $$rc -eq 200 ] && echo "unchanged"; exit $$((rc == 200 ? 0 : rc)); }
+	sops $(FILE)
 
 # Re-encrypt every tracked secret file for the recipients .sops.yaml names now: after a
 # host key was added or the workstation key replaced. Only the per-recipient data key is
