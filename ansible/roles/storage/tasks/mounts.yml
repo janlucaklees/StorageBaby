@@ -136,8 +136,8 @@
     msg: >-
       {{ pool_unit }} or one of its branches changed and will be remounted. Every
       service with a pool-class volume loses its bind mount across this and has to be
-      restarted afterwards -- `make stop SERVICE=<name>` before, `make start
-      SERVICE=<name>` after.
+      restarted afterwards -- `storagebaby-svc stop <name>` before,
+      `storagebaby-svc start <name>` after.
   when:
     - disk_units.changed or pool_unit_render.changed
     - _pool_active.stdout | trim == 'active'

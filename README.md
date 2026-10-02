@@ -263,7 +263,7 @@ secret sync reports changed and restarts the unit — but after any edit that di
 go through a deploy:
 
 ```bash
-make restart SERVICE=kopia
+storagebaby-svc restart kopia
 ```
 
 before expecting a sidecar to connect. A sidecar whose account does not exist yet
@@ -494,15 +494,15 @@ restarted, so that converge is also run by hand:
 
 ```sh
 doas systemctl stop storagebaby-deploy.timer
-cd /var/lib/storagebaby/repo # the make targets below are this repository's
+cd /var/lib/storagebaby/repo # for the ansible-playbook below
 for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
-	doas make stop SERVICE=$s
+	doas storagebaby-svc stop $s
 done
 doas fuser -vm /pool
 doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
 	--diff ansible/playbook.yml
 for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
-	doas make start SERVICE=$s
+	doas storagebaby-svc start $s
 done
 doas systemctl start storagebaby-deploy.timer
 ```
@@ -617,7 +617,7 @@ A mail has to arrive, subject `[SUCCESS] SnapRAID Sync Report`. If none does, th
 itself was still fine — `journalctl -t msmtp` is where a refused relay or a rejected
 sender says why, and `storage.mail` is what to correct. Check afterwards that
 `snapraid.content` exists on all three data disks and `snapraid.parity` on the parity
-disk, and that jellyfin came back up (`make ps SERVICE=jellyfin`).
+disk, and that jellyfin came back up (`storagebaby-svc ps jellyfin`).
 
 **Does a scan reach Paperless?** Send one page from the printer. It should appear as a
 document within a minute or two — the consumer polls rather than watching inotify,
@@ -636,7 +636,7 @@ echo | openssl s_client -connect 127.0.0.1:443 -servername kopia.home.klees.io 2
 ```
 
 The issuer has to be Let's Encrypt, not `CN=TRAEFIK DEFAULT CERT`. If it is the
-default, read `make logs SERVICE=traefik` for the Porkbun DNS challenge.
+default, read `storagebaby-svc logs traefik` for the Porkbun DNS challenge.
 
 **Did each sidecar connect, and did a snapshot land?** Per pod
 (`paperless`, `openarchiver`, `immich`, `nextcloud`):
@@ -680,7 +680,7 @@ Two more things are not steps but expectations about that first converge:
   skipped and every other service still converges. The failure is raised as the very
   last task of the play, naming the services and the containers — so the message is the
   list of what to look at, not the point where the converge stopped. Read those
-  services' journals from the top (`make logs SERVICE=<name>`): on the first converge
+  services' journals from the top (`storagebaby-svc logs <name>`): on the first converge
   this is what a `database_password` that does not match the migrated cluster looks
   like. The next converge runs the skipped hooks, once the container is healthy.
 
@@ -752,7 +752,7 @@ file in it has not been ingested yet.
 
 1. Stop the old stack (`cd <old dir> && docker compose down`, or the old Quadlet
    unit for stirling-pdf) and stop the new unit if it already ran:
-   `make stop SERVICE=<svc>`.
+   `storagebaby-svc stop <svc>`.
 2. Move each old tree onto its new path. Where both sides are on the same
    filesystem — pool to pool, or a Docker named volume under `/var/lib` to the
    `fast` root under `/var/lib` — `mv` is a rename, costs nothing and leaves no
@@ -823,7 +823,7 @@ command in this repo is invoked:
   for nextcloud `www-data`, uid 33. Reading the number off the running container once
   is always cheaper than guessing it.
 
-Then `make start SERVICE=<svc>` and check `make ps SERVICE=<svc>`. If the ownership
+Then `storagebaby-svc start <svc>` and check `storagebaby-svc ps <svc>`. If the ownership
 is wrong the container comes up and fails — nothing on the host will quietly fix it
 on the next converge.
 
@@ -937,23 +937,28 @@ place, which is why that assert names the key before it names `.sops.yaml`.
 ## Operating a service
 
 Every service runs as its own lingering user `svc-<name>`, so its units belong
-to that user's systemd manager, not the system one. The Makefile wraps that —
-run these on the host as root (they are the only targets that do not go through
-the devtools image):
+to that user's systemd manager, not the system one. `storagebaby-svc` wraps that —
+run it on the host as root:
 
-    make ps SERVICE=traefik
-    make start SERVICE=traefik
-    make stop SERVICE=traefik
-    make restart SERVICE=traefik
-    make logs SERVICE=traefik
+    storagebaby-svc ps traefik
+    storagebaby-svc start traefik
+    storagebaby-svc stop traefik
+    storagebaby-svc restart traefik
+    storagebaby-svc logs traefik
 
-For a pod service (`paperless`, `openarchiver`, `immich`, `nextcloud`) they resolve
+It is a program on the host, `/usr/local/sbin/storagebaby-svc`, installed by the
+`host_base` role from `ansible/roles/host_base/files/storagebaby-svc` — deliberately not a
+task in this repository's runner. mise is a development tool and is not installed on a
+host, and a host is not a checkout anybody runs tasks from; the five commands below are
+the only ones meant to be run on a host at all.
+
+For a pod service (`paperless`, `openarchiver`, `immich`, `nextcloud`) the name resolves
 to `<name>-pod.service` and for a single-container one to `<name>.service`; which of
-the two a service is cannot be read off its name, so the target asks the service
+the two a service is cannot be read off its name, so the helper asks the service
 user's manager. Restarting the pod is the only restart its containers need — Quadlet
 binds them to it.
 
-They are thin wrappers, so the raw forms still work:
+It is a thin wrapper, so the raw forms still work:
 
     systemctl --user -M svc-traefik@ status traefik.service
     systemctl --user -M svc-traefik@ restart traefik.service

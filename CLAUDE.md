@@ -72,18 +72,20 @@ make sops FILE=hosts/shared/services/traefik/secrets.sops.yaml
 On a host, service units belong to the service user's systemd manager (run as root):
 
 ```bash
-make ps SERVICE=traefik      # systemctl --user -M svc-traefik@ status traefik.service
-make restart SERVICE=traefik # also: start, stop
-make logs SERVICE=traefik    # journalctl _SYSTEMD_USER_UNIT=traefik.service -f
+storagebaby-svc ps traefik      # systemctl --user -M svc-traefik@ status traefik.service
+storagebaby-svc restart traefik # also: start, stop
+storagebaby-svc logs traefik    # journalctl _SYSTEMD_USER_UNIT=traefik.service -f
 ```
 
-They are pod-aware: `SERVICE=<name>` resolves to `<name>-pod.service` when the service
+It is pod-aware: the service name resolves to `<name>-pod.service` when the service
 user's manager knows that unit and to `<name>.service` otherwise, so
-`make logs SERVICE=nextcloud` follows the pod. A single container of a pod is addressed
+`storagebaby-svc logs nextcloud` follows the pod. A single container of a pod is addressed
 by its own unit name (`nextcloud-collabora.service`).
 
-These five targets are the only ones meant to run on a host rather than in the
-devtools image. The raw forms they wrap:
+`storagebaby-svc` is a program on the host, installed to `/usr/local/sbin` by the
+`host_base` role (`ansible/roles/host_base/files/storagebaby-svc`) — not a mise task. mise
+is a development tool and is not installed on a host, and a host is not a checkout anybody
+runs tasks from. The raw forms it wraps:
 
 ```bash
 systemctl --user -M svc-traefik@ status traefik.service
@@ -148,7 +150,7 @@ The orchestrator runs these steps in order, unchanged from the hand-stowed origi
 
 If any step or hook fails, the orchestrator runs the `on-failure` hook before aborting; that one is best-effort, so one broken recovery script does not stop the others. It also fires on SIGINT/SIGTERM (a systemd stop or a timeout mid-run), so a service stopped by `on-before-balance` is never left down.
 
-**The hook contract is still `plugins/<name>/<hook>.sh`, but nothing hand-writes one any more.** `storage.snapraid.maintenance.stop_services` is the list (storagebaby: `[jellyfin]`); the role creates one directory per name and drops the same three scripts in — `on-before-balance.sh` (stop), `on-after-scrub.sh` and `on-failure.sh` (start) — which read the service name off their own directory, so they are byte-identical on every host, and resolve `<name>-pod.service` against `<name>.service` the way `make stop SERVICE=` does. A directory for a name no longer in the list is removed. The old `samba` and `snapshot-*` plugins are gone with the tree that held them: Samba is retired and Kopia is the only backup path.
+**The hook contract is still `plugins/<name>/<hook>.sh`, but nothing hand-writes one any more.** `storage.snapraid.maintenance.stop_services` is the list (storagebaby: `[jellyfin]`); the role creates one directory per name and drops the same three scripts in — `on-before-balance.sh` (stop), `on-after-scrub.sh` and `on-failure.sh` (start) — which read the service name off their own directory, so they are byte-identical on every host, and resolve `<name>-pod.service` against `<name>.service` the way `storagebaby-svc` does. A directory for a name no longer in the list is removed. The old `samba` and `snapshot-*` plugins are gone with the tree that held them: Samba is retired and Kopia is the only backup path.
 
 **No parameter is rendered into a script.** They all come from `/opt/storagebaby/maintenance/maintenance.env`, which every script sources, so a threshold changes in git and a hand-run script behaves exactly like the timer's. To run maintenance manually, on the host:
 

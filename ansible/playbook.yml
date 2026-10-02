@@ -189,5 +189,5 @@
           | map(attribute='service') | join(', ') }}. The containers that never became
           healthy: {{ hooks_not_run | map(attribute='containers') | flatten | join(', ') }}.
           Those services are converged but not finished -- read the journal of each
-          (`make logs SERVICE=<name>`) from the top. Every other service converged.
+          (`storagebaby-svc logs <name>`) from the top. Every other service converged.
       when: hooks_not_run | default([]) | length > 0

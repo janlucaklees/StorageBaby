@@ -1,0 +1,44 @@
+#!/bin/bash
+# usage: storagebaby-svc <ps|start|stop|restart|logs> <service>
+#
+# Service control on a host, as root. Every service runs as its own lingering user, so its
+# units belong to `svc-<name>`'s systemd manager rather than the system one -- reachable
+# only from the host it runs on. This is installed on the host instead of being a task in
+# the repository's task runner: mise is a development tool and has no business on a NAS,
+# and a host is not a checkout anybody runs tasks from.
+#
+# Nothing is ever changed on a host by hand. This is for looking, and for the occasional
+# restart; the fix belongs in git.
+set -euo pipefail
+
+action=${1:-}
+service=${2:-}
+
+usage() {
+	echo "usage: ${0##*/} <ps|start|stop|restart|logs> <service>" >&2
+	exit 2
+}
+
+case $action in
+	ps | start | stop | restart | logs) ;;
+	*) usage ;;
+esac
+[ -n "$service" ] || usage
+
+# A multi-container service is one pod unit with its containers pulled in behind it; a
+# single-container service has no pod at all. Which of the two a service is cannot be read
+# off its name, so it is asked of the service user's manager -- the same resolution the
+# `storage` role's maintenance hook scripts do. grep and not the exit status of
+# list-unit-files, because that command is happy to list nothing.
+unit="${service}.service"
+if systemctl --user -M "svc-${service}@" list-unit-files "${service}-pod.service" 2> /dev/null \
+	| grep -q "^${service}-pod.service"; then
+	unit="${service}-pod.service"
+fi
+
+case $action in
+	# journalctl has no `--user -M` form, so the unit is addressed by name instead.
+	logs) exec journalctl _SYSTEMD_USER_UNIT="$unit" -f ;;
+	ps) exec systemctl --user -M "svc-${service}@" status "$unit" ;;
+	*) exec systemctl --user -M "svc-${service}@" "$action" "$unit" ;;
+esac

@@ -123,7 +123,7 @@ def maintenance(host) -> dict:
 def top_unit(host, service: str) -> str:
     """`<name>-pod.service` when the service is a pod, `<name>.service` otherwise.
 
-    The same resolution the hook scripts and `make stop SERVICE=` do -- a pod service has
+    The same resolution the hook scripts and `storagebaby-svc` do -- a pod service has
     no `<name>.service` at all, and `systemctl` answers for a unit it does not know in a
     way that would let a check pass without checking anything.
     """
