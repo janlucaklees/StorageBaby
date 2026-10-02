@@ -7,7 +7,6 @@ domain: openarchiver
 volumes:
   data: { class: pool }
   database: { class: fast }
-  cache: { class: fast }
   meilisearch: { class: fast }
   backups: { class: fast }
 config:

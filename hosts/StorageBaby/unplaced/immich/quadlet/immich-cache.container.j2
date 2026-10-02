@@ -7,6 +7,9 @@ ContainerName=immich-cache
 Pod=immich.pod
 AutoUpdate=registry
 Environment=TZ={{ tz }}
+{# No volume and no persistence: job queue and cache only; Immich re-queues work from
+   its scheduled jobs. #}
+Exec=redis-server --save "" --appendonly no
 HealthCmd=redis-cli --raw incr ping
 HealthOnFailure=kill
 

@@ -11,9 +11,10 @@ Environment=TZ={{ tz }}
    from the secret file inside the container instead of being rendered into the unit:
    the unit is world-readable and `podman inspect` would print it. `exec` so valkey is
    pid 1 of the container and gets the signals the shell would otherwise swallow. #}
-Exec=sh -c 'exec valkey-server --requirepass "$(cat /run/secrets/redis_password)"'
+Exec=sh -c 'exec valkey-server --save "" --appendonly no --requirepass "$(cat /run/secrets/redis_password)"'
 Secret=redis_password
-Volume={{ volumes.cache }}:/data
+{# No volume and no persistence: BullMQ's ingestion queue; a lost in-flight job is
+   re-run from its source. #}
 {# Same reason as the command: the probe reads the password rather than carrying it. #}
 HealthCmd=sh -c 'valkey-cli --no-auth-warning -a "$(cat /run/secrets/redis_password)" ping | grep -q PONG'
 HealthOnFailure=kill

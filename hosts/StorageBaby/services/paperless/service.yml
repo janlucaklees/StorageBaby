@@ -10,7 +10,6 @@ volumes:
   # absent from `backup.paths` below.
   consume: { class: fast }
   database: { class: fast }
-  broker: { class: fast }
   backups: { class: fast }
 tcp_ports:
   # Traefik listens on 21 and forwards to the pod's 2121: the control connection. 21

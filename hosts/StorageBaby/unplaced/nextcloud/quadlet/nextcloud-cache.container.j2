@@ -9,7 +9,10 @@ AutoUpdate=registry
 Environment=TZ={{ tz }}
 {# No volume: Nextcloud uses this for its memory cache and its transactional file
    locks, both of which are rebuilt from the database and the filesystem after a
-   restart. Persisting them would only carry a stale lock table across one. #}
+   restart. Persisting them would only carry a stale lock table across one. Persistence
+   is switched off too: a Redis that cannot write its snapshot refuses all writes and
+   hangs Nextcloud, so it must never try. #}
+Exec=redis-server --save "" --appendonly no
 HealthCmd=redis-cli --raw incr ping
 HealthOnFailure=kill
 

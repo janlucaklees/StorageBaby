@@ -7,7 +7,10 @@ ContainerName=paperless-broker
 Pod=paperless.pod
 AutoUpdate=registry
 Environment=TZ={{ tz }}
-Volume={{ volumes.broker }}:/data
+{# No volume and no persistence: this is Celery's task queue, nothing here outlives a
+   restart on purpose -- the consumer re-scans its directory. Redis without disk writes
+   is also the fast configuration. #}
+Exec=redis-server --save "" --appendonly no
 HealthCmd=redis-cli --raw incr ping
 HealthOnFailure=kill
 
