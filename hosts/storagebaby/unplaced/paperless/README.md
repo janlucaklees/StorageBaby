@@ -85,7 +85,7 @@ merely still migrating.
 > the first deploy on storagebaby**, with
 >
 > ```sh
-> make sops FILE=hosts/storagebaby/services/paperless/secrets.sops.yaml
+> mise run sops hosts/storagebaby/services/paperless/secrets.sops.yaml
 > ```
 >
 > - `database_password` has to be **the password of the database that is migrated
@@ -307,7 +307,7 @@ container belongs to that user's podman:
 `service.yml`. `--no-owner` because the roles in the dump are the old stack's, not
 the ones this cluster initialised with. `pg_restore` does not empty what is already
 there, so restore into a freshly initialised cluster, or drop and recreate the
-database first with paperless stopped (`make stop SERVICE=paperless`). The file is
+database first with paperless stopped (`storagebaby-svc stop paperless`). The file is
 either `/var/lib/storagebaby/fast/paperless/backups/paperless.dump` on the host or
 one restored out of a Kopia snapshot of the `backups` volume.
 

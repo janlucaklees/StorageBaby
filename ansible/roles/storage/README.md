@@ -137,7 +137,7 @@ pool-class volume loses its bind mount across this and has to be restarted after
 
 **So: run the playbook with `--check --diff` before pushing a change to `pool.options`, a
 branch's `device`, `mount` or `fstype`.** If the diff shows `pool.mount` changing, stop the
-affected services first (`make stop SERVICE=<name>`) and start them after.
+affected services first (`storagebaby-svc stop <name>`) and start them after.
 
 This role is check-mode clean: every read-only probe carries `check_mode: false` so its
 result is still there for the conditional that reads it, and every step that installs
@@ -260,7 +260,7 @@ storage:
   failure copy is the half that matters: a run that aborts after stopping a service must not
   leave it down. Those scripts read the service name off **their own directory**, so they
   carry no rendered value and are identical on every host, and they resolve
-  `<name>-pod.service` against `<name>.service` the way `make stop SERVICE=` does. A
+  `<name>-pod.service` against `<name>.service` the way `storagebaby-svc` does. A
   directory for a service no longer in the list is **removed**: the orchestrator globs
   `plugins/*/<hook>.sh` and would otherwise keep stopping it every night.
 - **The timer** is `storage-maintenance.timer`, `OnCalendar` from the block and

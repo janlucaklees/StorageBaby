@@ -91,7 +91,7 @@ def container_name(template: Path) -> str:
     Reading the raw template is enough -- no unit here templates that line. Quadlet's
     own default would be `systemd-<stem>`, so a unit that does not name itself fails
     the health check below, which is the point: every container in this repo is named
-    after its service, and `make logs/ps SERVICE=<name>` relies on it.
+    after its service, and `storagebaby-svc logs/ps <name>` relies on it.
     """
     for line in template.read_text().splitlines():
         if line.startswith("ContainerName="):

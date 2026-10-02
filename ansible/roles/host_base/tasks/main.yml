@@ -1,7 +1,21 @@
 - name: Install platform packages
   community.general.pacman:
-    name: "{{ ['podman', 'passt', 'sops', 'age', 'ansible', 'git', 'openssh', 'make'] + (packages | default([])) }}"
+    name: "{{ ['podman', 'passt', 'sops', 'age', 'ansible', 'git', 'openssh'] + (packages | default([])) }}"
     state: present
+
+# Service control on the host: `storagebaby-svc <ps|start|stop|restart|logs> <service>`. It
+# is installed rather than being a task in the repository's runner, because that runner is
+# mise -- a development tool, with no business on a NAS -- and a host is not a checkout
+# anybody runs tasks from either. `make` left the package list above with the Makefile that
+# used to carry these five commands; `aur_build.yml` installs `base-devel` when it actually
+# has something to compile, which is the only reason a host ever needs one.
+- name: Install the service control helper
+  ansible.builtin.copy:
+    src: storagebaby-svc
+    dest: /usr/local/sbin/storagebaby-svc
+    owner: root
+    group: root
+    mode: '0755'
 
 # Traefik is rootless, so every port it binds has to be above this line. 80 is the
 # baseline (the web entrypoint); a placed service that claims a lower TCP port -- FTP's

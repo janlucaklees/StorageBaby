@@ -102,7 +102,7 @@ for f in /run/secrets/client_*; do
 	[ -e "$f" ] || continue
 	if [ "$(cat "$f")" = "REPLACE_ME" ]; then
 		echo "kopia: the client password for ${f##*/client_} is still the REPLACE_ME placeholder." >&2
-		echo "kopia: fill hosts/<host>/secrets/kopia-clients.sops.yaml (make sops FILE=...)" >&2
+		echo "kopia: fill hosts/<host>/secrets/kopia-clients.sops.yaml (mise run sops ...)" >&2
 		echo "kopia: with the same value on the client's side; refusing to register clients." >&2
 		exit 1
 	fi

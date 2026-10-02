@@ -57,7 +57,7 @@ mechanism.
 > deploy on storagebaby**, with
 >
 > ```sh
-> make sops FILE=hosts/storagebaby/services/immich/secrets.sops.yaml
+> mise run sops hosts/storagebaby/services/immich/secrets.sops.yaml
 > ```
 >
 > It has to be **the password of the database that is migrated in**. The postgres

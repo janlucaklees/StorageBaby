@@ -322,7 +322,7 @@ halves, then the commit:
 
 1. Move `html` and the postgres data directory in, with the ownership rules under
    "Migrating the data" below.
-2. `make sops FILE=hosts/storagebaby/services/nextcloud/secrets.sops.yaml` and
+2. `mise run sops hosts/storagebaby/services/nextcloud/secrets.sops.yaml` and
    replace all five values.
 3. Only then let the commit that places the service land on the tested branch.
 
@@ -333,7 +333,7 @@ installer waiting on a public address.
 > **All five of this folder's secrets are `REPLACE_ME`**, filled with
 >
 > ```sh
-> make sops FILE=hosts/storagebaby/services/nextcloud/secrets.sops.yaml
+> mise run sops hosts/storagebaby/services/nextcloud/secrets.sops.yaml
 > ```
 >
 > - `database_password` has to be **the password of the database that is migrated
@@ -449,7 +449,7 @@ run as the service user because the container belongs to that user's podman:
 `service.yml`. `--no-owner` because the roles in the dump are the ones the old
 stack had, and the restore target is whatever this database initialised with.
 Restoring **into** the live database wants Nextcloud stopped first
-(`make stop SERVICE=nextcloud`) or, cleaner, a `dropdb`/`createdb` pair before it —
+(`storagebaby-svc stop nextcloud`) or, cleaner, a `dropdb`/`createdb` pair before it —
 `pg_restore` does not empty what is already there. The file itself is either
 `/var/lib/storagebaby/fast/nextcloud/backups/nextcloud.dump` on the host or one
 restored out of a Kopia snapshot of the `backups` volume.
@@ -567,7 +567,7 @@ belong to `svc-nextcloud`'s podman, so they are reached through the role's helpe
 rather than root's own podman:
 
 ```sh
-make ps SERVICE=nextcloud
+storagebaby-svc ps nextcloud
 /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
 	php occ status
 /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
@@ -588,7 +588,7 @@ names the old host and documents fail to open with a healthy coolwsd. Both,
 together:
 
 ```sh
-make ps SERVICE=nextcloud # the pod; the two commands run in nextcloud-app
+storagebaby-svc ps nextcloud # the pod; the two commands run in nextcloud-app
 doas /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
 	php occ config:system:set trusted_domains 1 --value=nextcloud.home.klees.io
 doas /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
@@ -601,11 +601,11 @@ is how to see whether it took.
 **3. Open a document in Collabora, and watch the log while it opens.**
 
 ```sh
-make logs SERVICE=nextcloud                                  # the pod
+storagebaby-svc logs nextcloud                               # the pod
 journalctl _SYSTEMD_USER_UNIT=nextcloud-collabora.service -f # coolwsd itself
 ```
 
-`make logs SERVICE=nextcloud` resolves to the pod unit, which is the right place
+`storagebaby-svc logs nextcloud` resolves to the pod unit, which is the right place
 to see the pod come and go; the jail errors below are coolwsd's own, so the second
 line is the one to have open while the document loads. (`journalctl` has no
 `--user -M` form, which is why it addresses the unit by name and runs as root.)

@@ -15,7 +15,7 @@ platforms:
     hostname: ${MOLECULE_HOST:-test-a}
     # Overridable so a smaller runner can still run the scenario: CI passes 5120/2,
     # which fits a 7 GB GitHub-hosted runner. Molecule interpolates these from the
-    # environment, and the Makefile forwards both into the devtools container.
+    # environment, and mise.toml forwards both into the devtools container.
     memory_mib: ${MOLECULE_VM_MEMORY_MIB:-12288}
     vcpus: ${MOLECULE_VM_VCPUS:-4}
     disk: 20G

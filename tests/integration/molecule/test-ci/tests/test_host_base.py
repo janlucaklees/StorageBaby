@@ -1,8 +1,9 @@
 import pytest
-from test_service import HOSTS, load_spec, placed_tcp_entries
+from test_service import HOSTS, load_spec, placed, placed_tcp_entries, pod_unit, service_case
 
 CERTS = "/etc/storagebaby/traefik/certs"
 DEFAULT_CERT = "/etc/storagebaby/traefik/dynamic.d/00-default-certificate.yml"
+SVC_HELPER = "/usr/local/sbin/storagebaby-svc"
 
 
 def hostvars(host) -> dict:
@@ -33,9 +34,51 @@ def served_fingerprint(host, fqdn: str) -> str:
     return fingerprint(r.stdout)
 
 
-@pytest.mark.parametrize("pkg", ["podman", "passt", "sops", "age", "ansible", "git", "make"])
+@pytest.mark.parametrize("pkg", ["podman", "passt", "sops", "age", "ansible", "git"])
 def test_packages(host, pkg):
     assert host.package(pkg).is_installed
+
+
+def test_service_helper_installed(host):
+    """`storagebaby-svc`, the host's own service control.
+
+    A host carries no task runner: mise is a development tool, and a host is not a checkout
+    anybody runs tasks from -- so the five service commands the Makefile used to wrap are a
+    program the role installs. `make` left the package list with that Makefile; `aur_build.yml`
+    pulls in `base-devel` when it actually has something to compile, which is the only reason
+    a host ever needs one.
+    """
+    f = host.file(SVC_HELPER)
+    assert f.exists and f.mode == 0o755
+    assert f.user == "root" and f.group == "root"
+
+
+@pytest.mark.parametrize("argv", ["nonsense traefik", "ps", ""])
+def test_service_helper_rejects_a_bad_invocation(host, argv):
+    """An unknown action or a missing service name is refused, not guessed at."""
+    r = host.run(f"{SVC_HELPER} {argv}")
+    assert r.rc == 2, f"rc {r.rc}\n{r.stdout}{r.stderr}"
+    assert "usage:" in r.stderr
+
+
+@service_case
+def test_service_helper_resolves_the_right_unit(host, owner, spec_path):
+    """The pod unit for a pod service, `<name>.service` for a single-container one.
+
+    This resolution is the whole reason the helper is a program rather than two lines of
+    systemctl in the README: which of the two a service is cannot be read off its name, so
+    it has to be asked of the service user's manager. Getting it wrong is quiet -- `stop`
+    on a `<name>.service` that a pod service does not have reports no such unit and leaves
+    the containers running.
+    """
+    placed(host, owner)
+    name = load_spec(spec_path)["name"]
+    expected = pod_unit(spec_path) or f"{name}.service"
+    # `systemctl status` answers 0 for a running unit and 3 for an inactive one -- both are
+    # a resolved unit. A name no unit has is 4, which is the failure this asserts against.
+    r = host.run(f"{SVC_HELPER} ps {name}")
+    assert r.rc in (0, 3), f"{name}: rc {r.rc}\n{r.stdout}{r.stderr}"
+    assert expected in r.stdout, f"{name}: no {expected} in\n{r.stdout}"
 
 
 def test_unprivileged_ports(host):

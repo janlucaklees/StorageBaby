@@ -215,7 +215,7 @@ the service land on `master`, with the deploy timer stopped until step 9 says ot
 ### 1. Fill the placeholders
 
 `REPLACE_ME` is the literal value in git wherever the real one was unknown when the
-service was migrated. Each file is opened with `make sops FILE=<path>`.
+service was migrated. Each file is opened with `mise run sops <path>`.
 
 | File                                                        | Keys                                               | What goes in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ----------------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -263,7 +263,7 @@ secret sync reports changed and restarts the unit — but after any edit that di
 go through a deploy:
 
 ```bash
-make restart SERVICE=kopia
+storagebaby-svc restart kopia
 ```
 
 before expecting a sidecar to connect. A sidecar whose account does not exist yet
@@ -494,15 +494,15 @@ restarted, so that converge is also run by hand:
 
 ```sh
 doas systemctl stop storagebaby-deploy.timer
-cd /var/lib/storagebaby/repo # the make targets below are this repository's
+cd /var/lib/storagebaby/repo # for the ansible-playbook below
 for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
-	doas make stop SERVICE=$s
+	doas storagebaby-svc stop $s
 done
 doas fuser -vm /pool
 doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
 	--diff ansible/playbook.yml
 for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
-	doas make start SERVICE=$s
+	doas storagebaby-svc start $s
 done
 doas systemctl start storagebaby-deploy.timer
 ```
@@ -617,7 +617,7 @@ A mail has to arrive, subject `[SUCCESS] SnapRAID Sync Report`. If none does, th
 itself was still fine — `journalctl -t msmtp` is where a refused relay or a rejected
 sender says why, and `storage.mail` is what to correct. Check afterwards that
 `snapraid.content` exists on all three data disks and `snapraid.parity` on the parity
-disk, and that jellyfin came back up (`make ps SERVICE=jellyfin`).
+disk, and that jellyfin came back up (`storagebaby-svc ps jellyfin`).
 
 **Does a scan reach Paperless?** Send one page from the printer. It should appear as a
 document within a minute or two — the consumer polls rather than watching inotify,
@@ -636,7 +636,7 @@ echo | openssl s_client -connect 127.0.0.1:443 -servername kopia.home.klees.io 2
 ```
 
 The issuer has to be Let's Encrypt, not `CN=TRAEFIK DEFAULT CERT`. If it is the
-default, read `make logs SERVICE=traefik` for the Porkbun DNS challenge.
+default, read `storagebaby-svc logs traefik` for the Porkbun DNS challenge.
 
 **Did each sidecar connect, and did a snapshot land?** Per pod
 (`paperless`, `openarchiver`, `immich`, `nextcloud`):
@@ -680,7 +680,7 @@ Two more things are not steps but expectations about that first converge:
   skipped and every other service still converges. The failure is raised as the very
   last task of the play, naming the services and the containers — so the message is the
   list of what to look at, not the point where the converge stopped. Read those
-  services' journals from the top (`make logs SERVICE=<name>`): on the first converge
+  services' journals from the top (`storagebaby-svc logs <name>`): on the first converge
   this is what a `database_password` that does not match the migrated cluster looks
   like. The next converge runs the skipped hooks, once the container is healthy.
 
@@ -752,7 +752,7 @@ file in it has not been ingested yet.
 
 1. Stop the old stack (`cd <old dir> && docker compose down`, or the old Quadlet
    unit for stirling-pdf) and stop the new unit if it already ran:
-   `make stop SERVICE=<svc>`.
+   `storagebaby-svc stop <svc>`.
 2. Move each old tree onto its new path. Where both sides are on the same
    filesystem — pool to pool, or a Docker named volume under `/var/lib` to the
    `fast` root under `/var/lib` — `mv` is a rename, costs nothing and leaves no
@@ -823,7 +823,7 @@ command in this repo is invoked:
   for nextcloud `www-data`, uid 33. Reading the number off the running container once
   is always cheaper than guessing it.
 
-Then `make start SERVICE=<svc>` and check `make ps SERVICE=<svc>`. If the ownership
+Then `storagebaby-svc start <svc>` and check `storagebaby-svc ps <svc>`. If the ownership
 is wrong the container comes up and fails — nothing on the host will quietly fix it
 on the next converge.
 
@@ -886,11 +886,10 @@ Two service-specific notes:
   secrets can only be edited on the host.
 - Edit a secret: `mise run sops <path>` (decrypts into nvim, re-encrypts on save; the
   editor is fixed in `mise.toml` so a GUI editor returning early cannot lose the edit).
-  `make sops FILE=<path>` is the same with `$EDITOR`.
 - Add a host: put its public key into `.sops.yaml` (its own rule and `hosts/shared/**`),
-  then `make updatekeys`. Only the data key is re-wrapped; the values are untouched.
+  then `mise run updatekeys`. Only the data key is re-wrapped; the values are untouched.
 - Replace your own key: `age-keygen >> ~/.config/sops/age/keys.txt`, swap your public key
-  in `.sops.yaml`, `make updatekeys` (the old identity still in `keys.txt` opens the
+  in `.sops.yaml`, `mise run updatekeys` (the old identity still in `keys.txt` opens the
   files), then delete the old identity from `keys.txt`.
 - The test VM never sees these files or keys; `prepare.yml` generates throwaway secrets.
   The static tests only compare each file's recipient list against `.sops.yaml`.
@@ -922,11 +921,11 @@ converges `--limit <hostname>` and fails loudly if no such folder exists.
 Add the printed deploy key to the repository, then add the printed age recipient
 to `.sops.yaml` in two places: the host's own rule, and the `hosts/shared/**`
 rule — every host runs the shared services and has to decrypt their secrets.
-Then `make updatekeys` re-encrypts every tracked secret file for the new recipient
-(`make sops FILE=...` opens one for editing); commit and push. The host
+Then `mise run updatekeys` re-encrypts every tracked secret file for the new recipient
+(`mise run sops ...` opens one for editing); commit and push. The host
 pulls `stable` every 5 minutes.
 
-Until the host's age recipient is in `.sops.yaml` and `make updatekeys` has run
+Until the host's age recipient is in `.sops.yaml` and `mise run updatekeys` has run
 on the secret files it needs, its first converge fails at secret decryption.
 That is expected: the host cannot read anything it was not encrypted to. It
 fails in the `storage` role's mail task rather than in the first service, because
@@ -937,23 +936,28 @@ place, which is why that assert names the key before it names `.sops.yaml`.
 ## Operating a service
 
 Every service runs as its own lingering user `svc-<name>`, so its units belong
-to that user's systemd manager, not the system one. The Makefile wraps that —
-run these on the host as root (they are the only targets that do not go through
-the devtools image):
+to that user's systemd manager, not the system one. `storagebaby-svc` wraps that —
+run it on the host as root:
 
-    make ps SERVICE=traefik
-    make start SERVICE=traefik
-    make stop SERVICE=traefik
-    make restart SERVICE=traefik
-    make logs SERVICE=traefik
+    storagebaby-svc ps traefik
+    storagebaby-svc start traefik
+    storagebaby-svc stop traefik
+    storagebaby-svc restart traefik
+    storagebaby-svc logs traefik
 
-For a pod service (`paperless`, `openarchiver`, `immich`, `nextcloud`) they resolve
+It is a program on the host, `/usr/local/sbin/storagebaby-svc`, installed by the
+`host_base` role from `ansible/roles/host_base/files/storagebaby-svc` — deliberately not a
+task in this repository's runner. mise is a development tool and is not installed on a
+host, and a host is not a checkout anybody runs tasks from; the five commands below are
+the only ones meant to be run on a host at all.
+
+For a pod service (`paperless`, `openarchiver`, `immich`, `nextcloud`) the name resolves
 to `<name>-pod.service` and for a single-container one to `<name>.service`; which of
-the two a service is cannot be read off its name, so the target asks the service
+the two a service is cannot be read off its name, so the helper asks the service
 user's manager. Restarting the pod is the only restart its containers need — Quadlet
 binds them to it.
 
-They are thin wrappers, so the raw forms still work:
+It is a thin wrapper, so the raw forms still work:
 
     systemctl --user -M svc-traefik@ status traefik.service
     systemctl --user -M svc-traefik@ restart traefik.service
@@ -967,22 +971,32 @@ occasional restart. The fix belongs in git.
 
 ## Working on the repo
 
-    make devtools              # build the tooling image (once)
-    make format                # prettier over the whole repo
-    make fmt-check             # check only, no writes
-    make test-static           # contract, secrets, render checks
-    make test-integration      # Molecule scenario test-ci in a KVM VM, converging hosts/test-a
-    MOLECULE_HOST=test-ci make test-integration   # same scenario, the smaller CI placement
-    make molecule CMD=converge # a single Molecule step in that scenario
-    make molecule-login        # SSH into the running test VM
-    make molecule-exec CMD='podman ps -a'   # one command on it, no TTY needed
-    make test-clean            # destroy the VM and drop the Molecule cache
-    make sops FILE=hosts/shared/services/traefik/secrets.sops.yaml
-    make updatekeys            # re-encrypt every secret file for the recipients in .sops.yaml
-    make install-hooks         # once per clone: lefthook's formatting hook
+`mise.toml` is the single entry point — there is no Makefile. `mise tasks` lists
+these with their arguments:
 
-Docker and lefthook are all the workstation needs for everything but the
-integration tests and the secrets: `make sops` and `make updatekeys` run the
+    mise run devtools               # build the tooling image (once)
+    mise run format                 # prettier over the whole repo
+    mise run fmt-check              # check only, no writes
+    mise run test-static            # contract, secrets, render checks
+    mise run test-integration       # Molecule scenario test-ci in a KVM VM, converging hosts/test-a
+    MOLECULE_HOST=test-ci mise run test-integration   # same scenario, the smaller CI placement
+    mise run molecule converge      # a single Molecule step in that scenario
+    mise run molecule-login         # SSH into the running test VM
+    mise run molecule-exec 'podman ps -a'   # one command on it, no TTY needed
+    mise run test-clean             # destroy the VM and drop the Molecule cache
+    mise run sops hosts/shared/services/traefik/secrets.sops.yaml
+    mise run updatekeys             # re-encrypt every secret file for the recipients in .sops.yaml
+    mise run install-hooks          # once per clone: lefthook's formatting hook
+
+Arguments are positional rather than `NAME=value`, and a variable override is an
+environment assignment in front of the command — `MOLECULE_HOST=test-ci mise run
+test-integration`, not `make test-integration MOLECULE_HOST=test-ci`.
+`MOLECULE_HOST`, `MOLECULE_VM_MEMORY_MIB` and `MOLECULE_VM_VCPUS` can also be set
+in `.env` (see `.env.example`); their defaults live in the Molecule scenario.
+
+mise, Docker and lefthook are all the workstation needs for everything but the
+integration tests and the secrets: mise comes from the distribution (pacman:
+`mise`), and `mise run sops` and `mise run updatekeys` run the
 distribution's own `sops` and `age` (pacman: `sops age`), because the key that opens
 the files lives on this machine. Those drive real KVM machines through the host's libvirt, so
 they additionally need `qemu-base libvirt dnsmasq iptables-nft`, `libvirtd`

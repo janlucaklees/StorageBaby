@@ -54,36 +54,41 @@ A multi-container service is one Podman pod. The conventions a template must mee
 
 The generic `service` role in `ansible/roles/service/` turns all of that into a running service: system user `svc-<name>` with subids and linger, volume and bind directories, group memberships, `podman secret`s synced from sops (own and host sets), quadlets and timer units rendered, the host-gateway drop-ins, the generated backup sidecar, one Traefik route file per route, then restarts only what changed and runs the after-change hooks. Restarting a pod is the only restart its containers need, so they are dropped from the restart list when it is in it.
 
-Work on the repo through the Makefile — everything runs in the `devtools` image, nothing is installed on the workstation:
+Work on the repo through `mise.toml` — it is the single entry point, there is no Makefile, and everything but the two secret tasks runs in the `devtools` image, so nothing is installed on the workstation. mise itself comes from the distribution (pacman: `mise`).
 
 ```bash
-make devtools                               # build the tooling image (once)
-make test-static                            # contract, secrets, render checks
-make test-integration                       # Molecule scenario test-ci in a KVM VM (needs libvirt + KVM)
-MOLECULE_HOST=test-ci make test-integration # the same scenario on the smaller CI placement
-make molecule CMD=converge                  # a single Molecule step in that scenario
-make molecule-login                         # SSH into the running test VM
-make molecule-exec CMD='podman ps -a'       # one command on it, no TTY needed
-make sops FILE=hosts/shared/services/traefik/secrets.sops.yaml
+mise tasks                                      # every task, with its arguments
+mise run devtools                               # build the tooling image (once)
+mise run test-static                            # contract, secrets, render checks
+mise run test-integration                       # Molecule scenario test-ci in a KVM VM (needs libvirt + KVM)
+MOLECULE_HOST=test-ci mise run test-integration # the same scenario on the smaller CI placement
+mise run molecule converge                      # a single Molecule step in that scenario
+mise run molecule-login                         # SSH into the running test VM
+mise run molecule-exec 'podman ps -a'           # one command on it, no TTY needed
+mise run sops hosts/shared/services/traefik/secrets.sops.yaml
 ```
 
-`make molecule-exec` is how to look at a running test VM from a script or without a terminal — `molecule login` needs a real TTY. It runs the command through Ansible against the inventory Molecule already wrote, so there is no second source of truth for the VM's address and key.
+Arguments are positional, not `NAME=value`: a `make X=Y` override of a variable is `X=Y mise run ...` instead. A task that takes an argument documents it in its `description`, which `mise tasks` prints.
+
+`mise run molecule-exec` is how to look at a running test VM from a script or without a terminal — `molecule login` needs a real TTY. It runs the command through Ansible against the inventory Molecule already wrote, so there is no second source of truth for the VM's address and key. The command is one quoted argument, so unlike the Makefile target it replaced it may itself contain single quotes.
 
 On a host, service units belong to the service user's systemd manager (run as root):
 
 ```bash
-make ps SERVICE=traefik      # systemctl --user -M svc-traefik@ status traefik.service
-make restart SERVICE=traefik # also: start, stop
-make logs SERVICE=traefik    # journalctl _SYSTEMD_USER_UNIT=traefik.service -f
+storagebaby-svc ps traefik      # systemctl --user -M svc-traefik@ status traefik.service
+storagebaby-svc restart traefik # also: start, stop
+storagebaby-svc logs traefik    # journalctl _SYSTEMD_USER_UNIT=traefik.service -f
 ```
 
-They are pod-aware: `SERVICE=<name>` resolves to `<name>-pod.service` when the service
+It is pod-aware: the service name resolves to `<name>-pod.service` when the service
 user's manager knows that unit and to `<name>.service` otherwise, so
-`make logs SERVICE=nextcloud` follows the pod. A single container of a pod is addressed
+`storagebaby-svc logs nextcloud` follows the pod. A single container of a pod is addressed
 by its own unit name (`nextcloud-collabora.service`).
 
-These five targets are the only ones meant to run on a host rather than in the
-devtools image. The raw forms they wrap:
+`storagebaby-svc` is a program on the host, installed to `/usr/local/sbin` by the
+`host_base` role (`ansible/roles/host_base/files/storagebaby-svc`) — not a mise task. mise
+is a development tool and is not installed on a host, and a host is not a checkout anybody
+runs tasks from. The raw forms it wraps:
 
 ```bash
 systemctl --user -M svc-traefik@ status traefik.service
@@ -96,10 +101,10 @@ journalctl _SYSTEMD_USER_UNIT=traefik.service -f # journalctl has no --user -M f
 Prettier (+ `prettier-plugin-sh` for shell scripts) runs inside a small Docker image built from `devtools/` — nothing formatter-related is installed on the host besides `lefthook` itself.
 
 ```bash
-make devtools      # build/rebuild that image
-make format        # reformat the whole repo
-make fmt-check     # check only, no writes
-make install-hooks # one-time per clone: wires lefthook's pre-commit hook
+mise run devtools      # build/rebuild that image
+mise run format        # reformat the whole repo
+mise run fmt-check     # check only, no writes
+mise run install-hooks # one-time per clone: wires lefthook's pre-commit hook
 ```
 
 Once hooks are installed, staged files are auto-formatted and re-staged on every commit (`lefthook.yml`, `stage_fixed: true`). Config: `.prettierrc` / `.prettierignore` at repo root.
@@ -148,7 +153,7 @@ The orchestrator runs these steps in order, unchanged from the hand-stowed origi
 
 If any step or hook fails, the orchestrator runs the `on-failure` hook before aborting; that one is best-effort, so one broken recovery script does not stop the others. It also fires on SIGINT/SIGTERM (a systemd stop or a timeout mid-run), so a service stopped by `on-before-balance` is never left down.
 
-**The hook contract is still `plugins/<name>/<hook>.sh`, but nothing hand-writes one any more.** `storage.snapraid.maintenance.stop_services` is the list (storagebaby: `[jellyfin]`); the role creates one directory per name and drops the same three scripts in — `on-before-balance.sh` (stop), `on-after-scrub.sh` and `on-failure.sh` (start) — which read the service name off their own directory, so they are byte-identical on every host, and resolve `<name>-pod.service` against `<name>.service` the way `make stop SERVICE=` does. A directory for a name no longer in the list is removed. The old `samba` and `snapshot-*` plugins are gone with the tree that held them: Samba is retired and Kopia is the only backup path.
+**The hook contract is still `plugins/<name>/<hook>.sh`, but nothing hand-writes one any more.** `storage.snapraid.maintenance.stop_services` is the list (storagebaby: `[jellyfin]`); the role creates one directory per name and drops the same three scripts in — `on-before-balance.sh` (stop), `on-after-scrub.sh` and `on-failure.sh` (start) — which read the service name off their own directory, so they are byte-identical on every host, and resolve `<name>-pod.service` against `<name>.service` the way `storagebaby-svc` does. A directory for a name no longer in the list is removed. The old `samba` and `snapshot-*` plugins are gone with the tree that held them: Samba is retired and Kopia is the only backup path.
 
 **No parameter is rendered into a script.** They all come from `/opt/storagebaby/maintenance/maintenance.env`, which every script sources, so a threshold changes in git and a hand-run script behaves exactly like the timer's. To run maintenance manually, on the host:
 
@@ -180,7 +185,7 @@ Updates are Podman's: floating tag plus `AutoUpdate=registry` and the user's `po
 
 ## Deployment
 
-`bootstrap.sh` runs once as root on a fresh host: adds the Chaotic-AUR repository (same key, same package URLs and same marker lines as the `storage` role, held in agreement by `tests/static/test_bootstrap.py`) **before** its one `pacman -Syu`, so the upgrade already knows it and the first converge finds its own markers unchanged; installs git, ansible, sops, age, podman, passt, openssh and make — `make` because the host-side `make ps/start/stop/restart/logs` targets below need it — generates `/etc/storagebaby/age.key` and an ed25519 deploy key, prints both public keys, installs `storagebaby-deploy.service` and `.timer`. That `-Syu` is the only full upgrade this repository ever runs: **keeping a host's packages current is the operator's job**, and no role upgrades or reboots one. The operator adds the deploy key to the repository as a read-only deploy key, adds the age recipient to `.sops.yaml` twice — under that host's own rule and under the `hosts/shared/**` rule, because every host runs the shared services — runs `make updatekeys` (every tracked `*.sops.yaml` is re-encrypted for the recipients `.sops.yaml` names; `make sops FILE=...` edits one), and pushes.
+`bootstrap.sh` runs once as root on a fresh host: adds the Chaotic-AUR repository (same key, same package URLs and same marker lines as the `storage` role, held in agreement by `tests/static/test_bootstrap.py`) **before** its one `pacman -Syu`, so the upgrade already knows it and the first converge finds its own markers unchanged; installs git, ansible, sops, age, podman, passt, openssh and make — `make` because the host-side `make ps/start/stop/restart/logs` targets below need it — generates `/etc/storagebaby/age.key` and an ed25519 deploy key, prints both public keys, installs `storagebaby-deploy.service` and `.timer`. That `-Syu` is the only full upgrade this repository ever runs: **keeping a host's packages current is the operator's job**, and no role upgrades or reboots one. The operator adds the deploy key to the repository as a read-only deploy key, adds the age recipient to `.sops.yaml` twice — under that host's own rule and under the `hosts/shared/**` rule, because every host runs the shared services — runs `mise run updatekeys` (every tracked `*.sops.yaml` is re-encrypted for the recipients `.sops.yaml` names; `mise run sops ...` edits one), and pushes.
 
 From then on the host deploys itself: the timer runs `ansible-pull` as root every 5 minutes (2 min after boot), checking out the `stable` branch into `/var/lib/storagebaby/repo` and running `ansible/playbook.yml --limit <hostname>`, only when the checkout changed.
 

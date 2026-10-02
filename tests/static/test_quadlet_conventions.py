@@ -28,7 +28,7 @@ def test_container_declares_health_and_restart(path):
     # "running" while it serves errors, so every unit declares all four.
     # `ContainerName=` is the fourth because everything that addresses a container by
     # name breaks without it: the health checks the integration verifier runs, the
-    # after-change hooks' `podman exec`, `make logs/ps SERVICE=<name>`. Quadlet's own
+    # after-change hooks' `podman exec`, `storagebaby-svc logs/ps <name>`. Quadlet's own
     # default is `systemd-<stem>`, which none of them expects -- and the verifier
     # falls back to the stem, so a missing line only surfaced for a service placed on
     # a test host.

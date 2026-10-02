@@ -94,7 +94,7 @@ Include = /etc/pacman.d/chaotic-mirrorlist
 EOF
 fi
 
-pacman -Syu --noconfirm --needed git ansible sops age podman passt openssh make
+pacman -Syu --noconfirm --needed git ansible sops age podman passt openssh
 
 install -d -m 0700 /etc/storagebaby
 if [ ! -f /etc/storagebaby/age.key ]; then

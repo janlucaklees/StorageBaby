@@ -1,11 +1,150 @@
-# mise tasks. The Makefile is still the home of the container-driven targets (tests,
-# formatting, Molecule); this file starts the move to mise with the targets that run on
-# the workstation itself.
+# The single entry point for working on this repository, and what the Makefile used to be.
+# Every task below runs on the workstation: Docker, lefthook and mise are all one needs,
+# plus the distribution's own `sops` and `age` for the two secret tasks, because the key
+# that opens the files lives on this machine. mise itself comes from the distribution
+# (pacman: `mise`).
+#
+# Nothing here runs on a host. Service control there is `storagebaby-svc`, a program the
+# `host_base` role installs -- mise is a development tool, and a host is not a checkout
+# anybody runs tasks from. See README.md, "Operating a service".
+#
+# Arguments are positional and documented in each task's `description`:
+#
+#     mise run molecule converge
+#     mise run molecule-exec 'podman ps -a'
+#     mise run sops hosts/shared/services/traefik/secrets.sops.yaml
+#
+# mise appends a single-line `run`'s arguments to the command, so a task whose argument
+# belongs last simply ends where it goes. A task that needs it in the middle declares it
+# with `usage` and reads it as `$usage_<name>`, which also validates that it is there --
+# `$1` is not set for a task script, and a `${1:?}` guard would fire on every call.
 
+[env]
+# The Makefile's `-include .env`. Absent is fine. A value in it wins over the environment
+# mise was called with, which is the precedence a makefile assignment had over an
+# environment variable -- so a `.env` that pins MOLECULE_HOST pins it for good.
+_.file = ".env"
+
+DEVTOOLS_IMAGE = "storagebaby-devtools"
+MOLECULE_CACHE = "storagebaby-molecule-cache"
+AGE_DIR = "{{ env.HOME }}/.config/sops/age"
+LIBVIRT_SOCK = "/var/run/libvirt/libvirt-sock"
+LIBVIRT_IMAGES = "/var/lib/libvirt/images"
+
+# `{{ env.X | default(...) }}` and not a bare `"test-ci"`: a plain `[env]` value *overrides*
+# the environment mise was called with, so the bare form would silently ignore
+# `SCENARIO=... mise run ...`. Every overridable default here has to be written this way.
+SCENARIO = "{{ env.SCENARIO | default(value='test-ci') }}"
+
+# Molecule's per-scenario state inside the cache volume. It writes the inventory it
+# generates for the running VM to $MOLECULE_EPHEMERAL/inventory, which is what
+# molecule-exec below hands to Ansible.
+MOLECULE_EPHEMERAL = "/root/.cache/molecule/{{ env.SCENARIO | default(value='test-ci') }}"
+
+# MOLECULE_HOST, MOLECULE_VM_MEMORY_MIB and MOLECULE_VM_VCPUS are deliberately *not*
+# defaulted here. They pass through to the container by bare `-e NAME` below and are read
+# by `tests/integration/molecule/test-ci/molecule.yml`, which owns their defaults
+# (`test-a`, 12288 MiB, 4 vCPU) -- a second copy of those numbers here is the kind of
+# thing that drifts. Set them in the shell or in `.env`; see `.env.example`.
+#
+#     MOLECULE_HOST=test-ci mise run test-integration
+
+# Base: repo mount only. Everything that neither drives Docker nor reads the operator's
+# age key runs with these.
+DEVTOOLS_OPTS = "-v {{ config_root }}:/repo -w /repo -e HOME=/root"
+
+# Adds the host's libvirt socket, the libvirt images directory and the Molecule cache
+# volume. Test hosts are KVM VMs driven through libvirt, so the container itself stays
+# unprivileged; --network host is needed because libvirt's NAT firewall rejects new
+# connections from the Docker bridge to the VM network.
+DEVTOOLS_OPTS_VM = "--network host -v {{ config_root }}:/repo -w /repo -v {{ env.LIBVIRT_SOCK }}:{{ env.LIBVIRT_SOCK }} -v {{ env.LIBVIRT_IMAGES }}:{{ env.LIBVIRT_IMAGES }} -v {{ env.MOLECULE_CACHE }}:/root/.cache/molecule -e HOME=/root -e MOLECULE_EPHEMERAL_DIRECTORY={{ env.MOLECULE_EPHEMERAL }} -e MOLECULE_VM_MEMORY_MIB -e MOLECULE_VM_VCPUS -e MOLECULE_HOST"
+
+# Adds the operator's age key directory.
+DEVTOOLS_OPTS_AGE = "-v {{ config_root }}:/repo -w /repo -e HOME=/root -v {{ env.AGE_DIR }}:/root/.config/sops/age"
+
+[tasks.devtools]
+description = "Build the tooling image — once, and again after anything under devtools/ changes"
+run = "docker build -t $DEVTOOLS_IMAGE devtools"
+
+[tasks.devtools-shell]
+description = "An interactive shell in the devtools image, with the age key directory mounted"
+run = ['mkdir -p "$AGE_DIR"', "docker run --rm -it $DEVTOOLS_OPTS_AGE $DEVTOOLS_IMAGE bash"]
+
+[tasks.format]
+description = "Reformat the whole repo with prettier"
+run = "docker run --rm -t $DEVTOOLS_OPTS $DEVTOOLS_IMAGE prettier --ignore-unknown --write ."
+
+[tasks.fmt-check]
+description = "Check formatting only, no writes"
+run = "docker run --rm -t $DEVTOOLS_OPTS $DEVTOOLS_IMAGE prettier --ignore-unknown --check ."
+
+[tasks.test]
+description = "The static checks, then the integration scenario"
+# Not `depends`: mise runs dependencies in parallel, and these two want the devtools image
+# and the workstation's libvirt one at a time.
+run = ["mise run test-static", "mise run test-integration"]
+
+[tasks.test-static]
+description = "Contract, secrets and render checks"
+run = "docker run --rm -t $DEVTOOLS_OPTS $DEVTOOLS_IMAGE pytest tests/static -v"
+
+[tasks.test-integration]
+description = "The Molecule scenario end to end in a KVM VM (needs libvirt + KVM)"
+run = 'docker run --rm -t $DEVTOOLS_OPTS_VM $DEVTOOLS_IMAGE sh -c "cd tests/integration && molecule test -s $SCENARIO"'
+
+[tasks.molecule]
+description = "One Molecule step in that scenario: mise run molecule converge"
+# Declared rather than appended, because `-s $SCENARIO` follows it.
+usage = 'arg "<cmd>" help="A molecule subcommand, e.g. converge, verify, idempotence, destroy"'
+run = 'docker run --rm -t $DEVTOOLS_OPTS_VM $DEVTOOLS_IMAGE sh -c "cd tests/integration && molecule $usage_cmd -s $SCENARIO"'
+
+[tasks.molecule-login]
+description = "SSH into the running test VM"
+# `--rm -it` and not `--rm -t`: molecule login opens an interactive SSH session and needs
+# a stdin the other VM tasks do not give it.
+run = 'docker run --rm -it $DEVTOOLS_OPTS_VM $DEVTOOLS_IMAGE sh -c "cd tests/integration && molecule login -s $SCENARIO"'
+
+[tasks.molecule-exec]
+description = "One command on the running test VM, no TTY needed: mise run molecule-exec 'podman ps -a'"
+# The non-interactive counterpart: for scripts, CI and anything without a terminal.
+# `molecule login` needs a real TTY, so without this the only way to look at a VM from a
+# script is a throwaway testinfra test. Ansible's ad hoc mode against the inventory
+# Molecule already wrote is enough -- it carries the VM's address and key, so there is no
+# second source of truth for either.
+#
+# One command per call, quoted as one argument. `$usage_cmd` is quoted below rather than
+# pasted into a single-quoted shell word the way the Makefile did it, so a command
+# containing a single quote no longer needs `mise run molecule-login` instead.
+usage = 'arg "<cmd>" help="One shell command, quoted as a single argument"'
+run = 'docker run --rm -t $DEVTOOLS_OPTS_VM $DEVTOOLS_IMAGE ansible all -i $MOLECULE_EPHEMERAL/inventory -m shell -a "$usage_cmd"'
+
+[tasks.test-clean]
+description = "Destroy the test VM and drop the Molecule cache volume"
+run = [
+	'docker run --rm -t $DEVTOOLS_OPTS_VM $DEVTOOLS_IMAGE sh -c "cd tests/integration && molecule destroy -s $SCENARIO"',
+	"docker volume rm -f $MOLECULE_CACHE"
+]
+
+# Secrets are edited with the workstation's own sops and age (pacman: `sops age`), not in
+# the devtools image: the key that opens them lives on this machine and the tools come
+# from the distribution. sops finds the key in ~/.config/sops/age/keys.txt by default.
 [tasks.sops]
 description = "Edit an encrypted secret file: mise run sops hosts/<...>/secrets.sops.yaml"
 # sops decrypts into a temp file, runs the editor and re-encrypts when it exits. The
 # editor is fixed here so a GUI editor that returns immediately (Zed without --wait)
 # cannot make sops see "no change" before you typed anything.
 env = { EDITOR = "nvim" }
-run = 'sops "${1:?usage: mise run sops <file>}"'
+# The file is appended: see the note at the top of this file.
+run = "sops"
+
+[tasks.updatekeys]
+description = "Re-encrypt every tracked secret file for the recipients .sops.yaml names now"
+# After a host key was added or the workstation key replaced. Only the per-recipient data
+# key is rewrapped; the values are untouched. Needs a key that can still open the files
+# (the old one, during a key swap). sops rewrites its metadata even when nothing changed,
+# so after a no-op run discard the files.
+run = 'for f in $(git ls-files ":(glob)hosts/**/*.sops.yaml"); do sops updatekeys -y "$f" || exit 1; done'
+
+[tasks.install-hooks]
+description = "Once per clone: wire lefthook's pre-commit formatting hook"
+run = "lefthook install"
