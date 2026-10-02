@@ -17,7 +17,7 @@ config:
   server_username: jlk
   repository: s3
   s3_endpoint: s3.eu-central-003.backblazeb2.com
-  s3_bucket: storagebaby-kopia
+  s3_bucket: jlks-kopia-backups
 secrets:
   - server_password
   - repository_password
