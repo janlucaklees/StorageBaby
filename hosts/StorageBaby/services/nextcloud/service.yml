@@ -26,10 +26,9 @@ secrets:
     collabora_username,
     collabora_password,
     admin_user,
-    admin_password
+    admin_password,
+    kopia_password
   ]
-host_secrets:
-  kopia_password: kopia-clients.nextcloud
 # The old stack's `make upgrade` ran these five by hand after every image bump. The
 # image itself runs `occ upgrade` from its entrypoint; these are the steps that came
 # after it, and `when: unit_changed` (the default) is what makes them a deploy step --

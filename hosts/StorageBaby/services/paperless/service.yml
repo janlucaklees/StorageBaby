@@ -32,9 +32,7 @@ config:
   # The one FTP account. Its password is the `ftp_password` secret, and the two together
   # are the whole of what the scanner is configured with.
   ftp_user: scanner
-secrets: [database_password, secret_key, ftp_password]
-host_secrets:
-  kopia_password: kopia-clients.paperless
+secrets: [database_password, secret_key, ftp_password, kopia_password]
 hooks:
   after_change:
     - { container: paperless-app, command: 'touch /tmp/.hook-ran' }
