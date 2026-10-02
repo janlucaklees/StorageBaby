@@ -169,7 +169,7 @@ data already in the archive, `jwt_secret` signs the sessions, and
 value for any of them is data loss or a lockout.
 
 `kopia_password` is the client half of the shared value the Kopia server knows as
-`client_openarchiver`; `hosts/storagebaby/services/kopia/README.md` has the whole
+`client_openarchiver`; `hosts/StorageBaby/services/kopia/README.md` has the whole
 mechanism. Test hosts generate all seven fresh per run.
 
 Two of them have a **shape**, not just a length: `ENCRYPTION_KEY` and

@@ -461,8 +461,8 @@ git commit -m "Teach the service role routes, host secrets, hooks, timers and th
 - Modify: `ansible/inventory/hosts.yml` (add `test-ci`), `tests/integration/molecule/test-ci/molecule.yml` (`name: ${MOLECULE_HOST:-test-a}`, `hostname:` same, memory default 12288), `Makefile` (`-e MOLECULE_HOST`, export), `.github/workflows/ci.yml` (`MOLECULE_HOST: test-ci`)
 - Modify: `tests/integration/molecule/test-ci/prepare.yml` (generate `hosts/<host>/secrets/<set>.sops.yaml` for every set referenced by placed services, keys = union of referenced keys)
 - Modify: `tests/integration/molecule/test-ci/tests/test_service.py` (pod unit active; routes loop; timers enabled; backup sidecar connected: `podman exec <name>-backup kopia repository status` ok and a triggered `kopia snapshot create /data/<first path>` appears in `podman exec kopia kopia snapshot list --all` on the server; dump timer: start `<name>-dump.service` once and assert the dump file under the `backups` volume exists), `test_deploy.py` (hook case: Task 6 adds the nextcloud marker; here add the generic mechanism: a service with `hooks` whose container unit changed must have run them, verified by a file the hook writes into a volume; the paperless pod in Task 3 gets a harmless `touch /usr/src/paperless/data/.hook-ran` hook with `when: unit_changed` for exactly this)
-- Modify: `hosts/storagebaby/services/kopia/config/start.sh` (register `client_*` secrets as `<name>@<host>` users before the server starts), `service.yml` (`host_secrets` entries added per pod in Tasks 3–6), `quadlet/kopia.container.j2` (`Environment=KOPIA_CLIENT_HOSTS={{ hostname }}` and `Secret=client_<svc>` lines rendered from `service.host_secrets` keys starting with `client_`), `README.md`
-- Create: `hosts/storagebaby/secrets/kopia-clients.sops.yaml` with `REPLACE_ME` values for paperless, openarchiver, immich, nextcloud (encrypted under the storagebaby rule)
+- Modify: `hosts/StorageBaby/services/kopia/config/start.sh` (register `client_*` secrets as `<name>@<host>` users before the server starts), `service.yml` (`host_secrets` entries added per pod in Tasks 3–6), `quadlet/kopia.container.j2` (`Environment=KOPIA_CLIENT_HOSTS={{ hostname }}` and `Secret=client_<svc>` lines rendered from `service.host_secrets` keys starting with `client_`), `README.md`
+- Create: `hosts/StorageBaby/secrets/kopia-clients.sops.yaml` with `REPLACE_ME` values for paperless, openarchiver, immich, nextcloud (encrypted under the storagebaby rule)
 
 **Interfaces:**
 
@@ -478,7 +478,7 @@ Steps: write the new integration tests (they skip until a pod exists), the prepa
 
 **Files:**
 
-- Create: `hosts/storagebaby/services/paperless/{service.yml,secrets.sops.yaml,README.md}`, `quadlet/{paperless.pod.j2,paperless-app.container.j2,paperless-database.container.j2,paperless-broker.container.j2,paperless-gotenberg.container.j2,paperless-tika.container.j2,paperless-dump.timer.j2,paperless-dump.service.j2}`
+- Create: `hosts/StorageBaby/services/paperless/{service.yml,secrets.sops.yaml,README.md}`, `quadlet/{paperless.pod.j2,paperless-app.container.j2,paperless-database.container.j2,paperless-broker.container.j2,paperless-gotenberg.container.j2,paperless-tika.container.j2,paperless-dump.timer.j2,paperless-dump.service.j2}`
 - Symlinks on `test-a` and `test-ci`; kopia `service.yml` gains `client_paperless: kopia-clients.paperless`
 - Delete: `paperless/` (tracked)
 

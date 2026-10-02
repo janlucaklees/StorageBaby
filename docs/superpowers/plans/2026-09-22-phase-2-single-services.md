@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Bring kopia (server), jellyfin, stirling-pdf, yuzukam and paperless-upload onto the Phase 1 platform under `hosts/storagebaby/services/`, all five exercised on the `test-a` VM, with the harness generalised first and the old Docker directories removed.
+**Goal:** Bring kopia (server), jellyfin, stirling-pdf, yuzukam and paperless-upload onto the Phase 1 platform under `hosts/StorageBaby/services/`, all five exercised on the `test-a` VM, with the harness generalised first and the old Docker directories removed.
 
-**Architecture:** Unchanged from Phase 1: the generic `service` role turns a service folder into a rootless Podman user with rendered Quadlet units and a Traefik route. Phase 2 adds four optional contract keys (`binds`, `devices`, `groups`, `config`) plus per-host `service_config` overrides, orders `.build` units before their containers, and generalises the integration checks over placed services. Services are placed on `test-a` by directory symlinks into `hosts/storagebaby/services/`.
+**Architecture:** Unchanged from Phase 1: the generic `service` role turns a service folder into a rootless Podman user with rendered Quadlet units and a Traefik route. Phase 2 adds four optional contract keys (`binds`, `devices`, `groups`, `config`) plus per-host `service_config` overrides, orders `.build` units before their containers, and generalises the integration checks over placed services. Services are placed on `test-a` by directory symlinks into `hosts/StorageBaby/services/`.
 
 **Tech Stack:** As Phase 1: Ansible, Podman 6 Quadlet, sops+age, Molecule on libvirt VMs, pytest + testinfra, Traefik v3.
 
@@ -31,7 +31,7 @@
 **Files:**
 
 - Modify: `tests/static/test_contract.py`, `tests/static/test_ports.py`, `tests/static/test_hosts.py`
-- Modify: `hosts/storagebaby/host.yml`, `hosts/test-a/host.yml`
+- Modify: `hosts/StorageBaby/host.yml`, `hosts/test-a/host.yml`
 - Modify: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design.md` section 5 (link to the Phase 2 spec for the new keys)
 
 **Interfaces:**
@@ -142,7 +142,7 @@ Expected: `test_host_contract` fails for both hosts (missing `gpu`, `packages`, 
 
 - [ ] **Step 3: Extend both host.yml files**
 
-Append to `hosts/storagebaby/host.yml`:
+Append to `hosts/StorageBaby/host.yml`:
 
 ```yaml
 gpu: true
@@ -378,7 +378,7 @@ git commit -m "Support binds, devices, groups and per-host config in the service
 
 **Files:**
 
-- Create: `hosts/storagebaby/services/yuzukam/service.yml`, `quadlet/yuzukam.container.j2`, `README.md`
+- Create: `hosts/StorageBaby/services/yuzukam/service.yml`, `quadlet/yuzukam.container.j2`, `README.md`
 - Create symlink: `hosts/test-a/services/yuzukam -> ../../storagebaby/services/yuzukam`
 - Delete: `yuzukam/`
 
@@ -439,7 +439,7 @@ If the image lacks `wget`, use `curl -sf` or, failing both, `HealthCmd=sh -c 'ex
 - [ ] **Step 4: Commit**
 
 ```bash
-git add -A hosts/storagebaby/services/yuzukam hosts/test-a/services/yuzukam
+git add -A hosts/StorageBaby/services/yuzukam hosts/test-a/services/yuzukam
 git commit -m "Migrate yuzukam to the platform"
 ```
 
@@ -449,7 +449,7 @@ git commit -m "Migrate yuzukam to the platform"
 
 **Files:**
 
-- Create: `hosts/storagebaby/services/stirling-pdf/{service.yml,quadlet/stirling-pdf.container.j2,README.md}`, symlink on test-a
+- Create: `hosts/StorageBaby/services/stirling-pdf/{service.yml,quadlet/stirling-pdf.container.j2,README.md}`, symlink on test-a
 - Delete: `stirling-pdf/`
 
 `service.yml`:
@@ -503,7 +503,7 @@ README: carry over the old `stirling-pdf/README.md` content about what it does, 
 
 **Files:**
 
-- Create: `hosts/storagebaby/services/jellyfin/{service.yml,quadlet/jellyfin.container.j2,README.md}`, symlink on test-a
+- Create: `hosts/StorageBaby/services/jellyfin/{service.yml,quadlet/jellyfin.container.j2,README.md}`, symlink on test-a
 - Delete: `jellyfin/`
 
 `service.yml`:
@@ -573,7 +573,7 @@ Verification specific to this task: `test_binds.py` now collects jellyfin and mu
 
 **Files:**
 
-- Create: `hosts/storagebaby/services/paperless-upload/{service.yml,quadlet/paperless-upload.build.j2,quadlet/paperless-upload.container.j2,config/build/Containerfile,config/build/index.ts,secrets.sops.yaml,README.md}`, symlink on test-a
+- Create: `hosts/StorageBaby/services/paperless-upload/{service.yml,quadlet/paperless-upload.build.j2,quadlet/paperless-upload.container.j2,config/build/Containerfile,config/build/index.ts,secrets.sops.yaml,README.md}`, symlink on test-a
 - Delete: `paperless-upload/`
 
 `service.yml`:
@@ -631,7 +631,7 @@ RestartSec=5
 WantedBy=default.target
 ```
 
-Secrets: encrypt the real token from the main clone at `/home/jlk/Projects/StorageBaby/paperless-upload/paperless-token.secret` (never print it) into `secrets.sops.yaml` using `--filename-override hosts/storagebaby/services/paperless-upload/secrets.sops.yaml` so the storagebaby rule applies (operator key only). The test host gets a generated value from prepare.
+Secrets: encrypt the real token from the main clone at `/home/jlk/Projects/StorageBaby/paperless-upload/paperless-token.secret` (never print it) into `secrets.sops.yaml` using `--filename-override hosts/StorageBaby/services/paperless-upload/secrets.sops.yaml` so the storagebaby rule applies (operator key only). The test host gets a generated value from prepare.
 
 Verification: after converge, `paperless-upload-build.service` is active (or `exited` with success), the container is healthy, and a second converge changes nothing. Change one comment in `index.ts`, converge again: the build unit and then the container restart (the unit's `ActiveEnterTimestampMonotonic` moves), proving Task 2's propagation. Capture that in the report; add it as a test only if it fits `test_deploy.py`'s pattern without a second VM change. Then `git rm -r paperless-upload`; commit "Migrate paperless-upload to the platform as a host build".
 
@@ -641,7 +641,7 @@ Verification: after converge, `paperless-upload-build.service` is active (or `ex
 
 **Files:**
 
-- Create: `hosts/storagebaby/services/kopia/{service.yml,quadlet/kopia.container.j2,config/start.sh,secrets.sops.yaml,README.md}`, symlink on test-a
+- Create: `hosts/StorageBaby/services/kopia/{service.yml,quadlet/kopia.container.j2,config/start.sh,secrets.sops.yaml,README.md}`, symlink on test-a
 - Modify: `hosts/test-a/host.yml` (`service_config: { kopia: { repository: filesystem } }`)
 - Delete: `kopia/`
 

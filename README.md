@@ -220,24 +220,24 @@ service was migrated. Each file is opened with `mise run sops <path>`.
 | File                                                        | Keys                                               | What goes in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ----------------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hosts/shared/services/traefik/secrets.sops.yaml`           | `porkbun_api_key`, `porkbun_secret_api_key`        | **Nothing.** Real already — carried over from the old `.secret` files in Phase 1.                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `hosts/storagebaby/services/kopia/secrets.sops.yaml`        | `b2_key_id`, `b2_application_key`                  | `REPLACE_ME`. The Backblaze application key id and key; there was no credential in the old stack to carry over. Confirm `s3_endpoint` and `s3_bucket` in `service.yml` against the account while you are there — they were written from the old README, not read off it.                                                                                                                                                                                                                                       |
+| `hosts/StorageBaby/services/kopia/secrets.sops.yaml`        | `b2_key_id`, `b2_application_key`                  | `REPLACE_ME`. The Backblaze application key id and key; there was no credential in the old stack to carry over. Confirm `s3_endpoint` and `s3_bucket` in `service.yml` against the account while you are there — they were written from the old README, not read off it.                                                                                                                                                                                                                                       |
 |                                                             | `repository_password`                              | Generated for this migration. Correct **only if the bucket is fresh**; see step 2.                                                                                                                                                                                                                                                                                                                                                                                                                             |
 |                                                             | `server_password`                                  | Generated. The web UI login for `server_username: jlk`, free to choose and free to rotate.                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `hosts/storagebaby/services/paperless/secrets.sops.yaml`    | `database_password`, `secret_key`                  | Both `REPLACE_ME`, and both have to be the **existing** values: the password of the database being migrated in, and the live `paperless_secret_key.secret` (a new one logs every user out and invalidates every API token).                                                                                                                                                                                                                                                                                    |
+| `hosts/StorageBaby/services/paperless/secrets.sops.yaml`    | `database_password`, `secret_key`                  | Both `REPLACE_ME`, and both have to be the **existing** values: the password of the database being migrated in, and the live `paperless_secret_key.secret` (a new one logs every user out and invalidates every API token).                                                                                                                                                                                                                                                                                    |
 |                                                             | `ftp_password`                                     | `REPLACE_ME`, and a **free choice**: it is the password of the one FTP account the scanner delivers with, and the only other place it exists is the printer's own configuration. Set the printer to FTP, `<storagebaby's LAN address>`, port 21, user `scanner`, passive mode.                                                                                                                                                                                                                                 |
-| `hosts/storagebaby/services/openarchiver/secrets.sops.yaml` | all six                                            | **Nothing.** Real already — the old stack's six `openarchiver_*.secret` files. Do not regenerate any of them: `encryption_key` and `storage_encryption_key` decrypt the archive, `jwt_secret` signs the sessions.                                                                                                                                                                                                                                                                                              |
-| `hosts/storagebaby/services/immich/secrets.sops.yaml`       | `database_password`                                | `REPLACE_ME`. The password of the database being migrated in. `database_name` is `postgres`, not `immich`, for the same reason — that is what the old stack called it.                                                                                                                                                                                                                                                                                                                                         |
-| `hosts/storagebaby/services/nextcloud/secrets.sops.yaml`    | `database_password`                                | `REPLACE_ME`. The password of the database being migrated in.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `hosts/StorageBaby/services/openarchiver/secrets.sops.yaml` | all six                                            | **Nothing.** Real already — the old stack's six `openarchiver_*.secret` files. Do not regenerate any of them: `encryption_key` and `storage_encryption_key` decrypt the archive, `jwt_secret` signs the sessions.                                                                                                                                                                                                                                                                                              |
+| `hosts/StorageBaby/services/immich/secrets.sops.yaml`       | `database_password`                                | `REPLACE_ME`. The password of the database being migrated in. `database_name` is `postgres`, not `immich`, for the same reason — that is what the old stack called it.                                                                                                                                                                                                                                                                                                                                         |
+| `hosts/StorageBaby/services/nextcloud/secrets.sops.yaml`    | `database_password`                                | `REPLACE_ME`. The password of the database being migrated in.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 |                                                             | `collabora_username`, `collabora_password`         | `REPLACE_ME`. Collabora's admin console login, the old stack's `collabora_*.secret`.                                                                                                                                                                                                                                                                                                                                                                                                                           |
 |                                                             | `admin_user`, `admin_password`                     | `REPLACE_ME`. Read only when the image **installs**, which on storagebaby it must never do — read step 5 before this one.                                                                                                                                                                                                                                                                                                                                                                                      |
-| `hosts/storagebaby/secrets/mail.sops.yaml`                  | `smtp_password`                                    | `REPLACE_ME`. The password of the relay the nightly maintenance report is sent through. `storage.mail.smtp_host` and `smtp_user` in `hosts/storagebaby/host.yml` are `REPLACE_ME` beside it, and all three have to be filled: the deployed wrapper used whatever MTA the host happened to have, which this repository never captured. Until they are real, the maintenance run succeeds and its mail step fails — nightly, silently.                                                                           |
-| `hosts/storagebaby/secrets/kopia-clients.sops.yaml`         | `paperless`, `openarchiver`, `immich`, `nextcloud` | All `REPLACE_ME`, and all a **free choice**: each is one string that the Kopia server and that service's backup sidecar both read, so it only has to be the same on both sides. It would otherwise be the one placeholder that fails **silently** — both sides match, the account works, and the repository endpoint is public at `https://kopia.<domain>` — so `config/start.sh` refuses to register a client whose password is still `REPLACE_ME`, and the kopia server restart-loops until they are filled. |
+| `hosts/StorageBaby/secrets/mail.sops.yaml`                  | `smtp_password`                                    | `REPLACE_ME`. The password of the relay the nightly maintenance report is sent through. `storage.mail.smtp_host` and `smtp_user` in `hosts/StorageBaby/host.yml` are `REPLACE_ME` beside it, and all three have to be filled: the deployed wrapper used whatever MTA the host happened to have, which this repository never captured. Until they are real, the maintenance run succeeds and its mail step fails — nightly, silently.                                                                           |
+| `hosts/StorageBaby/secrets/kopia-clients.sops.yaml`         | `paperless`, `openarchiver`, `immich`, `nextcloud` | All `REPLACE_ME`, and all a **free choice**: each is one string that the Kopia server and that service's backup sidecar both read, so it only has to be the same on both sides. It would otherwise be the one placeholder that fails **silently** — both sides match, the account works, and the repository endpoint is public at `https://kopia.<domain>` — so `config/start.sh` refuses to register a client whose password is still `REPLACE_ME`, and the kopia server restart-loops until they are filled. |
 
 A postgres password is not a free choice because the image only applies
 `POSTGRES_PASSWORD` when it initialises an **empty** data directory. Moved-in data
 keeps the old stack's password, and a different value here means the application
 cannot log in to its own database. Each service's README spells its own values out:
-`hosts/storagebaby/services/<name>/README.md`, section "Secrets".
+`hosts/StorageBaby/services/<name>/README.md`, section "Secrets".
 
 ### 2. Check whether the B2 bucket already holds a repository
 
@@ -245,7 +245,7 @@ Kopia's `start.sh` connects if it can and creates if it cannot, so a fresh bucke
 needs nothing more. A bucket that already holds the old stack's repository needs that
 repository's **existing** password in `repository_password`, in place of the
 generated one — otherwise both the connect and the create fail and the unit
-restart-loops. `hosts/storagebaby/services/kopia/README.md` spells the two cases out.
+restart-loops. `hosts/StorageBaby/services/kopia/README.md` spells the two cases out.
 
 ### 3. Back up kopia's repository password outside this repository
 
@@ -257,7 +257,7 @@ encryption keys from it: no reset, no escrow, no way into the snapshots without 
 
 Client accounts are not clicked together: `config/start.sh` registers one
 `<service>@<host>` user per `client_*` secret, on every start, before the server
-binds. So a change to `hosts/storagebaby/secrets/kopia-clients.sops.yaml` reaches the
+binds. So a change to `hosts/StorageBaby/secrets/kopia-clients.sops.yaml` reaches the
 server only when `kopia.service` restarts. A converge does that by itself — the
 secret sync reports changed and restarts the unit — but after any edit that did not
 go through a deploy:
@@ -284,7 +284,7 @@ name, and nothing anywhere reports a problem.
 
 Filling the secrets first does not avoid it — it only changes the password of the
 instance that should not exist. Moving the data is the half that does.
-`hosts/storagebaby/services/nextcloud/README.md`, "The one ordering step that cannot
+`hosts/StorageBaby/services/nextcloud/README.md`, "The one ordering step that cannot
 be got wrong", has it in full.
 
 ### 6. Expect OpenArchiver's live stack to be broken already
@@ -295,12 +295,12 @@ while the frontend binds anyway and answers 500 from its own proxy. The pod look
 nothing works, and it is close to invisible from outside. The new unit sets it
 (`config.jwt_expires_in: 7d`), so this is fixed by the migration rather than caused
 by it — but check the live stack before migrating, because a "working" archive there
-may not have been one. `hosts/storagebaby/services/openarchiver/README.md` has the
+may not have been one. `hosts/StorageBaby/services/openarchiver/README.md` has the
 symptom and the log lines.
 
 ### 7. Check the storage declaration against the running host
 
-`hosts/storagebaby/host.yml`'s `storage` block was written from the deployed mount units
+`hosts/StorageBaby/host.yml`'s `storage` block was written from the deployed mount units
 and `/etc/snapraid.conf`, not from a measurement of the live machine — so read it back
 before it is converged. Four device paths, four mount points, one pool option string:
 
@@ -327,7 +327,7 @@ each branch unit's `Description=` differs), which is why step 9 exists.
 
 `ftp_password` is in the table above. Two more things, neither of them a secret:
 
-- **`tcp_bind_address`**, an _optional_ top-level key in `hosts/storagebaby/host.yml` —
+- **`tcp_bind_address`**, an _optional_ top-level key in `hosts/StorageBaby/host.yml` —
   absent today, and correctly so, because the playbook's own default applies. It defaults to
   the host's default-route address, and that is right on a host with one address. On a host
   with several — a second NIC, a VPN interface, a bridge — set it explicitly to the address
@@ -580,7 +580,7 @@ writer inherits whatever that writer gives it.
 
 The `o+rX` is what Jellyfin actually reads through: the linuxserver image drops
 its supplementary groups when s6 switches to its own user, so group access never
-reaches the app process — `hosts/storagebaby/services/jellyfin/README.md` has the
+reaches the app process — `hosts/StorageBaby/services/jellyfin/README.md` has the
 measurement. The `chgrp` still matters anyway: it is what the role itself would set
 on a tree it creates, and what anything else on the host that has to reach the
 library goes through.
@@ -710,7 +710,7 @@ own data root. `<stack>` is the compose project name, which is the directory the
 `docker-compose.yml` sat in — `paperless_data`, `nextcloud_database` and so on.
 `docker volume inspect <name> --format '{{.Mountpoint}}'` says it for certain.
 
-`storage_roots` in `hosts/storagebaby/host.yml` resolves the classes: `pool` →
+`storage_roots` in `hosts/StorageBaby/host.yml` resolves the classes: `pool` →
 `/pool/apps`, `fast` → `/var/lib/storagebaby/fast`. Which volume is which class is
 in each service's `service.yml`. Concretely:
 
@@ -852,7 +852,7 @@ be:
   service's `service.yml`. `--no-owner` because the roles in the dump are the old
   stack's. `pg_restore` does not empty what is already there, so restore into a
   cluster that has just been initialised, or drop and recreate the database first.
-  `hosts/storagebaby/services/nextcloud/README.md`, "Restoring one", has the same
+  `hosts/StorageBaby/services/nextcloud/README.md`, "Restoring one", has the same
   command for nextcloud with its own user and database name.
 
 Immich is the exception in one respect: it writes its own `pg_dump` output into

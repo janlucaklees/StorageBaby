@@ -78,7 +78,7 @@ Ansible runs as root because it manages users, packages, mounts and per-user uni
 
 `ansible/inventory/hosts.yml` lists host names only. The playbook loads `hosts/<inventory_hostname>/host.yml` and discovers placed services from `hosts/<inventory_hostname>/services/*/service.yml` plus `hosts/shared/services/*/service.yml`.
 
-`hosts/storagebaby/host.yml`:
+`hosts/StorageBaby/host.yml`:
 
 ```yaml
 domain: home.klees.io
@@ -190,7 +190,7 @@ Static (`tests/static/`, pytest):
 Integration (`tests/integration/`, Molecule with libvirt/QEMU VMs):
 
 - Test hosts are KVM virtual machines on the operator's libvirt (`qemu-base libvirt dnsmasq`, `default` NAT network), created from the official Arch cloud image with cloud-init and reached over SSH as root. Molecule's generic driver with custom create/destroy playbooks runs inside the devtools container, which talks to the host's libvirt socket and is never privileged. Privileged systemd containers are forbidden as test hosts: their udev coldplug tears down the operator's desktop session.
-- Test hosts are ordinary host folders `hosts/test-a/` etc., so the deploy path is production-identical; they place services by symlinking into `hosts/storagebaby/services/`. `hosts/shared/` applies as on any host. `test-ci` scenario places a light subset; `test-full` places everything.
+- Test hosts are ordinary host folders `hosts/test-a/` etc., so the deploy path is production-identical; they place services by symlinking into `hosts/StorageBaby/services/`. `hosts/shared/` applies as on any host. `test-ci` scenario places a light subset; `test-full` places everything.
 - A host may override a service's secrets with `hosts/<host>/secrets/<service>.sops.yaml`; tests use this for every placed service, encrypted to the test host's bootstrap key.
 - prepare: `bootstrap.sh --local` (no remote, no timer install); a throwaway age key; generated secret values for every declared secret, encrypted to that key into a test overlay.
 - converge: the site playbook, `acme: false`, storage roots inside the container.
