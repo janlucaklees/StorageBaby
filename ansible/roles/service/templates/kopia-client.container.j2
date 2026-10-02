@@ -13,7 +13,8 @@ Environment=TZ={{ tz }}
    `<host>:` -- "invalid target address, missing port after port-separator colon". #}
 Environment=KOPIA_SERVER_URL=https://kopia.{{ domain }}:443
 Environment=KOPIA_CLIENT_USERNAME={{ service.name }}
-Environment=KOPIA_CLIENT_HOSTNAME={{ hostname }}
+{# kopia accepts only lowercase `user@hostname`; the server registers the same lowercased name. #}
+Environment=KOPIA_CLIENT_HOSTNAME={{ hostname | lower }}
 Environment=KOPIA_PIN_SERVER_CERT={{ '0' if acme else '1' }}
 {# Quoted: systemd splits an unquoted Environment= on whitespace and keeps only the
    first word, which would reduce a multi-volume backup to its first volume. #}
