@@ -113,6 +113,16 @@ sops:
 	mkdir -p $(AGE_DIR)
 	$(subst --rm -t,--rm -it,$(DEVTOOLS_RUN_AGE)) sops $(FILE)
 
+# Re-encrypt every tracked secret file for the recipients .sops.yaml names now: after a
+# host key was added or the workstation key replaced. Only the per-recipient data key is
+# rewrapped; the values are untouched. The file list is taken on the host, not in the
+# container, because `git ls-files` cannot see a worktree's .git from inside it. Needs a
+# key in $(AGE_DIR) that can still open the files (the old one, during a key swap).
+SOPS_FILES := $(shell git ls-files ':(glob)hosts/**/*.sops.yaml')
+.PHONY: updatekeys
+updatekeys:
+	$(DEVTOOLS_RUN_AGE) sh -c 'for f in $(SOPS_FILES); do sops updatekeys -y "$$f" || exit 1; done'
+
 .PHONY: install-hooks
 install-hooks:
 	lefthook install

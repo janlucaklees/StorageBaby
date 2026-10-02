@@ -1,10 +1,10 @@
 keys:
-  - &jlk age1wwuwdvq20fq35aku93qgw9fj2uxeu7kxlgwg4zrrr9zx4s8vuuvsjn5t3g
+  - &jlk age16eygwufge3085w0xqqw2pmj0w7h93465s6u0e3sg7ueaxlpxhcnqyfmgd5
   - &storagebaby age142s7lfpzjdddrrxkee8gr057u9hqkanu220n4f6hvzmr9n66x4rs9w3zvs
   # Host keys are added here by the operator after bootstrap.sh prints them, then
   # referenced from two rules: the host's own, and the hosts/shared/** rule below,
-  # because every host runs the shared services. Afterwards run `sops updatekeys`
-  # on every affected *.sops.yaml (`make sops FILE=<file>` opens one for editing).
+  # because every host runs the shared services. Afterwards run `make updatekeys`
+  # (re-encrypts every tracked *.sops.yaml; `make sops FILE=<file>` edits one).
 creation_rules:
   - path_regex: ^hosts/storagebaby/.*\.sops\.yaml$
     key_groups:
