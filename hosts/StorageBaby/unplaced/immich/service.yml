@@ -14,9 +14,7 @@ config:
   # Empty on purpose, and measured: see "Trusted proxies" in the README. A host that
   # really does sit behind a second proxy sets it through `service_config.immich`.
   trusted_proxies: ''
-secrets: [database_password]
-host_secrets:
-  kopia_password: kopia-clients.immich
+secrets: [database_password, kopia_password]
 backup:
   # Immich takes its own database dumps into `upload/backups`, so there is no dump
   # timer here and no separate `backups` volume -- the README has the switch that

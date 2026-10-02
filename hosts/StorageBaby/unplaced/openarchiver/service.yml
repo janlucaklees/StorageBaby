@@ -23,10 +23,9 @@ secrets:
     meili_master_key,
     jwt_secret,
     encryption_key,
-    storage_encryption_key
+    storage_encryption_key,
+    kopia_password
   ]
-host_secrets:
-  kopia_password: kopia-clients.openarchiver
 backup:
   paths: [data, backups]
   schedule: '03:00'
