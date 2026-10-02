@@ -45,11 +45,10 @@ Secret=server_password
 Secret=repository_password
 Secret=b2_key_id
 Secret=b2_application_key
-{# One secret per backup client: the `client_<service>` half of the shared
-   `kopia-clients.<service>` value, whose other half is the client's own
-   `kopia_password`. Sorted so a reordered service.yml is not a unit change, and
-   filtered on the prefix because kopia may hold other host secrets one day. #}
-{% for key in service.host_secrets | default({}) | list | select('match', 'client_') | sort %}
+{# One secret per backup client: kopia's own copy of the password that service holds
+   as its `kopia_password`. Sorted so a reordered service.yml is not a unit change, and
+   filtered on the prefix because the list above holds kopia's own secrets too. #}
+{% for key in service.secrets | select('match', 'client_') | sort %}
 Secret={{ key }}
 {% endfor %}
 Volume={{ config_dir }}/start.sh:{{ config_dir }}/start.sh:ro
