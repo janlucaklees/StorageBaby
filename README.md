@@ -872,11 +872,39 @@ Two service-specific notes:
   connection is already made. To force a fresh connect from `service.yml` and the
   secrets instead, delete `repository.config` before starting.
 
+## Secrets, in one minute
+
+- Secrets live in git, encrypted: `hosts/<host>/services/<svc>/secrets.sops.yaml` and
+  `hosts/<host>/secrets/<set>.sops.yaml`. Deploy turns them into `podman secret`s.
+- `.sops.yaml` lists **public** keys only: yours (the workstation key, the anchor name
+  is free) and one per host. No private key is ever in the repo.
+- sops encrypts each value with a random data key (AES-256-GCM) and wraps that data key
+  once per listed public key. Any one listed private key opens the file.
+- The host decrypts with `/etc/storagebaby/age.key` (written by bootstrap). You decrypt
+  with `~/.config/sops/age/keys.txt`. Encrypting needs no private key; **editing and
+  adding a recipient do**, which is why your key exists. **Back it up**; without it,
+  secrets can only be edited on the host.
+- Edit a secret: `make sops FILE=<path>` (decrypts into your editor, re-encrypts on save).
+- Add a host: put its public key into `.sops.yaml` (its own rule and `hosts/shared/**`),
+  then `sops updatekeys <file>` for every file it must read. Only the data key is
+  re-wrapped; the values are untouched.
+- Replace your own key: `age-keygen >> ~/.config/sops/age/keys.txt`, swap your public key
+  in `.sops.yaml`, `sops updatekeys` every file, then delete the old identity from
+  `keys.txt`.
+- The test VM never sees these files or keys; `prepare.yml` generates throwaway secrets.
+  The static tests only compare each file's recipient list against `.sops.yaml`.
+
 ## New host
 
-Copy the script to the fresh Arch install and run it as root:
+Copy the script to the fresh Arch install and run it as root. Where it sits does not
+matter; it is a one-shot script that nothing reads afterwards:
 
     scp bootstrap.sh root@<host>:/root/ && ssh root@<host> 'bash /root/bootstrap.sh --repo git@github.com:janlucaklees/StorageBaby.git'
+
+`--branch <name>` makes the host track another branch than `stable` (a rollout branch
+while testing); `--local` installs everything but leaves the deploy timer disabled, so
+nothing converges until you run `systemctl start storagebaby-deploy.service` yourself.
+It runs `pacman -Syu` once; reboot afterwards if the kernel changed.
 
 `stable` is created by CI on the first green push to master, so push and let CI
 run before bootstrapping the first host.
