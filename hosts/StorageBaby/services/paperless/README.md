@@ -406,8 +406,11 @@ All four were ordinary Docker named volumes, not binds: rootful Docker keeps the
 under `/var/lib/docker/volumes/<name>/_data`, and `<name>` is the compose project
 (the directory the `docker-compose.yml` sat in) plus the volume's own name.
 
-The repo's root README has the recipe and the ownership rules. The paperless
-image runs the app as its own in-container user, so the moved trees have to be
-chowned under `podman unshare` as `svc-paperless`, not on the host directly — and
-the database directory has to end up owned by postgres's in-container uid (70 in
-`postgres:17-alpine`), which is a subuid of `svc-paperless` on the host.
+The repo's root README has the recipe and the ownership rules, and the chowns are
+the role's: `data`, `media` and `consume` declare `owner: 1000`, the uid
+paperless-ngx runs as, and `database` declares `owner: 70`, postgres's uid in
+`postgres:17-alpine`. Each is mapped onto the matching subuid of `svc-paperless`
+and adopted once, on the converge that finds a copied-in tree still owned by
+whatever Docker left it as. `backups` declares none — the dump timer's
+`podman exec` has no `-u`, so it writes as container root, which is the service
+user.

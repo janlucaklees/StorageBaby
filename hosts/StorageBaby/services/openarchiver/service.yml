@@ -5,9 +5,13 @@ name: openarchiver
 port: 3001
 domain: openarchiver
 volumes:
+  # No `owner` on `data` or `meilisearch`: the open-archiver entrypoint runs
+  # `pnpm install` before it exec's and drops no privileges, and meilisearch v1.38
+  # declares no USER -- both are container root, which is the service user.
   data: { class: pool }
-  database: { class: fast }
+  database: { class: fast, owner: 70 }
   meilisearch: { class: fast }
+  # No `owner`: written by the dump timer's `podman exec`, i.e. container root.
   backups: { class: fast }
 config:
   database_name: openarchiver

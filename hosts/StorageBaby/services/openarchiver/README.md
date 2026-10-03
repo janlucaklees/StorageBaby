@@ -306,8 +306,11 @@ this folder's five:
 | —                                          | `/var/lib/storagebaby/fast/openarchiver/backups` (new) |
 
 A docker named volume lives at `/var/lib/docker/volumes/openarchiver_<name>/_data`.
-The repo's root README has the recipe and the ownership rules: the moved trees
-have to be chowned under `podman unshare` as `svc-openarchiver`, not on the host
-directly, and the database directory has to end up owned by postgres's
-in-container uid (70 in `postgres:17-alpine`), which is a subuid of
-`svc-openarchiver` on the host.
+The repo's root README has the recipe and the ownership rules; the chown is the
+role's, not the operator's. `database` declares `owner: 70`, postgres's uid in
+`postgres:17-alpine`, and the role adopts that tree to the matching subuid of
+`svc-openarchiver`. `data`, `meilisearch` and `backups` declare none: the
+open-archiver entrypoint runs `pnpm install` and exec's without dropping
+privileges, meilisearch v1.38 declares no `USER`, and the dump timer's
+`podman exec` carries no `-u` — all three are container root, which is
+`svc-openarchiver` itself.

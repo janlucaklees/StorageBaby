@@ -17,6 +17,12 @@ in-container user on every start, so on the host those directories end up owned
 by a subuid of `svc-stirling-pdf` and mode 0755. That is fine and expected: the
 `service` role creates a volume directory and then never re-permissions it.
 
+Which is also why none of the four declares an `owner`. The image does not
+document the uid it switches to and the entrypoint picks it, so there is no number
+to declare; an `owner` guessed wrong would chown the whole tree to a uid nothing
+in the container is. Leaving the key out is the role's create-only behaviour, and
+it is what the image already expects.
+
 ## Health check
 
 `HealthCmd` probes `/api/v1/info/status`, not `/`. With login enabled `/` answers
