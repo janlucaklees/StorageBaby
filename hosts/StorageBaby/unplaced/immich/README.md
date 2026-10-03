@@ -179,10 +179,14 @@ is absent too — it is downloadable weights.
 | `/pool/apps/immich/volumes/kopia/{config,cache}` | — (the role's `backup-config` / `backup-cache`) |
 
 A docker named volume lives at `/var/lib/docker/volumes/immich_<name>/_data`. The
-repo's root README has the recipe and the ownership rules: the moved trees have to
-be chowned under `podman unshare` as `svc-immich`, not on the host directly, and
-the database directory has to end up owned by postgres's in-container uid, which
-is a subuid of `svc-immich` on the host.
+repo's root README has the recipe and the ownership rules; none of it is a chown
+the operator runs any more. `database` declares `owner: 999` — this image is
+`pgvector/pgvector`, which builds on `postgres:<major>-bookworm`, and Debian's
+postgres is uid 999, not the 70 the Alpine variants the other pods use have — so
+the role adopts that tree to the matching subuid of `svc-immich` on the converge
+that finds it. `upload` and `model-cache` declare no owner: immich-server and
+immich-machine-learning carry no `USER`, nor does their base image, so they write
+as container root, which is `svc-immich` itself.
 
 The kopia client's config is not migrated — the sidecar connects from scratch on
 first start and the repository keeps the old snapshots under the same

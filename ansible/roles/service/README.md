@@ -51,6 +51,67 @@ GroupAdd=keep-groups
 `| bool` on the two flags: they come from a `set_fact`, so a template must not rely on
 them being a real boolean rather than the string `"False"`, which would be truthy.
 
+## Volume and bind owners
+
+A `volumes` or a `binds` entry may name an `owner`, and it is **the uid the process has
+inside the container** — `1000` for paperless-ngx and for jellyfin's linuxserver image,
+`70` for `postgres:17-alpine`, `999` for a Debian-based postgres, `82` for `www-data` in
+any `php:*-fpm-alpine`. Never a host uid: the host uid is what the role works out.
+
+```yaml
+volumes:
+  data: { class: pool, owner: 1000 }
+  database: { class: fast, owner: 70 }
+binds:
+  media:
+    {
+      host: /pool/shared/media,
+      container: /media,
+      mode: rw,
+      group: media,
+      owner: 1000
+    }
+```
+
+The mapping is the rootless user namespace, nothing more:
+
+| container uid | host uid               |
+| ------------- | ---------------------- |
+| `0`           | `svc-<name>`'s own uid |
+| `n` (n ≥ 1)   | `subuid_start + n - 1` |
+
+`subuid_start` is the service user's first subordinate id — the second field of its
+`/etc/subuid` line, which the role allocates on the first converge. The gid is the same
+arithmetic over `/etc/subgid` with the same `n`; no image on the platform needs the two
+to differ. The off-by-one is the whole of the arithmetic: the range begins at container
+uid 1, because container uid 0 is the service user itself.
+
+**Adoption happens once.** A missing directory is created owned by the mapped uid and
+gid. An existing one is compared — **the directory's own owner, one `stat` of that
+inode, never a walk of the tree** — against the mapped uid, and only when the two differ
+does the role run one `chown -R` and report changed. The converge after that finds the
+owner already right and touches nothing. A volume is chowned `<uid>:<gid>`; a bind by
+uid alone, so the group that carries the service user's access into a tree it does not
+own survives. Neither changes a mode.
+
+It runs before the units are started, so a service whose data was copied in by hand
+comes up able to read it on the same converge.
+
+**Leaving `owner` out is not `owner: 0`.** With no `owner` the role never compares and
+never chowns: the directory is created owned by the service user and then left to
+whatever the image does with it, which is what stirling-pdf relies on — it chowns its
+mounts to a subuid of its own accord and documents no uid to declare, and re-asserting
+svc-ownership nightly would take the running service's access away. `owner: 0` is the explicit statement that the
+service user owns the tree, and **is** adopted.
+
+**The failure mode is a wrong number.** An `owner` that is not what the image runs as
+chowns the whole tree, once, to a uid nothing in the container is — and the role will
+not chown it back, because the next converge finds the directory matching what the spec
+says; the fix is to correct the spec and converge again. So the uid is read off the
+image (`podman exec <container> id -u` on a running one, or its `USER` / `adduser` line)
+rather than recalled, and a service whose uid is not established declares no `owner` at
+all.
+
 ## Routes
 
 A service declares either `routes: [{domain, port}, ...]` or the one-route shorthand
@@ -518,21 +579,25 @@ really `active`.
 
 ## What the role does to the host
 
-Creates `svc-<name>` (lingering, subuid/subgid allocated), any missing volume directory (0750,
-owned by the service user), every group named by `groups` or by a bind (system groups) with
-`svc-<name>` a member, and any missing bind directory (2775, root:<group>).
+Creates `svc-<name>` (lingering, subuid/subgid allocated), any missing volume directory
+(0750, owned by the uid the spec's `owner` maps to, or by the service user when it names
+none), every group named by `groups` or by a bind (system groups) with `svc-<name>` a
+member, and any missing bind directory (2775, `<owner or root>:<group>`).
 
 The class roots themselves (`storage_roots`) are not this role's: `host_base` creates them
 root-owned and 0755, precisely so that a volume directory created here never silently
 becomes one, 0750 and owned by whichever service converged first.
 
-Both kinds of directory are created, never re-permissioned. An existing bind directory's
-permissions belong to the operator, not to the role. An existing volume directory belongs to
-the image: entrypoints routinely `chown`/`chmod` their data tree on every start — usually to a
-non-root uid inside the container, which on the host is a subuid of `svc-<name>`, not
-`svc-<name>` itself. Enforcing 0750 svc-owned on each converge would report changed forever
-_and_ take the running service's access away; with `HealthOnFailure=kill` that is a restart
-loop, run nightly by the deploy timer. So the role hands over a directory that starts out the
-service's own and then leaves it alone.
+Both kinds of directory are created and then never re-permissioned, with the single
+exception of a declared `owner`, which is adopted once (see "Volume and bind owners").
+An existing bind directory's permissions otherwise belong to the operator, not to the
+role. An existing volume directory belongs to the image: entrypoints routinely
+`chown`/`chmod` their data tree on every start — usually to a non-root uid inside the
+container, which on the host is a subuid of `svc-<name>`, not `svc-<name>` itself.
+Enforcing 0750 svc-owned on each converge would report changed forever _and_ take the
+running service's access away; with `HealthOnFailure=kill` that is a restart loop, run
+nightly by the deploy timer. So the role hands over a directory that starts out owned by
+whoever the spec says owns it and then leaves it alone. No mode is ever re-asserted,
+adoption included.
 A membership change stops and starts the user manager so the new groups take effect, which
 stops the service's containers; the unit tasks at the end of the same run start them again.

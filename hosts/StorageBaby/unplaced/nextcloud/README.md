@@ -551,12 +551,14 @@ nextcloud@test-a:/data/backups
 | `nextcloud_database`                    | `/var/lib/storagebaby/fast/nextcloud/database`                    |
 | —                                       | `/var/lib/storagebaby/fast/nextcloud/backups` (new, for the dump) |
 
-The repo's root README has the recipe and the ownership rules. The nextcloud
-image runs the app as its own in-container user (`www-data`, uid 33), so the
-moved trees have to be chowned under `podman unshare` as `svc-nextcloud`, not on
-the host directly — and the database directory has to end up owned by postgres's
-in-container uid (70 in `postgres:17-alpine`), which is a subuid of
-`svc-nextcloud` on the host.
+The repo's root README has the recipe and the ownership rules; the trees are not
+chowned by hand any more. The nextcloud image runs the app as its own
+in-container user — `www-data`, uid **82**, because `nextcloud:33-fpm-alpine`
+builds on `php:*-fpm-alpine` and 82 is Alpine's standard uid for www-data (the
+`33` in the tag is the Nextcloud version, not a uid) — so `html` declares
+`owner: 82` and `database` declares `owner: 70`, postgres's uid in
+`postgres:17-alpine`. The role maps each onto the matching subuid of
+`svc-nextcloud` and adopts the tree once.
 
 Three things to check after the first converge on storagebaby, because each of
 them is something an installation carries or a path only real use takes — not

@@ -81,17 +81,24 @@ Before the service's first deploy, copy the old volume's **contents** into
 major version matches; otherwise dump and restore (README → "Databases"). Redis, Valkey,
 Meilisearch and model caches are not copied.
 
-Then deploy, hand each tree to the uid the container runs as, restart:
+Then deploy. The ownership is the role's: a volume or bind whose `service.yml` declares
+`owner:` — the uid the image runs as **inside** the container — is chowned to the host
+uid that maps to, once, before the units start. So a tree copied in before the deploy
+comes up readable and the health wait does not fail.
+
+Nothing to run, but the arithmetic behind it is worth knowing, because a service that
+declares no `owner` is still yours to chown, and a wrong `owner` is a whole tree handed
+to the wrong uid once:
 
 ```sh
-base=$(awk -F: '$1=="svc-paperless"{print $2}' /etc/subuid)
-doas chown -R $((base + 69)):$((base + 69)) /var/lib/storagebaby/fast/paperless/database           # postgres uid 70
-doas chown -R $((base + 999)):$((base + 999)) /pool/apps/paperless/data /pool/apps/paperless/media # app uid 1000
-doas storagebaby-svc restart paperless
+podman exec paperless-app id -u                     # what the image runs as: 1000
+awk -F: '$1=="svc-paperless"{print $2}' /etc/subuid # base, e.g. 296611
+stat -c %u /pool/apps/paperless/data                # base + 1000 - 1 = 297610
 ```
 
-The first deploy of a service with copied data fails its health wait once, because of
-exactly this ownership; expected (README → "Migrating existing service data").
+Container uid 0 is the service user itself; container uid _n_ is `base + n - 1`. Add the
+`owner:` to `service.yml` and deploy; never chown by hand (README → "Migrating existing
+service data").
 
 ## 6. Backups
 

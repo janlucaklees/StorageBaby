@@ -2,14 +2,18 @@ name: paperless
 port: 8000
 domain: paperless
 volumes:
-  data: { class: pool }
-  media: { class: pool }
+  data: { class: pool, owner: 1000 }
+  media: { class: pool, owner: 1000 }
   # The scanner's inbox, and the only volume of this service that is meant to be empty:
   # the consumer deletes every file it has ingested, so nothing here outlives an import.
   # `fast` for that reason -- it is a spool, not an archive -- and it is deliberately
   # absent from `backup.paths` below.
-  consume: { class: fast }
-  database: { class: fast }
+  # 1000 twice over: paperless-ngx runs as it, and paperless-ftp creates its virtual
+  # user as uid/gid 1000 so an upload lands as the uid the consumer expects.
+  consume: { class: fast, owner: 1000 }
+  database: { class: fast, owner: 70 }
+  # No `owner`: the dump timer writes here through `podman exec` with no `-u`, which
+  # is container root, which is the service user -- what the role creates it as.
   backups: { class: fast }
 tcp_ports:
   # Traefik listens on 21 and forwards to the pod's 2121: the control connection. 21

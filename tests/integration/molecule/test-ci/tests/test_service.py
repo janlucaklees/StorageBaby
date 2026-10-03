@@ -217,6 +217,43 @@ def test_volume_dirs_belong_to_the_service(host, owner, spec_path):
 
 
 @service_case
+def test_declared_volume_owners_are_adopted(host, owner, spec_path):
+    """A volume with `owner` is owned by exactly the uid that maps to, not just by a subuid.
+
+    The test above accepts the service user's whole subordinate range, because a volume
+    with no `owner` is the image's to chown and the role has no business knowing which
+    uid it picks. A declared `owner` is the role's, and what this pins down is the
+    arithmetic in `host.yml`: container uid 0 is the service user, container uid n is
+    `first_subuid + n - 1`. An off-by-one there lands inside the range and sails through
+    the looser assertion.
+
+    What this sees is the result on a directory the role created, not an adoption. To
+    catch the `chown -R` the volume directory would have to already exist with the wrong
+    owner when the converge runs, and the scenario has no step between the role creating
+    one and this asserting on it -- there is nowhere to plant it. The real case is the
+    rollout's copied-in trees, verified on the host.
+    """
+    hostvars = placed(host, owner)
+    spec = load_spec(spec_path)
+    declared = {v: c["owner"] for v, c in (spec["volumes"] or {}).items() if "owner" in c}
+    if not declared:
+        pytest.skip("no volume declares an owner")
+    user = f"svc-{spec['name']}"
+    svc_uid = host.user(user).uid
+    first, count = subuid_range(host, user)
+    for volume, container_uid in declared.items():
+        path = volume_path(hostvars, spec, volume)
+        expected = svc_uid if container_uid == 0 else first + container_uid - 1
+        assert container_uid == 0 or expected < first + count, (
+            f"{path}: container uid {container_uid} falls outside {user}'s subuid range"
+        )
+        found = host.file(path).uid
+        assert found == expected, (
+            f"{path}: container uid {container_uid} maps to {expected} on this host, found {found}"
+        )
+
+
+@service_case
 def test_auto_update_timer_enabled(host, owner, spec_path):
     placed(host, owner)
     user = f"svc-{load_spec(spec_path)['name']}"
