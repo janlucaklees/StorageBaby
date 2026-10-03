@@ -1,6 +1,8 @@
 # The role is included once per placed service in the same play, so a register from
 # the previous service is still set when this one is read. Reset both change markers
-# up front, otherwise one service's changed secret restarts another service's units.
+# up front, otherwise one service's changed secret restarts another service's units --
+# and the two owner maps with them, or a service that declares no `owner` at all would
+# inherit the previous one's and chown its volumes to another service's subuids.
 - name: Reset per-service change markers
   ansible.builtin.set_fact:
     config_copy: { changed: false }
@@ -9,6 +11,8 @@
     _group_member: { changed: false }
     _set_values: {}
     _set_status: []
+    volume_owner: {}
+    bind_owner: {}
 
 - name: Service user
   ansible.builtin.user:
@@ -22,9 +26,10 @@
     database: passwd
     key: '{{ svc_user }}'
 
-- name: Record uid and unit dir
+- name: Record uid, gid and unit dir
   ansible.builtin.set_fact:
     svc_uid: '{{ getent_passwd[svc_user][1] }}'
+    svc_gid: '{{ getent_passwd[svc_user][2] }}'
     unit_dir: '/etc/containers/systemd/users/{{ getent_passwd[svc_user][1] }}'
 
 - name: Extra host groups exist
@@ -119,14 +124,87 @@
 - name: Images
   ansible.builtin.include_tasks: images.yml
 
+# `owner` in a `service.yml` is the uid the process has *inside* the container; what
+# the host sees is whatever the user namespace maps that to. Container uid 0 is the
+# service user itself, and container uid n (n >= 1) is `subuid_start + n - 1` -- the
+# range in /etc/subuid starts at container uid 1, which is the whole of the off-by-one.
+# The gid is the same arithmetic over /etc/subgid with the same n: no spec on the
+# platform needs the two to differ, and an image that chowns its data tree sets owner
+# and group alike.
+- name: Read the service user's subordinate id bases
+  # Quoted: `-F:` followed by a space is a mapping value to YAML, not to awk.
+  ansible.builtin.command: "awk -F: -v u={{ svc_user }} '$1 == u { print $2; exit }' {{ item }}"
+  loop: [/etc/subuid, /etc/subgid]
+  register: _subid_bases
+  # `check_mode: false` for the same reason as the probe further up: read-only, and
+  # the mapping below reads its registered result, which a skipped `command` has none of.
+  check_mode: false
+  changed_when: false
+
+- name: Map each declared volume owner onto a host uid and gid
+  ansible.builtin.set_fact:
+    volume_owner: >-
+      {{ volume_owner | combine({ item.key: {
+           'uid': (svc_uid | int if item.value.owner | int == 0
+                   else _subuid | int + item.value.owner | int - 1),
+           'gid': (svc_gid | int if item.value.owner | int == 0
+                   else _subgid | int + item.value.owner | int - 1) } }) }}
+  loop: '{{ service.volumes | default({}) | dict2items }}'
+  loop_control:
+    label: '{{ item.key }}'
+  when: item.value.owner is defined
+  vars:
+    _subuid: '{{ _subid_bases.results[0].stdout | trim }}'
+    _subgid: '{{ _subid_bases.results[1].stdout | trim }}'
+
+# The uid alone: a bind's group is the operator's half of the arrangement and the only
+# thing that carries the service user's access into a tree it does not own, so the
+# adoption below must not touch it.
+- name: Map each declared bind owner onto a host uid
+  ansible.builtin.set_fact:
+    bind_owner: >-
+      {{ bind_owner | combine({ item.key: {
+           'uid': (svc_uid | int if item.value.owner | int == 0
+                   else _subuid | int + item.value.owner | int - 1) } }) }}
+  loop: '{{ service.binds | default({}) | dict2items }}'
+  loop_control:
+    label: '{{ item.key }}'
+  when: item.value.owner is defined
+  vars:
+    _subuid: '{{ _subid_bases.results[0].stdout | trim }}'
+
+# A base of 0 maps container uid n onto host uid n - 1, which is a real system user,
+# and the chowns below would hand it a whole data tree. Every service user has a range
+# by here -- the allocation above is unconditional -- so this only fires on a host
+# whose /etc/subuid or /etc/subgid was edited by hand.
+- name: The service user has a subordinate id range to map those owners into
+  ansible.builtin.assert:
+    that:
+      - _subid_bases.results[0].stdout | trim | int > 0
+      - _subid_bases.results[1].stdout | trim | int > 0
+    fail_msg: >-
+      {{ svc_user }} has no /etc/subuid or /etc/subgid range, so the owners
+      {{ service.name }} declares cannot be mapped onto this host.
+  when: volume_owner | length > 0 or bind_owner | length > 0
+
 # Create-only, exactly like the bind directories below: the role hands a service a
-# volume directory that starts out its own (0750, svc-owned) and then never touches
-# its ownership or mode again. An image owns its data tree after first start --
+# volume directory that starts out owned by whoever the spec says owns it -- the
+# service user itself when it declares no `owner` -- and then never touches its
+# ownership or mode again. An image owns its data tree after first start --
 # stirling-pdf, postgres, immich and paperless all chown and chmod their mounts from
 # their entrypoints, usually to a non-root uid inside the container, which surfaces on
 # the host as a subuid of the service user. Re-permissioning that on every converge
 # would not just report changed forever: it takes the running service's access away,
 # and with HealthOnFailure=kill that is a restart loop, nightly, from the deploy timer.
+#
+# The adoption below is the one exception, and it is why `owner` is declared rather
+# than discovered. A volume whose spec names an owner is compared against it once per
+# converge -- the directory's own inode, one stat, never the tree -- and chowned
+# recursively only when the two differ. So the step fires on the converge that finds a
+# tree the operator has just copied in, and on no converge after it. A volume with no
+# `owner` is never compared and never chowned: that is the create-only behaviour
+# above, unchanged. `owner: 0` is the explicit form of "the service user owns this" and
+# *is* adopted; leaving the key out is "whoever owns it now may keep it".
 - name: Check which volume directories exist
   ansible.builtin.stat:
     path: '{{ item.value }}'
@@ -139,18 +217,59 @@
   ansible.builtin.file:
     path: '{{ item.item.value }}'
     state: directory
-    owner: '{{ svc_user }}'
-    group: '{{ svc_user }}'
+    owner: '{{ (volume_owner[item.item.key] | default({})).uid | default(svc_user) }}'
+    group: '{{ (volume_owner[item.item.key] | default({})).gid | default(svc_user) }}'
     mode: '0750'
   loop: '{{ _volume_stat.results }}'
   loop_control:
     label: '{{ item.item.key }} -> {{ item.item.value }}'
   when: not item.stat.exists
 
+# One `chown -R` and not `file:` with `recurse: yes`: an adopted tree is a migrated
+# one, so it is as large as the service's data gets, and the file module would stat and
+# set every inode of it from Python. The task writes, so it is left to skip itself
+# under `--check` -- the debug below is what a pre-flight prints instead, and the stat
+# that decides both ran either way. Registered, and deliberately without
+# `failed_when: false`: a chown that stops half way leaves a half-adopted tree, which
+# is the one outcome that has to stop the converge rather than be reported at the end.
+- name: Adopt a volume directory whose owner is not the one the service declares
+  ansible.builtin.command: chown -R {{ _own.uid }}:{{ _own.gid }} {{ item.item.value }}
+  vars:
+    _own: '{{ volume_owner[item.item.key] | default({}) }}'
+  loop: '{{ _volume_stat.results }}'
+  loop_control:
+    label: '{{ item.item.key }} -> {{ item.item.value }}'
+  register: _volume_adopt
+  changed_when: true
+  when:
+    - item.stat.exists
+    - _own.uid is defined
+    - item.stat.uid | int != _own.uid | int
+
+- name: What adopting that volume directory would chown
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item.value }} is owned by uid {{ item.stat.uid }}; container uid
+      {{ service.volumes[item.item.key].owner }} is {{ _own.uid }}:{{ _own.gid }} on
+      this host, so one recursive chown would adopt the tree.
+  vars:
+    _own: '{{ volume_owner[item.item.key] | default({}) }}'
+  loop: '{{ _volume_stat.results }}'
+  loop_control:
+    label: '{{ item.item.key }}'
+  when:
+    - ansible_check_mode
+    - item.stat.exists
+    - _own.uid is defined
+    - item.stat.uid | int != _own.uid | int
+
 # Bind paths are host trees the service uses but does not own, so an existing one is
-# never re-permissioned: the operator decides who may read it, by hand, once (the root
-# README's media step). The role only guarantees the group exists, that the service user
-# is in it, and that a missing path starts out setgid to that group.
+# never re-permissioned unless the bind declares an `owner`: the operator decides who
+# may read it, by hand, once (the root README's media step). The role only guarantees
+# the group exists, that the service user is in it, and that a missing path starts out
+# setgid to that group. An adopted bind is chowned by uid alone -- `chown -R <uid>`,
+# no `:<gid>` -- because that group is what carries the service user's access through
+# and the role must not take it off a tree it was handed.
 - name: Check which bind directories exist
   ansible.builtin.stat:
     path: '{{ item.value.host }}'
@@ -163,13 +282,44 @@
   ansible.builtin.file:
     path: '{{ item.item.value.host }}'
     state: directory
-    owner: root
+    owner: '{{ (bind_owner[item.item.key] | default({})).uid | default("root") }}'
     group: '{{ item.item.value.group }}'
     mode: '2775'
   loop: '{{ _bind_stat.results }}'
   loop_control:
     label: '{{ item.item.key }}'
   when: not item.stat.exists
+
+- name: Adopt a bind directory whose owner is not the one the service declares
+  ansible.builtin.command: chown -R {{ _own.uid }} {{ item.item.value.host }}
+  vars:
+    _own: '{{ bind_owner[item.item.key] | default({}) }}'
+  loop: '{{ _bind_stat.results }}'
+  loop_control:
+    label: '{{ item.item.key }} -> {{ item.item.value.host }}'
+  register: _bind_adopt
+  changed_when: true
+  when:
+    - item.stat.exists
+    - _own.uid is defined
+    - item.stat.uid | int != _own.uid | int
+
+- name: What adopting that bind directory would chown
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item.value.host }} is owned by uid {{ item.stat.uid }}; container uid
+      {{ service.binds[item.item.key].owner }} is uid {{ _own.uid }} on this host, so
+      one recursive chown would adopt the tree, group untouched.
+  vars:
+    _own: '{{ bind_owner[item.item.key] | default({}) }}'
+  loop: '{{ _bind_stat.results }}'
+  loop_control:
+    label: '{{ item.item.key }}'
+  when:
+    - ansible_check_mode
+    - item.stat.exists
+    - _own.uid is defined
+    - item.stat.uid | int != _own.uid | int
 
 # root-owned, not svc_user-owned: config is git-driven and deployed by root, the
 # service only reads it. It also has to be, for traefik: host_base owns the very

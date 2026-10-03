@@ -689,10 +689,13 @@ Two more things are not steps but expectations about that first converge:
 ## Migrating existing service data
 
 **Nothing in this repository moves the old stack's data.** The role creates a
-volume directory when it is missing, leaves an existing one alone, and never
-repairs ownership afterwards — it is create-only, by design, because images chown
-their own data tree and an enforced mode would fight them on every converge. So
-carrying the data over is the operator's job, done once, by hand, per service.
+volume directory when it is missing and leaves an existing one's contents alone —
+it is create-only, by design, because images chown their own data tree and an
+enforced mode would fight them on every converge. So carrying the data over is
+the operator's job, done once, by hand, per service. What the role _does_ do is
+the ownership: a volume or bind that declares an `owner` in its `service.yml` is
+adopted on the converge that finds it wrong, which is step 3 below and is no
+longer a chown the operator runs.
 **A service whose data is not moved simply starts empty** — new library, new
 settings — and moving it later means stopping the service and redoing the two
 steps below. For nextcloud, "starts empty" is worse than it sounds: see operator
@@ -767,44 +770,52 @@ file in it has not been ingested yet.
    Docker's data root on the system disk to the pool, which is a real copy:
    `rsync -aHAX --info=progress2 <old>/ <new>/` and remove the old volume
    afterwards.
-3. Fix the ownership for the rootless mapping. This is the step that is easy to
-   skip and impossible to skip, and the owner it has to be fixed _from_ differs per
-   service: jellyfin's old tree is owned by host **uid 1000**, because rootful
-   Docker ran the linuxserver image under `PUID=1000` — and under rootless Podman
-   that uid is the operator's login user, not the service. Kopia's old tree is
-   **root-owned**, because that image runs as root and Docker ran it rootful.
-   Neither is what the new mapping needs.
+3. Deploy. The ownership is not a step any more: every volume and bind whose uid
+   is established already declares `owner:` in its `service.yml`, and the role
+   adopts a tree whose owner does not match it with one recursive `chown` on the
+   converge that finds it — before the units start, so the service comes up able
+   to read what was just copied in. Nothing to compute and nothing to run.
 
-**Which chown depends on what uid the image runs as _inside_ the container**, because
-that is what the user namespace maps. Container uid 0 is the service user itself;
-container uid _n_ (n ≥ 1) is the host uid `base + n - 1`, where `base` is the first
-subordinate uid of the service user in `/etc/subuid`. So the recipe is one `chown` per
-tree, with the host uid computed once, and it needs the service user to exist, which
-the first deploy creates:
+The owner each tree has to end up with is not the one it arrives with, which is why
+the step existed at all: jellyfin's old tree is owned by host **uid 1000**, because
+rootful Docker ran the linuxserver image under `PUID=1000` — and under rootless Podman
+that uid is the operator's login user, not the service. Kopia's old tree is
+**root-owned**, because that image runs as root and Docker ran it rootful.
+
+**What the right owner is depends on the uid the image runs as _inside_ the
+container**, because that is what the user namespace maps, and that container uid is
+exactly what `owner:` declares. Container uid 0 is the service user itself; container
+uid _n_ (n ≥ 1) is the host uid `base + n - 1`, where `base` is the first subordinate
+uid of the service user in `/etc/subuid`. So to check what the role did, or to work out
+the number for a service that does not declare one yet:
 
 ```bash
-svc=svc-paperless # the service's user
-base=$(awk -F: -v u="$svc" '$1==u{print $2}' /etc/subuid)
-doas chown -R $((base + 69)):$((base + 69)) /var/lib/storagebaby/fast/paperless/database           # postgres is uid 70
-doas chown -R $((base + 999)):$((base + 999)) /pool/apps/paperless/data /pool/apps/paperless/media # the app is uid 1000
-doas storagebaby-svc restart paperless
+podman exec paperless-app id -u                     # what the image runs as: 1000
+awk -F: '$1=="svc-paperless"{print $2}' /etc/subuid # base, e.g. 296611
+stat -c %u /pool/apps/paperless/data                # base + 1000 - 1 = 297610
 ```
 
-The in-container uids, read off each image: postgres `70` (`postgres:17-alpine` and
-immich's vectorchord build alike); the paperless, immich and openarchiver apps and
-jellyfin's linuxserver image `1000`; nextcloud's `www-data` `33`; kopia and stirling-pdf
-run as root, so their trees belong to the service user itself
-(`doas chown -R svc-kopia:svc-kopia <tree>`). `podman unshare chown -R <uid>:<gid>`
-run as the service user says the same thing from inside the namespace.
+The image's own `USER` or `adduser` line says the same thing without a running
+container. The in-container uids on the platform, each read off its image: postgres
+`70` in `postgres:17-alpine`, `999` in any Debian-based postgres (immich's vectorchord
+build is one — it is `pgvector/pgvector`, which builds on `postgres:<n>-bookworm`);
+paperless-ngx and jellyfin's linuxserver image `1000`; `www-data` `82` in
+`php:*-fpm-alpine`, which is what nextcloud's fpm image is; kopia, stirling-pdf,
+immich, openarchiver and meilisearch all run as container root, so their trees belong
+to the service user itself and they declare no `owner` — the role leaves them to the
+image, which is what they already do with them.
 
 Jellyfin writes artwork and `.nfo` files next to the media, so its media bind is
-read-write and the whole tree belongs to its uid, with an ACL that keeps your own user
-in: `doas setfacl -R -m u:jlk:rwX -m d:u:jlk:rwX /pool/shared/media`.
+read-write and declares `owner: 1000` — the role chowns the tree by uid and leaves the
+`media` group that carries everyone else's access alone. The ACL that keeps your own
+user in is still yours to set, once:
+`doas setfacl -R -m u:jlk:rwX -m d:u:jlk:rwX /pool/shared/media`.
 
-Order on the real host, as done during the rollout: copy the data in, deploy, chown,
-restart. The first deploy of a service with copied data **fails its health wait once**,
-because the container cannot read the tree yet; the role reports the service and
-converges everything else, and the restart after the chown settles it.
+Order on the real host: copy the data in, then deploy. A tree whose `owner` is declared
+no longer costs the service a failed health wait — the adoption runs before the units
+are started. A tree the operator has to own by hand, because no `owner` is declared for
+it, still does: `podman unshare chown -R <uid>:<gid>` as the service user, then
+`doas storagebaby-svc restart <svc>`.
 
 ### Databases: the directory or a dump, not both
 

@@ -30,6 +30,11 @@ SPEC_KEYS = {
 }
 CLASSES = {"pool", "fast"}
 MODES = {"ro", "rw"}
+# What a `volumes` and a `binds` entry may carry. Same argument as SPEC_KEYS, and
+# sharper for `owner`: a misspelled `ownner:` would be accepted, ignored, and the
+# operator would be back to chowning the tree by hand wondering why the role did not.
+VOLUME_KEYS = {"class", "owner"}
+BIND_KEYS = {"host", "container", "mode", "group", "owner"}
 GROUP_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 # What a `routes:` entry may carry: the route itself, plus the two backend options a
 # single route can override for itself. Everything else about a route lives in the
@@ -56,6 +61,22 @@ def check_backend(p, opts: dict) -> None:
     assert not (skip and scheme != "https"), f"{p.name}: insecure_skip_verify needs scheme: https"
 
 
+def check_owner(p, what: str, cfg: dict) -> None:
+    """`owner`: the uid the declaring process has *inside* the container, so a bare uid.
+
+    The role maps it onto a host uid once and then chowns a whole tree to whatever it
+    says, so this is the cheapest place to catch the two mistakes that cost something:
+    the string `'1000'`, which `| int` would quietly turn into 1000 but which no other
+    spec value is written as, and a host subuid pasted in by mistake, which is always
+    far above the container uid range an image actually uses.
+    """
+    if "owner" not in cfg:
+        return
+    uid = cfg["owner"]
+    assert isinstance(uid, int) and not isinstance(uid, bool), f"{p.name}: {what} owner must be an int, not {uid!r}"
+    assert 0 <= uid <= 65535, f"{p.name}: {what} owner {uid} is outside 0..65535"
+
+
 @pytest.mark.parametrize("p", placements(), ids=lambda p: f"{p.host}/{p.name}")
 def test_service_contract(p):
     spec = p.spec
@@ -69,11 +90,15 @@ def test_service_contract(p):
         assert isinstance(spec["port"], int)
     for vol, cfg in spec["volumes"].items():
         assert cfg.get("class") in CLASSES, f"volume {vol} has no valid class"
+        assert set(cfg) <= VOLUME_KEYS, f"{p.name}: volume {vol} has unknown keys {set(cfg) - VOLUME_KEYS}"
+        check_owner(p, f"volume {vol}", cfg)
     for name, b in spec.get("binds", {}).items():
+        assert set(b) <= BIND_KEYS, f"{p.name}: bind {name} has unknown keys {set(b) - BIND_KEYS}"
         assert b["host"].startswith("/"), f"bind {name}: host path must be absolute"
         assert b["container"].startswith("/"), f"bind {name}: container path must be absolute"
         assert b.get("mode", "ro") in MODES, f"bind {name}: mode must be ro or rw"
         assert GROUP_RE.match(b["group"]), f"bind {name}: invalid group name"
+        check_owner(p, f"bind {name}", b)
     for dev in spec.get("devices", []):
         assert dev.startswith("/dev/"), f"device {dev} must be under /dev"
     for g in spec.get("groups", []):
