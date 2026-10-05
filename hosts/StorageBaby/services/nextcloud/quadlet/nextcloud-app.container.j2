@@ -22,6 +22,10 @@ Environment=NEXTCLOUD_TRUSTED_DOMAINS={{ routes[0].fqdn }}
    upgrade. #}
 Environment=OVERWRITEPROTOCOL=https
 Environment=OVERWRITEHOST={{ routes[0].fqdn }}
+{# Not a variable the image knows. It carries the Collabora route's public name into
+   the container so the `wopi_url` hook in service.yml can read it off its own
+   environment, the way the trusted_domains hook reads NEXTCLOUD_TRUSTED_DOMAINS. #}
+Environment=NEXTCLOUD_WOPI_URL=https://{{ (routes | selectattr('domain', 'equalto', 'collabora') | first).fqdn }}
 {# Rendered only when a host declares one. `trusted_proxies` is empty by design here --
    through pasta, Traefik's requests arrive from the host's own address, a different
    literal per host, and Nextcloud uses the value only to believe X-Forwarded-For. The

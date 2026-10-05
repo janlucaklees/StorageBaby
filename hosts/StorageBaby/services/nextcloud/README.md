@@ -496,9 +496,21 @@ hooks:
         user: www-data,
         command: 'php occ maintenance:repair --include-expensive'
       }
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:system:set trusted_domains 1 --value="$NEXTCLOUD_TRUSTED_DOMAINS"'
+      }
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:app:set richdocuments wopi_url --value="$NEXTCLOUD_WOPI_URL"'
+      }
 ```
 
-These are the old `nextcloud/Makefile`'s `upgrade` target, minus the parts the
+The first five are the old `nextcloud/Makefile`'s `upgrade` target, minus the parts the
 platform already does. `make upgrade` was: pull, recreate, `chown -R www-data`,
 `occ upgrade`, then these five, then start. The pull is
 `AutoUpdate=registry` or a tag bump in git; the recreate is the role restarting a
@@ -514,6 +526,20 @@ check before each one, and on this image that wait is real — see above.
 
 `maintenance:mode --off` first, because `occ upgrade` leaves the instance in
 maintenance mode and the four commands after it refuse to run while it is on.
+
+The last two are the host's domain, and they are what makes a domain change a
+`host.yml` edit and nothing else. Nextcloud keeps `trusted_domains` in
+`config.php` and richdocuments keeps `wopi_url` in the database, both written
+once and never read from the environment again — `NEXTCLOUD_TRUSTED_DOMAINS` is
+applied by the entrypoint on install and upgrade only. So the two hooks set them
+on every converge, `when: always`, and they take the values from the container's
+own environment rather than from this file: a hook is `sh -c '<command>'` inside
+the container, `podman exec` inherits the unit's `Environment=` lines, and the
+unit renders `NEXTCLOUD_TRUSTED_DOMAINS` and `NEXTCLOUD_WOPI_URL` from the host's
+routes. `NEXTCLOUD_WOPI_URL` is not a variable the image knows; it exists for this
+hook. Index 1 of `trusted_domains` is where the image's installer puts the domain
+it was given, index 0 is the installer's own entry. The nightly cost is two `occ`
+calls that write what is already there.
 
 ## Backups
 
@@ -612,26 +638,24 @@ storagebaby-svc ps nextcloud
 `occ status` must say `installed: true` and `maintenance: false` — the migrated
 instance, not a fresh one; see "The one ordering step that cannot be got wrong".
 
-**2. `trusted_domains`.** It comes from the migrated `config.php`, not from
-`NEXTCLOUD_TRUSTED_DOMAINS` — the entrypoint only applies that on install and
-upgrade — so if the domain changed it is one `occ config:system:set` by hand.
-
-richdocuments' `wopi_url` is the same story and is easy to forget beside it: it
-is an app setting written when Collabora was first configured and cached from
-then on (see "Collabora keeps its own TLS"), so after a domain change it still
-names the old host and documents fail to open with a healthy coolwsd. Both,
-together:
+**2. `trusted_domains` and `wopi_url` name this host.** Both come over in the
+migrated data with the old domain in them — `trusted_domains` in `config.php`,
+richdocuments' `wopi_url` in the database, written when Collabora was first
+configured — and `NEXTCLOUD_TRUSTED_DOMAINS` does not fix either, since the
+entrypoint applies it on install and upgrade only. The two `when: always` hooks
+("The after-change hooks") rewrite them on every converge, so after the first
+deploy both should already read this host's names:
 
 ```sh
-storagebaby-svc ps nextcloud # the pod; the two commands run in nextcloud-app
 doas /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
-	php occ config:system:set trusted_domains 1 --value=nextcloud.home.klees.io
+	php occ config:system:get trusted_domains
 doas /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
-	php occ config:app:set richdocuments wopi_url --value=https://collabora.home.klees.io
+	php occ config:app:get richdocuments wopi_url
 ```
 
-`occ config:app:get richdocuments wopi_url` says what it is now, and check 3 below
-is how to see whether it took.
+The old domain may still sit at index 0 of `trusted_domains`; it is harmless and
+`occ config:system:delete trusted_domains 0` removes it. A stale `wopi_url` shows
+as documents failing to open with a perfectly healthy coolwsd, which is check 3.
 
 **3. Open a document in Collabora, and watch the log while it opens.**
 
