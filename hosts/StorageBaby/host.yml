@@ -85,11 +85,18 @@ storage:
   # hosts/StorageBaby/secrets/mail.sops.yaml, key `smtp_password`.
   mail:
     to: email@janlucaklees.de
-    from: storagebaby@janlucaklees.de
-    smtp_host: REPLACE_ME
-    smtp_port: 587
-    smtp_user: REPLACE_ME
+    # The login, as the relay insists the sender be. 465 is implicit TLS on this relay
+    # (the old ~/.muttrc said `smtps://`), hence `starttls: false`.
+    from: storagebaby@klees.io
+    smtp_host: mail.klees.io
+    smtp_port: 465
+    starttls: false
+    smtp_user: storagebaby@klees.io
 volume_overrides: {}
+# The LAN address, explicitly: this host also has a VPN interface and Docker's leftover
+# bridges, and Traefik's TCP entrypoints must bind the one address the scanner reaches.
+# It is also what the FTP server advertises in its PASV reply. Give it a DHCP reservation.
+tcp_bind_address: 192.168.178.2
 deploy_timer: true
 gpu: true
 packages:
