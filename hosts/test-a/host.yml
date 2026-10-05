@@ -66,6 +66,10 @@ storage:
       - '*.tmp'
       - '*.log'
       - /cache/
+      # SQLite's write-ahead log and shared-memory files: rewritten constantly, worthless
+      # in parity, and the database file beside them is what a restore needs.
+      - '*.db-shm'
+      - '*.db-wal'
     maintenance:
       on_calendar: '02:00'
       balance_threshold: 5
