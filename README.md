@@ -802,8 +802,10 @@ build is one — it is `pgvector/pgvector`, which builds on `postgres:<n>-bookwo
 paperless-ngx and jellyfin's linuxserver image `1000`; `www-data` `82` in
 `php:*-fpm-alpine`, which is what nextcloud's fpm image is; kopia, stirling-pdf,
 immich, openarchiver and meilisearch all run as container root, so their trees belong
-to the service user itself and they declare no `owner` — the role leaves them to the
-image, which is what they already do with them.
+to the service user itself. Those declare no `owner` where the role creates the tree —
+it is the service user's from the start — and `owner: 0` where a root-owned tree is
+migrated in (immich's `upload`): 0 is the service user, and declaring it is what makes
+the role adopt the tree instead of leaving it to the image.
 
 Jellyfin writes artwork and `.nfo` files next to the media, so its media bind is
 read-write and declares `owner: 1000` — the role chowns the tree by uid and leaves the

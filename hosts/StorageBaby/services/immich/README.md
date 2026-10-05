@@ -184,9 +184,11 @@ the operator runs any more. `database` declares `owner: 999` — this image is
 `pgvector/pgvector`, which builds on `postgres:<major>-bookworm`, and Debian's
 postgres is uid 999, not the 70 the Alpine variants the other pods use have — so
 the role adopts that tree to the matching subuid of `svc-immich` on the converge
-that finds it. `upload` and `model-cache` declare no owner: immich-server and
+that finds it. `upload` and `model-cache` declare `owner: 0`: immich-server and
 immich-machine-learning carry no `USER`, nor does their base image, so they write
-as container root, which is `svc-immich` itself.
+as container root, which is `svc-immich` itself — and the rootful stack left
+`upload` root-owned on the host, which the role only adopts when an owner is
+declared, so 0 is spelled out rather than left as the default.
 
 The kopia client's config is not migrated — the sidecar connects from scratch on
 first start and the repository keeps the old snapshots under the same

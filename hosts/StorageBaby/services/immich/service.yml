@@ -2,15 +2,17 @@ name: immich
 port: 2283
 domain: immich
 volumes:
-  # No `owner` on either of the two the app writes: immich-server and
+  # `owner: 0` on both trees the app writes: immich-server and
   # immich-machine-learning declare no USER, and neither does their base image, so
-  # both run as container root -- which is the service user, what the role creates.
-  upload: { class: pool }
+  # both run as container root -- which is the service user. Declared rather than
+  # left out because `upload` is migrated in from the rootful stack, root-owned,
+  # and only a declared owner makes the role adopt it to `svc-immich`.
+  upload: { class: pool, owner: 0 }
   # 999 and not 70: this is `pgvector/pgvector`, which builds on
   # `postgres:<major>-bookworm`. Debian's postgres is uid 999; only the Alpine
   # variants the other three pods use are 70.
   database: { class: fast, owner: 999 }
-  model-cache: { class: fast }
+  model-cache: { class: fast, owner: 0 }
 config:
   # `postgres`, not `immich`: the migrated database is the one the old compose stack
   # created, and that one is called postgres.
