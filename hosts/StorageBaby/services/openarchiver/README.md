@@ -309,8 +309,10 @@ A docker named volume lives at `/var/lib/docker/volumes/openarchiver_<name>/_dat
 The repo's root README has the recipe and the ownership rules; the chown is the
 role's, not the operator's. `database` declares `owner: 70`, postgres's uid in
 `postgres:17-alpine`, and the role adopts that tree to the matching subuid of
-`svc-openarchiver`. `data`, `meilisearch` and `backups` declare none: the
-open-archiver entrypoint runs `pnpm install` and exec's without dropping
-privileges, meilisearch v1.38 declares no `USER`, and the dump timer's
-`podman exec` carries no `-u` — all three are container root, which is
-`svc-openarchiver` itself.
+`svc-openarchiver`. `data` declares `owner: 0`: the open-archiver entrypoint runs
+`pnpm install` and exec's without dropping privileges, so it is container root,
+which is `svc-openarchiver` itself — and the rootful stack left the tree
+root-owned on the host, which the role only adopts when an owner is declared.
+`meilisearch` and `backups` declare none: meilisearch v1.38 declares no `USER` and
+the dump timer's `podman exec` carries no `-u`, so both are container root as
+well, but both start empty and the role creates them as the service user.
