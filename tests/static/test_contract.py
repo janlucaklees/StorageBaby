@@ -160,7 +160,9 @@ def test_service_contract(p):
         assert [q.name for q in pods] == [f"{p.name}.pod.j2"], f"{p.name}: backup requires exactly {p.name}.pod.j2"
         unknown = set(spec["backup"]["paths"]) - set(spec["volumes"])
         assert not unknown, f"{p.name}: backup paths not in volumes: {unknown}"
-        assert "kopia_password" in spec.get("host_secrets", {}), f"{p.name}: backup requires host_secrets.kopia_password"
+        # Its own `secrets` since the shared kopia-clients set was dropped; `host_secrets` is still a valid home for it.
+        has_password = "kopia_password" in spec["secrets"] or "kopia_password" in spec.get("host_secrets", {})
+        assert has_password, f"{p.name}: backup requires a kopia_password secret"
     # A timer without its service never fires; a service without its timer never runs.
     timers = {q.name[:-9] for q in (p.dir / "quadlet").glob("*.timer.j2")}
     services = {q.name[:-11] for q in (p.dir / "quadlet").glob("*.service.j2")}
