@@ -228,8 +228,9 @@ storage:
     smtp_host: smtp.example.org
     smtp_port: 587
     smtp_user: storagebaby@example.org
-    # tls: true   (default)
-    # auth: on    (default)
+    # tls: true       (default)
+    # starttls: true  (default; false for an smtps:// relay on 465)
+    # auth: on        (default)
 ```
 
 - **`/etc/snapraid.conf`** is rendered from `disks`, `parity` and `snapraid`: one `content`
@@ -285,7 +286,9 @@ storage:
   `trap … INT TERM`, which is what brings a stopped service back up.)
 - **`/etc/msmtprc`** is 0600 root and carries the relay from `mail` plus `smtp_password` out
   of `hosts/<host>/secrets/mail.sops.yaml`, decrypted on the host under `no_log`. `tls`
-  defaults to on and `auth` to `on`; a test host points at a loopback sink and says
+  defaults to on and `auth` to `on`; `starttls` defaults to on as well, and a relay that
+  only speaks implicit TLS (`smtps://` on 465, storagebaby's) sets it to false beside
+  `smtp_port: 465`. A test host points at a loopback sink and says
   `tls: false, auth: plain`, because with `auth on` and no TLS msmtp considers only SCRAM and
   would never authenticate. The wrapper composes with `mutt` and names msmtp explicitly as
   its `sendmail` — the host runs no MTA, so mutt's default path does not exist.
