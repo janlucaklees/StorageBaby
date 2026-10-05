@@ -719,27 +719,27 @@ own data root. `<stack>` is the compose project name, which is the directory the
 `/pool/apps`, `fast` → `/var/lib/storagebaby/fast`. Which volume is which class is
 in each service's `service.yml`. Concretely:
 
-| Service      | old                                                                | new                                                                                                            |
-| ------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| jellyfin     | `/pool/apps/jellyfin/volumes/jellyfin_config`                      | kept in place: `volume_overrides: { jellyfin/config: <old path> }` in `host.yml` (11 GB of subtitles; no copy) |
-| kopia        | `/pool/apps/kopia/volumes/config`                                  | `/pool/apps/kopia/config`                                                                                      |
-| kopia        | `/pool/apps/kopia/volumes/cache`                                   | `/var/lib/storagebaby/fast/kopia/cache`                                                                        |
-| kopia        | `/pool/apps/kopia/volumes/logs`                                    | `/var/lib/storagebaby/fast/kopia/logs`                                                                         |
-| stirling-pdf | `/pool/apps/stirling-pdf/volumes/{configs,logs,pipeline,tessdata}` | `/pool/apps/stirling-pdf/{configs,logs,pipeline,tessdata}`                                                     |
-| paperless    | `paperless_data` (named)                                           | `/pool/apps/paperless/data`                                                                                    |
-| paperless    | `paperless_media` (named)                                          | `/pool/apps/paperless/media`                                                                                   |
-| paperless    | `paperless_database` (named)                                       | `/var/lib/storagebaby/fast/paperless/database`                                                                 |
-| paperless    | `paperless_broker` (named)                                         | — (Redis runs without a volume; see below)                                                                     |
-| openarchiver | `/pool/apps/openarchiver/volumes/data`                             | `/pool/apps/openarchiver/data`                                                                                 |
-| openarchiver | `openarchiver_database` (named)                                    | `/var/lib/storagebaby/fast/openarchiver/database`                                                              |
-| openarchiver | `openarchiver_cache` (named)                                       | — (Valkey runs without a volume; see below)                                                                    |
-| openarchiver | `openarchiver_meilisearch` (named)                                 | — (start empty; run a full reindex from the UI afterwards)                                                     |
-| immich       | `/pool/apps/immich/volumes/immich_upload`                          | `/pool/apps/immich/upload`                                                                                     |
-| immich       | `immich_database` (named)                                          | `/var/lib/storagebaby/fast/immich/database`                                                                    |
-| immich       | `immich_model-cache` (named)                                       | — (start empty; the models are downloaded again)                                                               |
-| nextcloud    | `nextcloud_nextcloud` (named, `/var/www/html`), without `data/`    | `/var/lib/storagebaby/fast/nextcloud/html`                                                                     |
-| nextcloud    | `nextcloud_nextcloud`, its `data/` subdirectory                    | `/pool/apps/nextcloud/data`                                                                                    |
-| nextcloud    | `nextcloud_database` (named)                                       | `/var/lib/storagebaby/fast/nextcloud/database`                                                                 |
+| Service      | old                                                                | new                                                                                      |
+| ------------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| jellyfin     | `/pool/apps/jellyfin/volumes/jellyfin_config`                      | `/pool/apps/jellyfin/config` (a rename, pool to pool; the 11 GB of subtitles never move) |
+| kopia        | `/pool/apps/kopia/volumes/config`                                  | `/pool/apps/kopia/config`                                                                |
+| kopia        | `/pool/apps/kopia/volumes/cache`                                   | `/var/lib/storagebaby/fast/kopia/cache`                                                  |
+| kopia        | `/pool/apps/kopia/volumes/logs`                                    | `/var/lib/storagebaby/fast/kopia/logs`                                                   |
+| stirling-pdf | `/pool/apps/stirling-pdf/volumes/{configs,logs,pipeline,tessdata}` | `/pool/apps/stirling-pdf/{configs,logs,pipeline,tessdata}`                               |
+| paperless    | `paperless_data` (named)                                           | `/pool/apps/paperless/data`                                                              |
+| paperless    | `paperless_media` (named)                                          | `/pool/apps/paperless/media`                                                             |
+| paperless    | `paperless_database` (named)                                       | `/var/lib/storagebaby/fast/paperless/database`                                           |
+| paperless    | `paperless_broker` (named)                                         | — (Redis runs without a volume; see below)                                               |
+| openarchiver | `/pool/apps/openarchiver/volumes/data`                             | `/pool/apps/openarchiver/data`                                                           |
+| openarchiver | `openarchiver_database` (named)                                    | `/var/lib/storagebaby/fast/openarchiver/database`                                        |
+| openarchiver | `openarchiver_cache` (named)                                       | — (Valkey runs without a volume; see below)                                              |
+| openarchiver | `openarchiver_meilisearch` (named)                                 | — (start empty; run a full reindex from the UI afterwards)                               |
+| immich       | `/pool/apps/immich/volumes/immich_upload`                          | `/pool/apps/immich/upload`                                                               |
+| immich       | `immich_database` (named)                                          | `/var/lib/storagebaby/fast/immich/database`                                              |
+| immich       | `immich_model-cache` (named)                                       | — (start empty; the models are downloaded again)                                         |
+| nextcloud    | `nextcloud_nextcloud` (named, `/var/www/html`), without `data/`    | `/var/lib/storagebaby/fast/nextcloud/html`                                               |
+| nextcloud    | `nextcloud_nextcloud`, its `data/` subdirectory                    | `/pool/apps/nextcloud/data`                                                              |
+| nextcloud    | `nextcloud_database` (named)                                       | `/var/lib/storagebaby/fast/nextcloud/database`                                           |
 
 Every Redis and Valkey part runs with `--save "" --appendonly no` and no volume: they
 hold queues, caches and file locks, nothing that is meant to outlive a restart, and a
