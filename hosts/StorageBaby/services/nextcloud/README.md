@@ -560,9 +560,26 @@ builds on `php:*-fpm-alpine` and 82 is Alpine's standard uid for www-data (the
 `postgres:17-alpine`. The role maps each onto the matching subuid of
 `svc-nextcloud` and adopts the tree once.
 
-Three things to check after the first converge on storagebaby, because each of
-them is something an installation carries or a path only real use takes — not
-something a unit declares and a test can read back.
+One edit before the first converge, then three things to check after it, because
+each of them is something an installation carries or a path only real use takes —
+not something a unit declares and a test can read back.
+
+**0. `dbhost` in the migrated `config.php`.** The old stack reached postgres as the
+compose service `database`; inside the pod it is `127.0.0.1`, and `POSTGRES_HOST`
+in the unit does not help — the image only reads it when it installs. With the old
+name in place every `occ` call and every page dies at "could not translate host
+name "database" to address". Edit the file on the host, as root, then restart the
+pod:
+
+```sh
+sed -i "s/'dbhost' => 'database'/'dbhost' => '127.0.0.1'/" \
+	/pool/apps/nextcloud/html/config/config.php
+storagebaby-svc restart nextcloud
+```
+
+Redis needs no such edit: the image's `redis.config.php` reads `REDIS_HOST` at
+runtime. And because the restart is not a unit change, the five `occ` hooks do not
+run on it — run them once by hand after `occ status` is right.
 
 **1. The installation came up as itself.** As root on the host; the containers
 belong to `svc-nextcloud`'s podman, so they are reached through the role's helper
