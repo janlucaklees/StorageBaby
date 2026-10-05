@@ -40,6 +40,10 @@ Environment=NEXTCLOUD_ADMIN_PASSWORD_FILE=/run/secrets/admin_password
 Secret=admin_user
 Secret=admin_password
 Volume={{ volumes.html }}:/var/www/html
+{# The user files, a pool volume mounted over the installation's own data directory,
+   so config.php's `datadirectory` keeps saying /var/www/html/data. nginx does not get
+   this one: its config denies /data, and php-fpm is what reads and writes it. #}
+Volume={{ volumes.data }}:/var/www/html/data
 {# `html` is the one volume on the platform two images share, and they are not the
    same user inside it: php-fpm's workers and `occ` are www-data, nginx's workers are
    `nginx`. The role hands over a directory that is 0750, the entrypoint chowns the

@@ -46,8 +46,9 @@ storage:
     options: defaults,allow_other,use_ino,category.create=pfrd,moveonenospc=true,minfreespace=20G,fsname=mergerfsPool,cache.writeback=false,cache.symlinks=false,cache.readdir=false,async_read=true,threads=4
   # The array. `excludes` are paths relative to a *disk's* root, which for a branch of this
   # pool is the same as relative to /pool -- they are the deployed ones with the Nextcloud
-  # paths moved onto the platform's volume layout (`/apps/nextcloud/volumes/nextcloud/` ->
-  # `/apps/nextcloud/html/`, the `html` volume of the nextcloud service).
+  # path moved onto the platform's volume layout (`/apps/nextcloud/volumes/nextcloud/data/`
+  # -> `/apps/nextcloud/data/`, the `data` volume of the nextcloud service; the
+  # installation's own trees are on the SSD now and need no exclude).
   snapraid:
     block_size: 256
     excludes:
@@ -64,10 +65,7 @@ storage:
       - .TemporaryItems
       - .Trashes
       - .AppleDB
-      - /apps/nextcloud/html/apps/
-      - /apps/nextcloud/html/3rdparty/
-      - /apps/nextcloud/html/custom_apps/
-      - /apps/nextcloud/html/data/jlk/files/Projects/Kannji/_app_workspace/app/build/
+      - /apps/nextcloud/data/jlk/files/Projects/Kannji/_app_workspace/app/build/
       - '*.tmp'
       - '*.log'
       - /cache/

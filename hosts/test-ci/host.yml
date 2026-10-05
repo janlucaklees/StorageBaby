@@ -69,10 +69,7 @@ storage:
       - .TemporaryItems
       - .Trashes
       - .AppleDB
-      - /apps/nextcloud/html/apps/
-      - /apps/nextcloud/html/3rdparty/
-      - /apps/nextcloud/html/custom_apps/
-      - /apps/nextcloud/html/data/jlk/files/Projects/Kannji/_app_workspace/app/build/
+      - /apps/nextcloud/data/jlk/files/Projects/Kannji/_app_workspace/app/build/
       - '*.tmp'
       - '*.log'
       - /cache/
