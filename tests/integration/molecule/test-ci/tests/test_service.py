@@ -434,7 +434,8 @@ def test_backup_sidecar_snapshots_to_the_server(host, owner, spec_path):
     nothing, and checking only the sidecar's own view would pass for a snapshot that
     never left it. So the snapshot is triggered on the client and looked for on the
     server, under the `<service>@<host>` identity the server registered it as -- which
-    is also what proves the two halves of the shared `kopia-clients` password match.
+    is also what proves the two copies of the client password -- the pod's
+    `kopia_password` and kopia's `client_<pod>` -- match.
     """
     placed(host, owner)
     spec = load_spec(spec_path)
