@@ -18,7 +18,7 @@ config:
   # created, and that one is called postgres.
   database_name: postgres
   database_user: immich
-  version: v2.7.5
+  version: v3.2.0
   # Empty on purpose, and measured: see "Trusted proxies" in the README. A host that
   # really does sit behind a second proxy sets it through `service_config.immich`.
   trusted_proxies: ''

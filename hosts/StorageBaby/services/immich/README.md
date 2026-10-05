@@ -10,8 +10,8 @@ hand-written `backup/` sidecar is gone — the role generates it from `backup:` 
 
 | Part              | Image                                                  | Port | Updates       |
 | ----------------- | ------------------------------------------------------ | ---- | ------------- |
-| `immich-server`   | `ghcr.io/immich-app/immich-server:v2.7.5`              | 2283 | pinned in git |
-| `immich-ml`       | `ghcr.io/immich-app/immich-machine-learning:v2.7.5`    | 3003 | pinned in git |
+| `immich-server`   | `ghcr.io/immich-app/immich-server:v3.2.0`              | 2283 | pinned in git |
+| `immich-ml`       | `ghcr.io/immich-app/immich-machine-learning:v3.2.0`    | 3003 | pinned in git |
 | `immich-database` | `ghcr.io/immich-app/postgres:14-vectorchord…` (digest) | 5432 | pinned in git |
 | `immich-cache`    | `docker.io/library/redis:alpine`                       | 6379 | auto          |
 | `immich-backup`   | `docker.io/kopia/kopia:0.23.1`                         | —    | generated     |
