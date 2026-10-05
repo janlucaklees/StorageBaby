@@ -9,6 +9,11 @@ Network=host
 Exec=--api --ping=true \
   --providers.file.directory=/etc/traefik/dynamic.d --providers.file.watch=true \
   --entrypoints.web.address=:80 --entrypoints.websecure.address=:443 \
+{# Traefik v3 reads a whole request within 60 s by default (v2 had no limit). A Kopia
+   snapshot is one gRPC request that streams the upload for as long as it takes, so the
+   backup sidecars died at the minute with `RST_STREAM ... INTERNAL_ERROR: EOF` on any
+   volume that did not fit in it. 0 is no limit; the kopia README has the measurement. #}
+  --entrypoints.websecure.transport.respondingTimeouts.readTimeout=0 \
   --entrypoints.traefik.address=127.0.0.1:{{ service.port }} \
 {# One entrypoint per plain-TCP port placed on this host, `tcp-<port>` on the host's own
    address. The list is the host's placement, not this service's business, so the playbook

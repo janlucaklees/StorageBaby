@@ -192,6 +192,24 @@ REST: kopia 0.23's `repository connect server` has no `--no-grpc`. The web UI wo
 over HTTP/1.1 throughout, which is why an insecure server looks perfectly healthy while
 no client can connect to it.
 
+**And the entrypoint must not time the request out.** Traefik v3 gives every
+entrypoint a `respondingTimeouts.readTimeout` of 60 s — the time it allows for
+reading one whole request, where v2 allowed forever. A snapshot is one gRPC request
+that streams the upload until it is done, so a client whose volume did not fit into
+the minute died with
+
+```
+flush error: error waiting for async writes: rpc error: code = Internal desc =
+stream terminated by RST_STREAM with error code: INTERNAL_ERROR: EOF
+```
+
+and the server logged nothing, because the stream was cut in front of it. Measured
+on storagebaby: paperless's snapshots finished inside the minute and worked,
+nextcloud's first one died 72 s after connecting, every time. The shared traefik unit
+therefore sets `--entrypoints.websecure.transport.respondingTimeouts.readTimeout=0`
+on the `websecure` entrypoint: no limit, which a first full snapshot of a large
+volume needs. Only `websecure` — `web` carries nothing but the redirect.
+
 So `config/start.sh` generates a certificate on first start, onto the `config` volume
 beside `repository.config`:
 
