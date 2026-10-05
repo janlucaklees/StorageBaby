@@ -36,7 +36,7 @@ secrets:
     admin_password,
     kopia_password
   ]
-# The old stack's `make upgrade` ran these five by hand after every image bump. The
+# The old stack's `make upgrade` ran the first five by hand after every image bump. The
 # image itself runs `occ upgrade` from its entrypoint; these are the steps that came
 # after it, and `when: unit_changed` (the default) is what makes them a deploy step --
 # a version bump in `nextcloud-app.container.j2` runs them, the nightly no-op does not.
@@ -66,6 +66,25 @@ hooks:
         container: nextcloud-app,
         user: www-data,
         command: 'php occ maintenance:repair --include-expensive'
+      }
+    # The two settings a domain change leaves behind, both read off this container's own
+    # environment: a hook is `sh -c` inside the container, and `podman exec` inherits the
+    # unit's Environment= lines, so `$NEXTCLOUD_TRUSTED_DOMAINS` and `$NEXTCLOUD_WOPI_URL`
+    # are the rendered fqdns without any templating in this file. `when: always` because
+    # a domain change is a host.yml edit, not a unit change of this service, and it has to
+    # land on the converge that follows it. Index 1 is where the image's installer puts
+    # the domain it was given; index 0 is the installer's own entry.
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:system:set trusted_domains 1 --value="$NEXTCLOUD_TRUSTED_DOMAINS"'
+      }
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:app:set richdocuments wopi_url --value="$NEXTCLOUD_WOPI_URL"'
       }
 backup:
   # `html` is the installation, `data` the user files, `backups` carries the nightly
