@@ -44,7 +44,7 @@ Traefik.
 | paperless (pod)                      | `paperless.*` → 8000, FTP 21 + 21100–21109 | app `paperless-ngx:2.20.15` and `pure-ftpd:trixie-1.0.50` pinned; postgres, redis, gotenberg and tika auto              | `data`, `media`, `backups` (nightly dump)                 | 3, 4  |
 | openarchiver (pod)                   | `openarchiver.*` → 3001                    | app `v0.6.0`, `meilisearch:v1.38` and `tika:3.2.2.0-full` pinned; postgres and valkey auto                              | `data`, `backups` (nightly dump)                          | 3     |
 | immich (pod)                         | `immich.*` → 2283                          | server and machine learning `v3.2.0` pinned together, the vectorchord postgres pinned by digest beside them; redis auto | `upload` — Immich writes its own database dumps into it   | 3     |
-| nextcloud (pod)                      | `nextcloud.*` → 8280, `collabora.*` → 9980 | app `33-fpm-alpine` pinned; nginx, postgres, redis and Collabora auto                                                   | `html`, `backups` (nightly dump)                          | 3     |
+| nextcloud (pod)                      | `nextcloud.*` → 8280, `collabora.*` → 9980 | app `33-fpm-alpine` pinned; nginx, postgres, redis and Collabora auto                                                   | `html`, `data`, `backups` (nightly dump)                  | 3     |
 
 Everything but traefik is placed on storagebaby; `test-a` places all eight folders by
 symlink, `test-ci` the smaller subset a GitHub runner can carry. Both test hosts also place
@@ -737,7 +737,8 @@ in each service's `service.yml`. Concretely:
 | immich       | `/pool/apps/immich/volumes/immich_upload`                          | `/pool/apps/immich/upload`                                                                                     |
 | immich       | `immich_database` (named)                                          | `/var/lib/storagebaby/fast/immich/database`                                                                    |
 | immich       | `immich_model-cache` (named)                                       | — (start empty; the models are downloaded again)                                                               |
-| nextcloud    | `nextcloud_nextcloud` (named, `/var/www/html`)                     | `/pool/apps/nextcloud/html`                                                                                    |
+| nextcloud    | `nextcloud_nextcloud` (named, `/var/www/html`), without `data/`    | `/var/lib/storagebaby/fast/nextcloud/html`                                                                     |
+| nextcloud    | `nextcloud_nextcloud`, its `data/` subdirectory                    | `/pool/apps/nextcloud/data`                                                                                    |
 | nextcloud    | `nextcloud_database` (named)                                       | `/var/lib/storagebaby/fast/nextcloud/database`                                                                 |
 
 Every Redis and Valkey part runs with `--save "" --appendonly no` and no volume: they
@@ -766,10 +767,10 @@ file in it has not been ingested yet.
 2. Move each old tree onto its new path. Where both sides are on the same
    filesystem — pool to pool, or a Docker named volume under `/var/lib` to the
    `fast` root under `/var/lib` — `mv` is a rename, costs nothing and leaves no
-   second copy to forget about. The one crossing is nextcloud's `html`, from
+   second copy to forget about. The one crossing is nextcloud's `data/`, from
    Docker's data root on the system disk to the pool, which is a real copy:
-   `rsync -aHAX --info=progress2 <old>/ <new>/` and remove the old volume
-   afterwards.
+   `rsync -aHAX --info=progress2 <old>/data/ <new>/ ` and remove the old volume
+   afterwards; the rest of that tree stays on the system disk as `html`.
 3. Deploy. The ownership is not a step any more: every volume and bind whose uid
    is established already declares `owner:` in its `service.yml`, and the role
    adopts a tree whose owner does not match it with one recursive `chown` on the

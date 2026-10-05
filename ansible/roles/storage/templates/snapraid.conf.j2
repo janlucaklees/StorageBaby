@@ -24,7 +24,7 @@ disk {{ disk.name }} {{ disk.mount }}/
 {% endfor %}
 
 {# Paths are relative to a disk's root, so they are the same on every branch: an exclude
-   written against the pool's layout (`/apps/nextcloud/html/...`) matches on whichever
+   written against the pool's layout (`/apps/nextcloud/data/...`) matches on whichever
    branch mergerfs put that directory on. #}
 {% for exclude in storage.snapraid.excludes %}
 exclude {{ exclude }}

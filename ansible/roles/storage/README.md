@@ -214,7 +214,8 @@ The same `storage` block carries the rest of it.
 storage:
   snapraid:
     block_size: 256
-    excludes: ['*.bak', /lost+found/, /apps/nextcloud/html/apps/, …]
+    excludes:
+      ['*.bak', /lost+found/, /apps/nextcloud/data/jlk/files/…/build/, …]
     maintenance:
       on_calendar: '02:00'
       balance_threshold: 5
@@ -237,8 +238,8 @@ storage:
   disk, the `excludes` and the `block_size`. Nothing restarts when it changes — snapraid is
   run by a timer and reads the file every time.
 - **`snapraid.excludes` are paths relative to a _disk's_ root**, which for a branch of this
-  pool is the same as relative to `pool.mount`. That is why the Nextcloud entries are
-  `/apps/nextcloud/html/…`: the pool-class volume `html` of the `nextcloud` service.
+  pool is the same as relative to `pool.mount`. That is why the Nextcloud entry is
+  `/apps/nextcloud/data/…`: the pool-class volume `data` of the `nextcloud` service.
 - **The disk `name` is snapraid's identity for that disk.** Renaming one makes snapraid treat
   the whole disk as new, which is a full parity rewrite on the next sync.
 - **`/opt/storagebaby/maintenance/`** holds six scripts, all 0755 root and **copied byte for

@@ -114,7 +114,8 @@ Only `nginx.conf` is replaced in the nginx image — `mime.types` and
 
 `nextcloud-nginx` mounts the `html` volume **read-only**: it serves the static
 half of the installation straight off the tree php-fpm owns, and has no business
-writing into it.
+writing into it. It does not mount `data` at all — its config denies `/data`, and
+the user files only ever pass through php-fpm.
 
 ## Health checks
 
@@ -271,13 +272,24 @@ under it keeps the modes the image gives it.
 
 **What this changes is a host directory, not a view inside the container.**
 `/var/www/html` is the bind mount of the `html` volume — on storagebaby
-`/pool/apps/nextcloud/html` — so after the first start that directory is **0755 on
+`/var/lib/storagebaby/fast/nextcloud/html` — so after the first start that directory is **0755 on
 the host**, overriding the 0750 the role creates volume directories with. That is
 a deliberate exception to the role's convention and the only one on the platform,
 and it is acceptable because it is the mount point alone: the tree under it keeps
-the image's modes and `data/`, which is the user data, stays 0770 and
-`www-data`-owned. The role never re-permissions an existing volume directory, so
-it does not fight back on the next converge.
+the image's modes and `data/`, which is the user data and its own volume on the
+pool, stays 0770 and `www-data`-owned. The role never re-permissions an existing
+volume directory, so it does not fight back on the next converge.
+
+## `html` on the SSD, `data` on the pool
+
+The image keeps everything under `/var/www/html`: code, config, apps and, as
+`data/`, the user files. They want different disks — the installation is a few
+hundred MB of PHP that is read on every request, the user files are the bulk and
+are read when someone opens them — so they are two volumes, `html` of class `fast`
+and `data` of class `pool`, and `data` is mounted **over** `/var/www/html/data`
+inside the app container. `datadirectory` in `config.php` keeps its default,
+`/var/www/html/data`, so nothing in Nextcloud knows about the split; the mount
+point inside `html` is created by podman and stays empty on the host.
 
 ## `AddCapability=MKNOD` on Collabora
 
@@ -507,22 +519,23 @@ maintenance mode and the four commands after it refuse to run while it is on.
 
 ```yaml
 backup:
-  paths: [html, backups]
+  paths: [html, data, backups]
   schedule: '03:00'
   retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }
 ```
 
-The role generates `nextcloud-backup.container` from this, mounts the two volumes
+The role generates `nextcloud-backup.container` from this, mounts the three volumes
 read-only at `/data/<volume>`, connects to the Kopia server as
 `nextcloud@<host>` and leaves a scheduler running, so the snapshots happen at
 03:00 without a timer of their own. `ansible/roles/service/README.md` has the
 sidecar's mechanics.
 
-`html` is the installation and all of the user data under it; `backups` carries
-the nightly dump. The server lists
+`html` is the installation, `data` the user files, `backups` carries the nightly
+dump. The server lists
 
 ```
 nextcloud@test-a:/data/html
+nextcloud@test-a:/data/data
 nextcloud@test-a:/data/backups
 ```
 
@@ -543,13 +556,16 @@ nextcloud@test-a:/data/backups
 
 ## Migrating the data
 
-`nextcloud/docker-compose.yml`'s two named volumes map onto this folder's three:
+`nextcloud/docker-compose.yml`'s two named volumes map onto this folder's four —
+the old `html` tree is split in two, its `data/` subdirectory becoming a volume of
+its own:
 
-| Old (rootful compose)                   | New                                                               |
-| --------------------------------------- | ----------------------------------------------------------------- |
-| `nextcloud_nextcloud` (`/var/www/html`) | `/pool/apps/nextcloud/html`                                       |
-| `nextcloud_database`                    | `/var/lib/storagebaby/fast/nextcloud/database`                    |
-| —                                       | `/var/lib/storagebaby/fast/nextcloud/backups` (new, for the dump) |
+| Old (rootful compose)                           | New                                                               |
+| ----------------------------------------------- | ----------------------------------------------------------------- |
+| `nextcloud_nextcloud` (`/var/www/html`)         | `/var/lib/storagebaby/fast/nextcloud/html`, without `data/`       |
+| `nextcloud_nextcloud`, its `data/` subdirectory | `/pool/apps/nextcloud/data`                                       |
+| `nextcloud_database`                            | `/var/lib/storagebaby/fast/nextcloud/database`                    |
+| —                                               | `/var/lib/storagebaby/fast/nextcloud/backups` (new, for the dump) |
 
 The repo's root README has the recipe and the ownership rules; the trees are not
 chowned by hand any more. The nextcloud image runs the app as its own
@@ -573,7 +589,7 @@ pod:
 
 ```sh
 sed -i "s/'dbhost' => 'database'/'dbhost' => '127.0.0.1'/" \
-	/pool/apps/nextcloud/html/config/config.php
+	/var/lib/storagebaby/fast/nextcloud/html/config/config.php
 storagebaby-svc restart nextcloud
 ```
 

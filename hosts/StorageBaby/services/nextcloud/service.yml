@@ -12,7 +12,11 @@ routes:
 volumes:
   # 82, not 33: `www-data` is uid 82 in `php:*-fpm-alpine`, and the 33 in
   # `nextcloud:33-fpm-alpine` is the Nextcloud version.
-  html: { class: pool, owner: 82 }
+  # The installation -- code, config, apps -- is `html` on the SSD, and the user files
+  # are `data` on the pool, mounted over `/var/www/html/data` inside it. `datadirectory`
+  # in config.php stays `/var/www/html/data`, so Nextcloud never sees the split.
+  html: { class: fast, owner: 82 }
+  data: { class: pool, owner: 82 }
   database: { class: fast, owner: 70 }
   # No `owner`: written by the dump timer's `podman exec`, i.e. container root.
   backups: { class: fast }
@@ -64,9 +68,9 @@ hooks:
         command: 'php occ maintenance:repair --include-expensive'
       }
 backup:
-  # `html` is the installation and the user data under it; `backups` carries the
-  # nightly dump. `database` is deliberately absent -- a database is backed up as a
-  # dump, never as its data directory.
-  paths: [html, backups]
+  # `html` is the installation, `data` the user files, `backups` carries the nightly
+  # dump. `database` is deliberately absent -- a database is backed up as a dump, never
+  # as its data directory.
+  paths: [html, data, backups]
   schedule: '03:00'
   retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }
