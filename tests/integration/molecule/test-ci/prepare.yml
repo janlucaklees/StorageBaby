@@ -318,9 +318,12 @@
         {% elif key.startswith('client_') %}
         printf '%s: "%s"\n' '{{ key }}' "$(paired '{{ key[7:] }}')" >> "$TMP"
         {% elif key.endswith('_htpasswd') %}
-        # An htpasswd users file, not an opaque value: Traefik's basicAuth parser rejects a
-        # line without `user:hash`, the middleware then fails to build and the router it
-        # guards answers 404. `test:test`, apr1 -- the tests send the same pair.
+        # An htpasswd users file, not an opaque value: the basicAuth parser in Traefik
+        # rejects a line without `user:hash`, the middleware then fails to build and the
+        # router it guards answers 404. `test:test`, apr1 -- the tests send that pair.
+        # No apostrophe anywhere in this block: Ansible runs `split_args` over a `shell:`
+        # value, so one unpaired single quote -- even inside a shell comment -- fails the
+        # whole playbook at parse time with "failed at splitting arguments".
         printf '%s: "%s"\n' '{{ key }}' 'test:$apr1$storageb$fLtofQKD3Zr3C1sGTbdBW0' >> "$TMP"
         {% else %}
         printf '%s: "%s"\n' '{{ key }}' "$(random)" >> "$TMP"
