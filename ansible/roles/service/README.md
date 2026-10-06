@@ -119,6 +119,26 @@ A service declares either `routes: [{domain, port}, ...]` or the one-route short
 route gets its own Traefik file `/etc/storagebaby/traefik/dynamic.d/<name>-<domain>.yml`
 and its own router and service, both named `<name>-<domain>`.
 
+A `domain` is **either a bare label or a full hostname**, and the dot is the whole of the
+rule — a DNS label cannot contain one, so the two forms cannot be confused. A label is
+completed with the host's own `domain` (`jellyfin` → `jellyfin.home.klees.io`), which is
+what every service did before there was a second zone; a hostname is used exactly as
+written (`immich.klees.io`), which is how a service takes a name under a domain that is
+not the host's default. Two things have to be true for the second form to work, and
+neither is the role's to arrange: the host must list that zone in `cert_zones`, or the
+name is served a certificate that does not cover it (`tests/static/test_hosts.py`
+refuses the combination), and the DNS record is the operator's.
+
+**A route file is removed when the route goes.** The file is named after the route, so
+renaming one writes a new file and leaves the old one — and Traefik reads the whole
+directory, which makes a leftover a _live router_ rather than the inert thing a stale
+unit is. So the role removes every `dynamic.d/<name>-*.yml` that the converge did not
+write, which is what makes moving a service to another domain actually retire its
+previous name. The glob is only unambiguous while no service name is another service
+name followed by a dash; `tests/static/test_contract.py::test_no_service_name_shadows_another`
+holds that, because a service called `stirling` would otherwise match and delete
+`stirling-pdf`'s route files.
+
 The name carries the domain because Traefik reads one flat directory: two routes of one
 service would otherwise write the same file, and the second would win. The role removes a
 pre-Phase-3 `<name>.yml` on every converge, because a leftover would keep serving its old

@@ -86,6 +86,22 @@ With `acme: true` in the host's `host.yml`, the dashboard router carries the
 all other routers just say `tls: {}` and inherit the wildcard cert. State lives
 in the `letsencrypt` volume (`fast` class).
 
+**One wildcard per zone, and the zones are the host's.** `cert_zones` in `host.yml`
+lists the domains that host can obtain a certificate for and becomes one `domains`
+entry each on this router — `main: <zone>`, `sans: *.<zone>`. It defaults to
+`[domain]`, so a host whose services all answer under its own domain declares
+nothing; storagebaby declares `home.klees.io` and `klees.io`, because four of its
+services take names directly under `klees.io` and `*.home.klees.io` does not cover
+those. Both zones sit in the same Porkbun account, so the one resolver on this unit
+serves both — a zone at a different provider would need a second resolver, and
+Traefik takes provider credentials from process environment variables rather than
+per resolver, so two accounts at the _same_ provider could not coexist in one
+Traefik. The list is also an allowlist: `tests/static/test_hosts.py` refuses a route
+whose name is not under any declared zone, because the alternative is a certificate
+that silently does not cover it. `docs/ownership.md` § 4.2 has where this is going —
+the method and the credentials belong per domain, with the host, and today they are
+still one resolver and one `acme` boolean for the whole machine.
+
 With `acme: false` (test hosts) there is no issuance, and Traefik serves a default
 certificate for everything. Not the one it invents, though: left to itself Traefik
 generates a **fresh** self-signed certificate on every start, and a Kopia backup
