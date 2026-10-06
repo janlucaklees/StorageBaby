@@ -29,10 +29,10 @@ per question — not to make the two sides independent of each other.
 ## 2. The three owners
 
 **Service** — one folder under `hosts/**/services/<name>/`. Owns every decision about how
-it runs: its containers and images, its domains and how a certificate for them is
-obtained, its mounts, its secrets, what of it is backed up, when its images update, and
-the configuration of every piece of software inside it. A service folder is the one place
-to read to know how that service works.
+it runs: its containers and images, the names it answers on, what it mounts, its secrets,
+what of it is backed up, when its images update, and the configuration of every piece of
+software inside it. A service folder is the one place to read to know how that service
+works.
 
 **Platform** — `ansible/`, `bootstrap.sh`, CI, and the contract the static tests enforce.
 Owns the loop (when, what and where to deploy), the lifecycle of what it deployed
@@ -41,9 +41,9 @@ against, and the _execution_ of every decision a service makes.
 
 **Administrator** — the person, and the machine as they prepared it. Owns the hardware,
 the operating system and the currency of its packages, the disks and their mounts, the
-network and its addresses, which storages a host offers, and which host a service is
-placed on. This is not a decision bucket so much as a fact bucket: things the platform
-measures or the administrator states once per host.
+network and its addresses, which storages and which domains a host offers, and which
+host a service is placed on. This is not a decision bucket so much as a fact bucket:
+things the platform measures or the administrator states once per host.
 
 `host.yml` is the administrator's instrument — the one place a host says what it is made
 of and what it offers. It is **not** a second place to configure a service.
@@ -75,8 +75,8 @@ of and what it offers. It is **not** a second place to configure a service.
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Which containers and pods exist, their images, environment, health checks, restart policy |                                                                                                                                                                                                                                                                           |
 | Its domains, in full                                                                      | The complete hostname, not a label the host completes                                                                                                                                                                                                                     |
-| **How** a certificate for each of them is obtained                                        | Challenge method, DNS provider and its API credentials, or none at all. The platform _performs_ the issuance; the service states how it is to be done                                                                                                                     |
-| Whether it is served over TLS at all                                                      | A service that wants HTTPS and says nothing about how fails the deploy. There is no host-level fallback certificate                                                                                                                                                       |
+| Which of the host's domains it takes a name under                                         | A service claims a name under a domain the host offers and gets a certificate for it; a name under a domain the host cannot certify is refused, loudly. § 4.2                                                                                                             |
+| Whether it is served over TLS at all                                                      | A service that wants no certificate says so; one that wants one takes a name the host can certify. There is no host-level fallback certificate                                                                                                                            |
 | What it mounts, and the owner uid inside the container                                    | A service claims a storage the host offers — by class for its own data, by name for a tree it shares with others — and never needs to know a path. Saying nothing takes the host's default; an explicit path stays available for the tree the host has no name for. § 4.1 |
 | Its plain-TCP ports                                                                       |                                                                                                                                                                                                                                                                           |
 | Its secrets                                                                               | Encrypted in its own folder; the platform decrypts at converge time and makes them available at runtime                                                                                                                                                                   |
@@ -112,6 +112,27 @@ that service folder to that machine, and that is accepted: exceptions of this ki
 keep coming up, the cost of the coupling is one line in two files, and engineering it
 away costs more than it saves. Use a name when there is one; reach for a path knowingly.
 
+### 4.2 Claiming a domain
+
+Certificates work the way storage does, and for the same reason. Whether a certificate
+for a domain can be obtained at all is not a decision anybody makes — it is a
+**capability of the machine**: this host either holds an API account that can prove
+control of `klees.io`, or it does not. So the administrator declares in `host.yml` which
+domains this host can serve and, per domain, how a certificate for it is obtained — the
+challenge method, the provider, the credentials. A service names what it wants under one
+of them.
+
+What stays the service's is the part that is actually its own: **which name it takes**,
+and whether it wants a certificate at all. The host's list of domains is therefore also
+the allowlist — a service asking for a name under a domain the host cannot certify is
+refused by the platform with a reason, not quietly left without a certificate.
+
+Two things follow that are worth having on purpose. Credentials exist once per host
+rather than once per service, which is where sops already works and what keeps the same
+Porkbun account out of nine service folders. And a host can serve several domains at
+once, so moving one service to a different domain is a line in that service and a line
+in the host, not a migration.
+
 ## 5. Administrator
 
 | Decision                                              | Note                                                                                                                    |
@@ -122,6 +143,7 @@ away costs more than it saves. Use a name when there is one; reach for a path kn
 | Disks, parity, the pool, and the mounts beneath them  | `storage` in `host.yml`                                                                                                 |
 | Which storages this host offers, and where each lands | The classes a service's own data can ask for, and the named trees it can claim — § 4.1                                  |
 | Which of them is the default                          | What a service's data gets when the service says nothing about where it goes                                            |
+| Which domains this host can serve                     | And, per domain, how a certificate for it is obtained: method, provider, credentials — § 4.2                            |
 | Network addresses                                     | `tcp_bind_address`, and the DNS records a domain needs                                                                  |
 | Time zone                                             |                                                                                                                         |
 | Which host runs which service                         | By placing the folder                                                                                                   |
@@ -172,11 +194,14 @@ The work list, measured against this document at 60b402f.
 
 1. **Domains are split.** A service owns the leftmost label, `host.yml` owns the rest,
    and the role joins them (`ansible/roles/service/tasks/main.yml:44`).
-2. **TLS is entirely the platform's.** One ACME resolver hardwired into Traefik's unit
-   (`hosts/shared/services/traefik/quadlet/traefik.container.j2:34-37`), one wildcard for
-   the host's domain requested by Traefik's own router
-   (`ansible/roles/service/templates/traefik-route.yml.j2:14-19`), `acme`/`acme_email` in
-   `host.yml`, credentials in Traefik's folder. A service can say nothing.
+2. **A host does not declare its domains; it has exactly one.** `cert_zones` lists the
+   zones Traefik requests a wildcard for and is the first half of § 4.2, but the rest is
+   missing: one ACME resolver is hardwired into Traefik's unit
+   (`hosts/shared/services/traefik/quadlet/traefik.container.j2:34-37`) so the method and
+   provider are not per domain, the credentials live in Traefik's own folder rather than
+   with the host, `acme` is one boolean for the whole host, and nothing refuses a service
+   that asks for a name under a domain this host cannot certify — it simply gets no
+   certificate.
 3. **A host-level fallback certificate exists** (`ansible/roles/host_base/tasks/main.yml:84-160`)
    and both test hosts run on it. Replacing it means a self-signed method a service can
    _declare_, not a host that quietly supplies one.
