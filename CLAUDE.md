@@ -196,4 +196,5 @@ Secrets are sops+age at rest and `podman secret`s at runtime. A host can only de
 ## Start here (added 2026-10-06)
 
 - `docs/architecture.md` — the shape of the platform: the deploy loop, the layers and their measured size, what the `service` role does with a folder end to end, where the complexity sits and which decision put it there, the known drift. Read it before the sections above; they are the reference, it is the map.
+- `docs/ownership.md` — who decides what, between the platform, a service and the administrator. **The target state, not the current one**: where this repository disagrees with it, the repository is wrong, and its § 7 is the list of places it does. Read it before proposing any change to the `service` role or to a `service.yml` key.
 - Known drift at 60b402f, recorded there in § 7: `hosts/StorageBaby/services/paperless/service.yml` carries a `touch /tmp/.hook-ran` hook that exists only for `test_deploy_runs_after_change_hooks`; `bootstrap.sh` installs no `make`, "Deployment" above still says it does; the retired `kopia-clients` set is still the worked example in the role README and the pod READMEs.
