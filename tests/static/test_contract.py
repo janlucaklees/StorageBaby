@@ -3,7 +3,7 @@ from collections import defaultdict
 
 import pytest
 
-from conftest import placements, tcp_ports
+from conftest import placements, routes_of, tcp_ports
 
 REQUIRED = {"name", "volumes", "secrets", "backup"}
 # Every key a `service.yml` may carry. Without this a misspelling is silent and the
@@ -36,6 +36,12 @@ MODES = {"ro", "rw"}
 VOLUME_KEYS = {"class", "owner"}
 BIND_KEYS = {"host", "container", "mode", "group", "owner"}
 GROUP_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+# A route's `domain` is either a bare DNS label, which the host's own domain completes,
+# or a full hostname, which is used as it stands -- `roles/service/tasks/main.yml`
+# tells them apart by the dot. Both forms are checked here because a typo in either is
+# otherwise a silently wrong public name: a trailing dot, an underscore or a capital
+# would all reach a Traefik `Host()` rule unchallenged.
+DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")
 # What a `routes:` entry may carry: the route itself, plus the two backend options a
 # single route can override for itself. Everything else about a route lives in the
 # service-wide `route:` block.
@@ -86,6 +92,10 @@ def test_service_contract(p):
     assert spec["name"] == p.dir.name, "name must equal the folder name"
     if "domain" in spec:
         assert isinstance(spec.get("port"), int), f"{p.name}: a service with a domain needs a loopback port"
+    for route in routes_of(spec):
+        assert DOMAIN_RE.match(route["domain"]), (
+            f"{p.name}: {route['domain']!r} is neither a DNS label nor a hostname"
+        )
     if "port" in spec:
         assert isinstance(spec["port"], int)
     for vol, cfg in spec["volumes"].items():
@@ -193,3 +203,21 @@ def test_a_service_placed_on_several_hosts_is_one_folder_or_identical_copies():
         first = next(iter(trees.values()))
         for d, tree in trees.items():
             assert tree == first, f"{name}: {d} differs from another copy of this service folder"
+
+
+def test_no_service_name_shadows_another():
+    """No service name may be another service name followed by a dash.
+
+    The route-file cleanup in `roles/service/tasks/units.yml` finds the files one service
+    owns by globbing `dynamic.d/<name>-*.yml`, and removes the ones that converge did not
+    write -- which is what retires a public name a service no longer serves. The glob is
+    only unambiguous while no name is a prefix of another in that shape: a service called
+    `stirling` would match `stirling-pdf`'s route files and delete them.
+    """
+    names = sorted({p.name for p in placements()})
+    for shorter in names:
+        for longer in names:
+            assert shorter == longer or not longer.startswith(f"{shorter}-"), (
+                f"{longer} shadows {shorter}: the route-file cleanup globs "
+                f"`{shorter}-*.yml` and would delete {longer}'s route files"
+            )

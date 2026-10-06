@@ -173,6 +173,17 @@ def routes_of(spec: dict) -> list[dict]:
     return [{"domain": spec["domain"], "port": spec["port"]}] if "domain" in spec else []
 
 
+def route_fqdn(route: dict, host_domain: str) -> str:
+    """The public name of one route.
+
+    A route's `domain` is a full hostname when it carries a dot and a bare label the
+    host's own domain completes otherwise -- the rule in `roles/service/tasks/main.yml`,
+    and the dot is all of it, because a DNS label cannot contain one.
+    """
+    name = route["domain"]
+    return name if "." in name else f"{name}.{host_domain}"
+
+
 @service_case
 def test_route_rendered(host, owner, spec_path):
     hostvars = placed(host, owner)
@@ -183,10 +194,20 @@ def test_route_rendered(host, owner, spec_path):
     for route in routes:
         f = host.file(f"/etc/storagebaby/traefik/dynamic.d/{spec['name']}-{route['domain']}.yml")
         assert f.exists and f.mode == 0o644
-        assert f"Host(`{route['domain']}.{hostvars['domain']}`)" in f.content_string
+        assert f"Host(`{route_fqdn(route, hostvars['domain'])}`)" in f.content_string
     # One file per route replaced the single `<name>.yml`; a leftover would keep serving
     # the old router next to the new ones, because Traefik reads the whole directory.
     assert not host.file(f"/etc/storagebaby/traefik/dynamic.d/{spec['name']}.yml").exists
+    # And *exactly* the files this service's routes name. The role removes every
+    # `<name>-*.yml` it did not just write, which is what retires a public name a service
+    # no longer serves -- a route file is a live router, so moving a service to another
+    # domain would otherwise leave the old name answering forever.
+    d = "/etc/storagebaby/traefik/dynamic.d"
+    expected = {f"{d}/{spec['name']}-{route['domain']}.yml" for route in routes}
+    if spec.get("tcp_ports"):
+        expected.add(f"{d}/{spec['name']}-tcp.yml")
+    listing = host.run(f"ls -1 {d}/{spec['name']}-*.yml")
+    assert set(listing.stdout.split()) == expected, listing.stdout
 
 
 def subuid_range(host, user: str) -> tuple[int, int]:
@@ -355,7 +376,7 @@ def test_domain_answers_over_https(host, owner, spec_path):
     # Every route, not just the first: a pod that publishes two ports is exactly the
     # case where checking one of them proves nothing about the other.
     for route in routes:
-        fqdn = f"{route['domain']}.{hostvars['domain']}"
+        fqdn = route_fqdn(route, hostvars["domain"])
         r = host.run(f"curl -sk -o /dev/null -w '%{{http_code}}' -H 'Host: {fqdn}' https://127.0.0.1/")
         code = r.stdout.strip()
         # The rc is not optional: curl prints `000` and exits non-zero when it never got
@@ -465,7 +486,7 @@ def placed_route_fqdns(host) -> list[str]:
     hostname = host.check_output("uname -n")
     domain = load_spec(HOSTS / hostname / "host.yml")["domain"]
     found = {
-        f"{route['domain']}.{domain}"
+        route_fqdn(route, domain)
         for owner, spec_path in SPECS
         if owner in ("shared", hostname)
         for route in routes_of(load_spec(spec_path))

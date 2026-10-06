@@ -1,6 +1,11 @@
 domain: home.klees.io
 acme: true
 acme_email: email@janlucaklees.de
+# The domains this host can obtain a certificate for -- one wildcard request each. Both
+# are in the same Porkbun account, so the one resolver traefik declares covers them; the
+# A records are the operator's. A service takes a name under one of these by writing it
+# out in full in its own `service.yml`.
+cert_zones: [home.klees.io, klees.io]
 tz: Europe/Berlin
 storage_roots:
   pool: /pool/apps

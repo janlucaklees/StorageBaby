@@ -1,6 +1,6 @@
 name: stirling-pdf
 port: 8180
-domain: stirling
+domain: stirling.klees.io
 volumes:
   configs: { class: pool }
   logs: { class: pool }

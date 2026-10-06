@@ -15,6 +15,13 @@
     # places no TCP port never needs the fact. `host.yml` overrides it (include_vars outranks
     # play vars) on a host whose default route is not the address a client comes in on.
     tcp_bind_address: '{{ ansible_default_ipv4.address }}'
+    # The zones Traefik asks Let's Encrypt for a wildcard certificate for -- one `domains`
+    # entry each on the router that carries the resolver. A lazy default like the address
+    # above: a host that serves only its own domain declares nothing, and a host whose
+    # services take names under another zone lists both in `host.yml` (include_vars
+    # outranks play vars). It is the host's statement of which domains it can certify at
+    # all; `docs/ownership.md` § 4.2 has where that is going.
+    cert_zones: '{{ [domain] }}'
   pre_tasks:
     - name: Load host configuration
       ansible.builtin.include_vars:
@@ -82,11 +89,19 @@
     # rendered file against -- and the two orders differ as soon as one route name is
     # another plus a suffix: `-` sorts before `.`, so a pair like `paperless` and
     # `paperless-scan` comes out the other way round when the bare names are sorted first.
+    # A route name carrying a dot is already a full hostname and is left alone; a bare
+    # label is completed with the host's own domain. Same rule as `tasks/main.yml`, and
+    # the reason the two forms are partitioned rather than mapped: Jinja has no way to
+    # apply a conditional through `map`, and a `regex_replace` doing it would need a
+    # backreference, which Jinja string literals mangle.
     - name: The host's route fqdns, in a stable order
       ansible.builtin.set_fact:
         placed_fqdns: >-
-          {{ _placed_route_domains | default([]) | unique
-             | product(['.' ~ domain]) | map('join') | sort | list }}
+          {{ ((_names | select('search', '[.]') | list)
+              + (_names | reject('search', '[.]') | product(['.' ~ domain]) | map('join') | list))
+             | sort | list }}
+      vars:
+        _names: '{{ _placed_route_domains | default([]) | unique }}'
 
     # The host's TCP listeners, collected here for the same reason `placed_fqdns` is: a
     # service's spec knows its own ports, and what traefik's unit and the unprivileged

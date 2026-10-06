@@ -6,11 +6,14 @@ import pytest
 import yaml
 
 from conftest import (
+    HOSTS,
     RENDER_TCP_BIND_ADDRESS,
     host_names,
+    load_yaml,
     placed_fqdns,
     placed_tcp_ports,
     placements,
+    route_fqdn,
     routes_of,
     tcp_ports,
 )
@@ -157,10 +160,15 @@ def test_rendered_images_are_pullable_references(rendered, p):
 def test_route_rendered(rendered, p):
     # One file and one router per route, named `<service>-<domain>`: two routes of the
     # same service would otherwise overwrite each other's file and its router.
+    # The rule is asserted on the whole computed fqdn rather than on a prefix of it,
+    # because the prefix was what a route name completed by the host's domain and a route
+    # name that is already a full hostname have in common -- and telling those two apart
+    # is the point.
+    host_domain = load_yaml(HOSTS / p.host / "host.yml")["domain"]
     for r in routes_of(p.spec):
         route = rendered / p.host / "traefik-dynamic.d" / f"{p.name}-{r['domain']}.yml"
         assert route.exists(), route
-        assert f"Host(`{r['domain']}." in route.read_text()
+        assert f"Host(`{route_fqdn(r, host_domain)}`)" in route.read_text()
 
 
 @pytest.mark.parametrize(

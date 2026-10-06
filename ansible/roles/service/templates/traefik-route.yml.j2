@@ -12,11 +12,16 @@ http:
       entryPoints: [websecure]
       service: {{ opts.internal | default(service.name ~ '-' ~ route.domain) }}
 {% if acme and (opts.wildcard_cert | default(false)) %}
+{# One wildcard per zone the host says it can certify, not one for `domain` alone: a
+   service may take a name under any of them, and only a router with a resolver and
+   domains triggers an issuance. Every other router inherits what this one obtained. #}
       tls:
         certResolver: porkbun
         domains:
-          - main: "{{ domain }}"
-            sans: ["*.{{ domain }}"]
+{% for zone in cert_zones %}
+          - main: "{{ zone }}"
+            sans: ["*.{{ zone }}"]
+{% endfor %}
 {% else %}
       tls: {}
 {% endif %}

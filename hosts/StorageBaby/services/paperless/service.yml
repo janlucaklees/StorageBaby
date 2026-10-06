@@ -1,6 +1,6 @@
 name: paperless
 port: 8000
-domain: paperless
+domain: paperless.klees.io
 volumes:
   data: { class: pool, owner: 1000 }
   media: { class: pool, owner: 1000 }

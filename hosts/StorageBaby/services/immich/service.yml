@@ -1,6 +1,6 @@
 name: immich
 port: 2283
-domain: immich
+domain: immich.klees.io
 volumes:
   # `owner: 0` on both trees the app writes: immich-server and
   # immich-machine-learning declare no USER, and neither does their base image, so
