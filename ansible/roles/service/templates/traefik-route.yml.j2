@@ -4,6 +4,7 @@
 {% set opts = service.route | default({}) %}
 {% set scheme = route.scheme | default(opts.scheme | default('http')) %}
 {% set skip_verify = route.insecure_skip_verify | default(opts.insecure_skip_verify | default(false)) %}
+{% set basic_auth = route.basic_auth | default(opts.basic_auth | default(none)) %}
 {% set transport = service.name ~ '-' ~ route.domain %}
 http:
   routers:
@@ -11,6 +12,9 @@ http:
       rule: "Host(`{{ route.fqdn }}`)"
       entryPoints: [websecure]
       service: {{ opts.internal | default(service.name ~ '-' ~ route.domain) }}
+{% if basic_auth %}
+      middlewares: [{{ transport }}-auth]
+{% endif %}
 {% if acme and (opts.wildcard_cert | default(false)) %}
 {# One wildcard per zone the host says it can certify, not one for `domain` alone: a
    service may take a name under any of them, and only a router with a resolver and
@@ -24,6 +28,16 @@ http:
 {% endfor %}
 {% else %}
       tls: {}
+{% endif %}
+{% if basic_auth %}
+{# `basic_auth` names a podman secret of *traefik*, not of this service: Traefik is the
+   process that opens the users file, and a rootless user cannot see another user's
+   secrets. So the htpasswd line lives in traefik's `secrets.sops.yaml` and its unit
+   carries the matching `Secret=`, whichever service's route it protects. #}
+  middlewares:
+    {{ transport }}-auth:
+      basicAuth:
+        usersFile: /run/secrets/{{ basic_auth }}
 {% endif %}
 {% if opts.internal is not defined %}
 {% if skip_verify %}

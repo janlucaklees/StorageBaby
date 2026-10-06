@@ -137,6 +137,22 @@ route:
 
 A `routes:` entry may carry the same two keys and then overrides them for itself.
 
+A third option guards a route rather than describing its backend:
+
+```yaml
+route:
+  basic_auth: dashboard_htpasswd # a podman secret of traefik holding htpasswd lines
+```
+
+It renders a `basicAuth` middleware named `<name>-<domain>-auth` with
+`usersFile: /run/secrets/<secret>` and attaches it to the router. The secret is
+**traefik's**, whichever service's route it protects: Traefik is the process that opens
+the file, and a rootless user cannot see another user's podman secrets. So the value
+names a key in `hosts/shared/services/traefik/secrets.sops.yaml`, listed in traefik's
+`secrets:` and mounted by a `Secret=` line in its unit — not one of the protected
+service's own secrets. A `routes:` entry may override it like the other two. Today the
+only consumer is traefik's own dashboard.
+
 `scheme: https` is not about secrecy on a loopback hop — it is the only way Traefik
 speaks **HTTP/2** to a backend, and therefore the only way it can carry gRPC. Kopia's
 repository clients speak gRPC and cannot opt out, so `kopia/service.yml` declares both

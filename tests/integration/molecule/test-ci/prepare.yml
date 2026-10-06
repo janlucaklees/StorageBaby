@@ -270,18 +270,19 @@
     # crash-loop its workers. *64 characters*, because that is the longest anything
     # here asks for. Every other consumer takes an opaque string, so one shape that
     # satisfies the strictest of them satisfies all of them -- this generator knows
-    # nothing about which service it is writing for, with one exception below.
+    # nothing about which service it is writing for, with two exceptions below.
     # Hex is also URL-safe, which matters where a password is a field inside a
     # connection URL (openarchiver's DATABASE_URL).
     #
-    # The exception: a backup client's password exists twice, as `kopia_password` in the
+    # The first: a backup client's password exists twice, as `kopia_password` in the
     # pod's own secrets and as `client_<pod>` in kopia's, and the two are deliberately
     # not one shared set in the repository (an operator fills both). On a test host they
     # still have to be the *same* random string or no sidecar can log in, so both sides
     # take their value from one plaintext map on the controller, keyed by the pod's
     # name: whichever side is written first generates the value, the other reuses it.
     # The map is thrown away at the start of every prepare and holds nothing but the
-    # throwaway values of this run.
+    # throwaway values of this run. The second: a `*_htpasswd` secret is a users
+    # file Traefik parses, so it gets a known `user:hash` line instead of hex.
     #
     # Kept, not rewritten, when the file already there is encrypted to *this* host's
     # age key. A second `prepare` on a live VM is the operator's iteration loop, and
@@ -316,6 +317,11 @@
         printf '%s: "%s"\n' '{{ key }}' "$(paired '{{ item | dirname | basename }}')" >> "$TMP"
         {% elif key.startswith('client_') %}
         printf '%s: "%s"\n' '{{ key }}' "$(paired '{{ key[7:] }}')" >> "$TMP"
+        {% elif key.endswith('_htpasswd') %}
+        # An htpasswd users file, not an opaque value: Traefik's basicAuth parser rejects a
+        # line without `user:hash`, the middleware then fails to build and the router it
+        # guards answers 404. `test:test`, apr1 -- the tests send the same pair.
+        printf '%s: "%s"\n' '{{ key }}' 'test:$apr1$storageb$fLtofQKD3Zr3C1sGTbdBW0' >> "$TMP"
         {% else %}
         printf '%s: "%s"\n' '{{ key }}' "$(random)" >> "$TMP"
         {% endif %}
