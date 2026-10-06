@@ -19,6 +19,13 @@ The platform may **refuse** a service's request — a declaration it considers u
 name already claimed, a cross-service connection that looks wrong — and it fails loudly
 when it does. What it never does is silently substitute a decision of its own.
 
+**And the rule is not a purity test.** The goal is a platform that is practical and
+quick to start with, not a Kubernetes replacement. Where a clean separation would cost
+more than it is worth, the coupling is accepted and written down rather than engineered
+around: a host configuration and a service configuration changing in the same commit is
+normal here, not a smell. The rule exists to keep decisions findable — one place to read
+per question — not to make the two sides independent of each other.
+
 ## 2. The three owners
 
 **Service** — one folder under `hosts/**/services/<name>/`. Owns every decision about how
@@ -34,12 +41,12 @@ against, and the _execution_ of every decision a service makes.
 
 **Administrator** — the person, and the machine as they prepared it. Owns the hardware,
 the operating system and the currency of its packages, the disks and their mounts, the
-network and its addresses, and which host a service is placed on. This is not a
-decision bucket so much as a fact bucket: things the platform measures or the
-administrator states once per host.
+network and its addresses, which storages a host offers, and which host a service is
+placed on. This is not a decision bucket so much as a fact bucket: things the platform
+measures or the administrator states once per host.
 
-`host.yml` is where the administrator states those facts. It is **not** a second place to
-configure a service.
+`host.yml` is the administrator's instrument — the one place a host says what it is made
+of and what it offers. It is **not** a second place to configure a service.
 
 ## 3. Platform
 
@@ -51,7 +58,7 @@ configure a service.
 | Discovering what is placed                         | Including through symlinks, so one folder serves several hosts                                                                                                                                          |
 | Adding a service                                   | A new folder converges on the next run                                                                                                                                                                  |
 | Removing a service                                 | An unplaced service is removed from the host entirely: units, user, subordinate ids, podman secrets, its routes and — on an explicit instruction, never implicitly — its data                           |
-| Restoring a service to an earlier point            | Stop, materialise the data, start. See § 6.2                                                                                                                                                            |
+| Restoring a service to an earlier point            | Stop, materialise the data, start. See § 6.1                                                                                                                                                            |
 | Service identity on the host                       | `svc-<name>`, subuid/subgid, linger, the user's unit directory                                                                                                                                          |
 | Unit lifecycle                                     | Ordering (build → pod → container), which change restarts which unit, starting what is down, enabling what is declared                                                                                  |
 | Fetching images before anything is written         | Three attempts, ten minutes each; a failure leaves the running service alone                                                                                                                            |
@@ -64,22 +71,46 @@ configure a service.
 
 ## 4. Service
 
-| Decision                                                                                  | Note                                                                                                                                                                 |
-| ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Which containers and pods exist, their images, environment, health checks, restart policy |                                                                                                                                                                      |
-| Its domains, in full                                                                      | The complete hostname, not a label the host completes                                                                                                                |
-| **How** a certificate for each of them is obtained                                        | Challenge method, DNS provider and its API credentials, or none at all. The platform _performs_ the issuance; the service states how it is to be done                |
-| Whether it is served over TLS at all                                                      | A service that wants HTTPS and says nothing about how fails the deploy. There is no host-level fallback certificate                                                  |
-| Its mounts: names, storage class, owner uid                                               | The class is a statement of intent — fast or roomy — and the platform resolves it to a path. A service never needs to know the path                                  |
-| Its plain-TCP ports                                                                       |                                                                                                                                                                      |
-| Its secrets                                                                               | Encrypted in its own folder; the platform decrypts at converge time and makes them available at runtime                                                              |
-| Where its configuration files must land                                                   | Dictated by the software inside it, so the service states it and the platform puts them there. The platform keeps no lookup table of its own                         |
-| The configuration of every piece of software it runs                                      | Database names and users, cache settings, OCR languages, image versions                                                                                              |
-| What is backed up, how often, and how long it is kept                                     | See § 6.2 for who carries it out                                                                                                                                     |
-| When its images update                                                                    | Its own auto-update cadence                                                                                                                                          |
-| Its after-change hooks                                                                    | And, where the default is wrong, how long it may take to become healthy                                                                                              |
-| Which other services it may reach                                                         | Default deny: a service sees its own containers and nothing else. A cross-service connection is an exception the service declares and the platform grants or refuses |
-| What it needs from the host                                                               | Host packages, device access, kernel features. The service declares the need; the platform provides it or refuses                                                    |
+| Decision                                                                                  | Note                                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Which containers and pods exist, their images, environment, health checks, restart policy |                                                                                                                                                                                                                                                                           |
+| Its domains, in full                                                                      | The complete hostname, not a label the host completes                                                                                                                                                                                                                     |
+| **How** a certificate for each of them is obtained                                        | Challenge method, DNS provider and its API credentials, or none at all. The platform _performs_ the issuance; the service states how it is to be done                                                                                                                     |
+| Whether it is served over TLS at all                                                      | A service that wants HTTPS and says nothing about how fails the deploy. There is no host-level fallback certificate                                                                                                                                                       |
+| What it mounts, and the owner uid inside the container                                    | A service claims a storage the host offers — by class for its own data, by name for a tree it shares with others — and never needs to know a path. Saying nothing takes the host's default; an explicit path stays available for the tree the host has no name for. § 4.1 |
+| Its plain-TCP ports                                                                       |                                                                                                                                                                                                                                                                           |
+| Its secrets                                                                               | Encrypted in its own folder; the platform decrypts at converge time and makes them available at runtime                                                                                                                                                                   |
+| Where its configuration files must land                                                   | Dictated by the software inside it, so the service states it and the platform puts them there. The platform keeps no lookup table of its own                                                                                                                              |
+| The configuration of every piece of software it runs                                      | Database names and users, cache settings, OCR languages, image versions                                                                                                                                                                                                   |
+| What is backed up, how often, and how long it is kept                                     | See § 6.1 for who carries it out                                                                                                                                                                                                                                          |
+| When its images update                                                                    | Its own auto-update cadence                                                                                                                                                                                                                                               |
+| Its after-change hooks                                                                    | And, where the default is wrong, how long it may take to become healthy                                                                                                                                                                                                   |
+| Which other services it may reach                                                         | Default deny: a service sees its own containers and nothing else. A cross-service connection is an exception the service declares and the platform grants or refuses                                                                                                      |
+| What it needs from the host                                                               | Host packages, device access, kernel features. The service declares the need; the platform provides it or refuses                                                                                                                                                         |
+
+### 4.1 Claiming a storage
+
+A host offers storages and a service claims them. The administrator declares in
+`host.yml` what this machine has — classes for a service's own data (`fast` and the pool
+today; an archive or a tape that is only ever written would be more of the same), and
+named trees that exist independently of any one service, the media library being the
+case to think about. A service then says which it wants, by class or by name, and the
+platform resolves it to a path and makes the directory. No path appears in a service
+folder, and the same folder works on a second host as soon as that host offers the same
+names.
+
+Jellyfin is the shape: the host says it has a `media` tree, Jellyfin says `media` is its
+media volume, and neither of them spells out where it lives.
+
+**A host also names one storage as its default**, and a service that says nothing about
+where its data goes gets that one. So the simplest possible service declares a volume
+and no storage at all, and still lands somewhere sensible; saying which storage it wants
+is how a service departs from the host's default, not a line every service has to carry.
+
+**An explicit path stays available** for the tree the host has no name for. It couples
+that service folder to that machine, and that is accepted: exceptions of this kind will
+keep coming up, the cost of the coupling is one line in two files, and engineering it
+away costs more than it saves. Use a name when there is one; reach for a path knowingly.
 
 ## 5. Administrator
 
@@ -89,7 +120,8 @@ configure a service.
 | The operating system and keeping its packages current | No role upgrades or reboots a host                                                                                      |
 | Package repositories and keys                         |                                                                                                                         |
 | Disks, parity, the pool, and the mounts beneath them  | `storage` in `host.yml`                                                                                                 |
-| What the storage classes resolve to                   | `storage_roots`                                                                                                         |
+| Which storages this host offers, and where each lands | The classes a service's own data can ask for, and the named trees it can claim — § 4.1                                  |
+| Which of them is the default                          | What a service's data gets when the service says nothing about where it goes                                            |
 | Network addresses                                     | `tcp_bind_address`, and the DNS records a domain needs                                                                  |
 | Time zone                                             |                                                                                                                         |
 | Which host runs which service                         | By placing the folder                                                                                                   |
@@ -97,21 +129,7 @@ configure a service.
 
 ## 6. Open
 
-### 6.1 Absolute host paths in a service folder
-
-A `binds` entry names a path on the host (`/pool/shared/media`). That is machine
-knowledge inside a service folder, and it is the one place the three-owner split leaks.
-The service must stay in charge of _what it mounts_; the open question is whether the
-_path_ has to cross the boundary.
-
-The shape to beat is the one already used for volume classes: the administrator
-publishes **named** shares in `host.yml`, the service claims one by name. No path in a
-service folder, the mapping stays with the administrator, and a service placed on another
-host works as soon as that host publishes the same name. Rejected alternative: leaving
-the path in the service folder and asking the administrator to make it exist — the
-coupling survives, it is just undocumented.
-
-### 6.2 Backups and restores
+### 6.1 Backups and restores
 
 Settled: the platform owns the backup and restore **contract and lifecycle**; it does not
 own a backup **program**. Kopia is a service like any other.
@@ -130,7 +148,7 @@ owns what should run**, the backup repository owns **what the data was**. Nothin
 a snapshot id back into the repository — the deploy loop runs one way, and that is worth
 more than a single coordinate.
 
-### 6.3 Shared configuration
+### 6.2 Shared configuration
 
 Several services will want the same ACME credentials, and duplicating them per service is
 silly. The sketch: a provider is a folder shaped like a service that runs nothing and
@@ -142,7 +160,7 @@ no ordering beyond providers-before-consumers, and a provider may supply **data 
 The moment a provider needs to run something it is a service, and the consumer reaches it
 over the network like any other.
 
-### 6.4 Services that are not containers
+### 6.3 Services that are not containers
 
 Letting a service declare host packages implies a service that is only host packages,
 units and configuration — snapraid, were it a service rather than a role. That is a
@@ -184,4 +202,9 @@ The work list, measured against this document at 60b402f.
     `websecure` entrypoint exists because Kopia's upload is one long gRPC request.
 11. **Platform constants a service cannot override**: the hook health wait, the image
     pull retries, and the auto-update timer's cadence.
-12. **Bind mounts carry absolute host paths** — § 6.1.
+12. **A host offers classes but no named trees and no default**, so every shared tree
+    reaches a service as an absolute path written into its folder
+    (`binds: { host: /pool/shared/media }`), and every volume must state a class even
+    where the host's usual one would do. The path escape hatch stays; what is missing is
+    the name that should make it the exception, and the default that should make the
+    class optional — § 4.1.
