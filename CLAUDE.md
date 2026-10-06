@@ -192,3 +192,8 @@ From then on the host deploys itself: the timer runs `ansible-pull` as root ever
 `stable` is moved by CI, never by hand: `.github/workflows/ci.yml` runs the static checks and the `test-ci` Molecule scenario, and fast-forwards `stable` to the tested commit on a green master push. Until a host's age recipient is in `.sops.yaml`, its first converge fails at secret decryption — expected, and now in the `storage` role's mail task rather than in the first service, because `storage` runs first and `mail.sops.yaml` is the first secret the play reads.
 
 Secrets are sops+age at rest and `podman secret`s at runtime. A host can only decrypt what it runs: `hosts/<h>/**` is encrypted to the operator's key plus that host's key, `hosts/shared/**` to the operator's key plus every host key. CI never holds a key; it only verifies each file's recipient list against `.sops.yaml`.
+
+## Start here (added 2026-10-06)
+
+- `docs/architecture.md` — the shape of the platform: the deploy loop, the layers and their measured size, what the `service` role does with a folder end to end, where the complexity sits and which decision put it there, the known drift. Read it before the sections above; they are the reference, it is the map.
+- Known drift at 60b402f, recorded there in § 7: `hosts/StorageBaby/services/paperless/service.yml` carries a `touch /tmp/.hook-ran` hook that exists only for `test_deploy_runs_after_change_hooks`; `bootstrap.sh` installs no `make`, "Deployment" above still says it does; the retired `kopia-clients` set is still the worked example in the role README and the pod READMEs.
