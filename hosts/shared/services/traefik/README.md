@@ -10,7 +10,19 @@ with its own router and service named `<name>-<domain>`.
 A `route:` block carries options for all of a service's routes and a `routes[]`
 entry may override them: `internal: api@internal` and `wildcard_cert: true` are
 traefik's own, `scheme: https` + `insecure_skip_verify: true` are how Traefik
-reaches a backend that keeps its own TLS (kopia, nextcloud's collabora).
+reaches a backend that keeps its own TLS (kopia, nextcloud's collabora), and
+`basic_auth: <secret>` puts a `basicAuth` middleware in front of the router.
+
+## Dashboard
+
+`traefik.<domain>` is `api@internal`, behind basic auth: `route.basic_auth:
+dashboard_htpasswd` names the podman secret the `service` role mounts as the
+middleware's `usersFile`. The secret is one or more htpasswd lines (`user:hash`,
+`openssl passwd -apr1` or `htpasswd -nB`), the same file CloudBaby's compose stack
+hands Traefik as `traefik_ui_basicauth`. A `basic_auth` secret is always traefik's
+own, whichever route it protects — Traefik opens the file, and a rootless user
+cannot see another user's secrets. The test hosts get a generated `test:test` line
+from `prepare.yml`, which is what the integration test sends.
 
 ## TCP entrypoints
 
@@ -96,4 +108,5 @@ is authoritative for the domain never sees the TXT record.
 ## Secrets
 
 `porkbun_api_key`, `porkbun_secret_api_key` from `secrets.sops.yaml`, mounted
-at `/run/secrets/*` and read through lego's `_FILE` convention.
+at `/run/secrets/*` and read through lego's `_FILE` convention; `dashboard_htpasswd`
+from the same file, read by the dashboard's basicAuth middleware.

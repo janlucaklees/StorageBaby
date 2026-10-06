@@ -39,11 +39,11 @@ GROUP_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 # What a `routes:` entry may carry: the route itself, plus the two backend options a
 # single route can override for itself. Everything else about a route lives in the
 # service-wide `route:` block.
-ROUTE_KEYS = {"domain", "port", "scheme", "insecure_skip_verify"}
+ROUTE_KEYS = {"domain", "port", "scheme", "insecure_skip_verify", "basic_auth"}
 # What the service-wide `route:` block may carry: traefik's own two options, plus the
 # two backend ones an entry may then override for itself. Unchecked, a misspelling
 # here is silent -- the template reads the keys it knows and ignores the rest.
-BLOCK_KEYS = {"internal", "wildcard_cert", "scheme", "insecure_skip_verify"}
+BLOCK_KEYS = {"internal", "wildcard_cert", "scheme", "insecure_skip_verify", "basic_auth"}
 SCHEMES = {"http", "https"}
 
 

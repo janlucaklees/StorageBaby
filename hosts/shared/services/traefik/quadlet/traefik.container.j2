@@ -41,6 +41,11 @@ Environment=PORKBUN_API_KEY_FILE=/run/secrets/porkbun_api_key
 Environment=PORKBUN_SECRET_API_KEY_FILE=/run/secrets/porkbun_secret_api_key
 Secret=porkbun_api_key
 Secret=porkbun_secret_api_key
+{# The dashboard's htpasswd line, read by the basicAuth middleware the `service` role
+   renders into the dashboard's route file as `usersFile: /run/secrets/dashboard_htpasswd`.
+   A `route.basic_auth` secret is always one of Traefik's own: Traefik is the process that
+   reads the file, and a rootless user cannot see another user's podman secrets. #}
+Secret=dashboard_htpasswd
 HealthCmd=wget --spider -q http://127.0.0.1:{{ service.port }}/ping || exit 1
 HealthOnFailure=kill
 Volume={{ volumes.letsencrypt }}:/letsencrypt

@@ -291,7 +291,14 @@
         fi
         rm -f "$TMP"
         {% for key in (lookup('file', item) | from_yaml).secrets %}
+        {% if key.endswith('_htpasswd') %}
+        # An htpasswd users file, not an opaque value: Traefik's basicAuth parser rejects a
+        # line without `user:hash`, the middleware then fails to build and the router it
+        # guards answers 404. `test:test`, apr1 -- the tests send the same pair.
+        printf '%s: "%s"\n' '{{ key }}' 'test:$apr1$storageb$fLtofQKD3Zr3C1sGTbdBW0' >> "$TMP"
+        {% else %}
         printf '%s: "%s"\n' '{{ key }}' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$TMP"
+        {% endif %}
         {% endfor %}
         sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "$OUT"
         rm -f "$TMP"
