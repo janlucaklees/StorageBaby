@@ -270,9 +270,19 @@
     # crash-loop its workers. *64 characters*, because that is the longest anything
     # here asks for. Every other consumer takes an opaque string, so one shape that
     # satisfies the strictest of them satisfies all of them -- this generator knows
-    # nothing about which service it is writing for, and it should stay that way.
+    # nothing about which service it is writing for, with two exceptions below.
     # Hex is also URL-safe, which matters where a password is a field inside a
     # connection URL (openarchiver's DATABASE_URL).
+    #
+    # The first: a backup client's password exists twice, as `kopia_password` in the
+    # pod's own secrets and as `client_<pod>` in kopia's, and the two are deliberately
+    # not one shared set in the repository (an operator fills both). On a test host they
+    # still have to be the *same* random string or no sidecar can log in, so both sides
+    # take their value from one plaintext map on the controller, keyed by the pod's
+    # name: whichever side is written first generates the value, the other reuses it.
+    # The map is thrown away at the start of every prepare and holds nothing but the
+    # throwaway values of this run. The second: a `*_htpasswd` secret is a users
+    # file Traefik parses, so it gets a known `user:hash` line instead of hex.
     #
     # Kept, not rewritten, when the file already there is encrypted to *this* host's
     # age key. A second `prepare` on a live VM is the operator's iteration loop, and
@@ -282,6 +292,12 @@
     # with. The recipient check is what keeps a *fresh* VM correct — bootstrap makes a
     # new age key, the leftover files from the previous VM are addressed to the old
     # one, and nothing on the new host could decrypt them, so those are rewritten.
+    - name: Forget the previous run's kopia client passwords
+      ansible.builtin.file:
+        path: '/tmp/{{ inventory_hostname }}-kopia-clients.map'
+        state: absent
+      delegate_to: localhost
+
     - name: Write and encrypt one secrets file per service
       ansible.builtin.shell: |
         set -euo pipefail
@@ -289,15 +305,25 @@
           echo keeping
           exit 0
         fi
+        random() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+        # The one value a pod and the kopia server have to agree on, by pod name.
+        paired() {
+          grep -q "^$1=" "$MAP" 2>/dev/null || printf '%s=%s\n' "$1" "$(random)" >> "$MAP"
+          sed -n "s/^$1=//p" "$MAP"
+        }
         rm -f "$TMP"
         {% for key in (lookup('file', item) | from_yaml).secrets %}
-        {% if key.endswith('_htpasswd') %}
+        {% if key == 'kopia_password' %}
+        printf '%s: "%s"\n' '{{ key }}' "$(paired '{{ item | dirname | basename }}')" >> "$TMP"
+        {% elif key.startswith('client_') %}
+        printf '%s: "%s"\n' '{{ key }}' "$(paired '{{ key[7:] }}')" >> "$TMP"
+        {% elif key.endswith('_htpasswd') %}
         # An htpasswd users file, not an opaque value: Traefik's basicAuth parser rejects a
         # line without `user:hash`, the middleware then fails to build and the router it
         # guards answers 404. `test:test`, apr1 -- the tests send the same pair.
         printf '%s: "%s"\n' '{{ key }}' 'test:$apr1$storageb$fLtofQKD3Zr3C1sGTbdBW0' >> "$TMP"
         {% else %}
-        printf '%s: "%s"\n' '{{ key }}' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$TMP"
+        printf '%s: "%s"\n' '{{ key }}' "$(random)" >> "$TMP"
         {% endif %}
         {% endfor %}
         sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "$OUT"
@@ -311,6 +337,7 @@
       environment:
         TMP: '/tmp/{{ inventory_hostname }}-{{ item | dirname | basename }}-secrets.yaml'
         OUT: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/{{ item | dirname | basename }}.sops.yaml'
+        MAP: '/tmp/{{ inventory_hostname }}-kopia-clients.map'
       loop: '{{ _placed }}'
       loop_control:
         label: '{{ item | dirname | basename }}'
@@ -324,9 +351,10 @@
     # A real host's sets are committed and encrypted to the operator; a test host has
     # to grow its own, and both sides of a shared value have to be the *same* random
     # string -- that is the whole point of a set. So the references are collected
-    # first, grouped by set, and one file per set is written with one value per key:
-    # kopia's `client_paperless` and paperless's `kopia_password` both name
-    # `kopia-clients.paperless`, and so both get that key's single generated value.
+    # first, grouped by set, and one file per set is written with one value per key.
+    # No service in the repository declares one at the moment (the kopia client
+    # passwords used to, and are paired by name above instead), so on every host the
+    # list is empty and the tasks below are no-ops; the mechanism stays supported.
     - name: Collect every host secret reference of every placed service
       ansible.builtin.set_fact:
         _refs: "{{ _refs + ((lookup('file', item) | from_yaml).host_secrets
@@ -339,11 +367,9 @@
       ansible.builtin.set_fact:
         _set_names: "{{ _refs | map('regex_replace', '\\..*$', '') | unique | sort | list }}"
 
-    # Every pod references `kopia-clients.<service>` and the kopia server the other half
-    # of each, so on a host that places one this writes a single kopia-clients file with
-    # one value per client. On a host that places no pod the list is empty and the task
-    # is a no-op -- which is what it has to be, rather than writing an empty file or
-    # failing on one.
+    # On a host where nothing references a set the list is empty and the task is a
+    # no-op -- which is what it has to be, rather than writing an empty file or failing
+    # on one.
     # Kept on a re-run for the same reason as the per-service files above: a client
     # password that changed under a connected sidecar is state the VM cannot repair.
     - name: Write and encrypt one file per referenced host secret set

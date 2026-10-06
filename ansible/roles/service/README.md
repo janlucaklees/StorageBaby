@@ -312,7 +312,7 @@ between services on one host:
 
 ```yaml
 host_secrets:
-  kopia_password: kopia-clients.paperless # <set>.<key>
+  kopia_password: kopia-clients.paperless # <set>.<key>; an example, see below
 ```
 
 The set is `hosts/<host>/secrets/<set>.sops.yaml`, encrypted under that host's rule, so
@@ -321,9 +321,13 @@ there and syncs each entry into a Podman secret of `svc-<name>` with the same he
 own secrets use — so a changed value restarts the service's units exactly like any other.
 Key names are plaintext in a sops file, so a static test checks every reference resolves.
 
-That is how one string is the same on both sides: the kopia server declares
-`client_<service>: kopia-clients.<service>` and the client `kopia_password:
-kopia-clients.<service>`.
+That is how one string can be made the same on both sides. The kopia client passwords
+were the one use — server `client_<service>: kopia-clients.<service>`, client
+`kopia_password: kopia-clients.<service>` — and are not any more: each side carries the
+value in its own `secrets.sops.yaml` (`client_<pod>` on the server, `kopia_password` in
+the pod), filled with the same string by the operator, so a service folder depends on
+no set. The mechanism stays, supported and tested, for the next pair that needs it; the
+test harness pairs the kopia values by name without it.
 
 ## Hooks
 
