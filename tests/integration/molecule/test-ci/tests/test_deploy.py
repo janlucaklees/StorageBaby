@@ -19,6 +19,7 @@ from typing import NamedTuple
 
 import pytest
 from conftest import run_as
+from test_external import pointer_cases
 from test_service import (
     HOSTS,
     SPECS,
@@ -38,6 +39,9 @@ DEPLOY = "timeout 900 systemctl start storagebaby-deploy.service"
 SEEDED = "/srv/src"
 # The checkout `ansible-pull` clones into and re-uses; the deploy unit names it.
 PULLED = "/var/lib/storagebaby/repo"
+# The pointer's own working copy, pushed to by the cases below -- the counterpart of
+# `/srv/git/<name>.git`, the bare remote `storagebaby-deploy` fetches from.
+EXT_SRC = "/srv/ext-src"
 JOURNAL = "journalctl -u storagebaby-deploy.service --no-pager | tail -80"
 # `-u test:test`: the dashboard sits behind the basicAuth middleware `route.basic_auth`
 # renders, and the pair is the one `prepare.yml` writes into `dashboard_htpasswd` on a test
@@ -574,6 +578,148 @@ def test_deploy_runs_after_change_hooks(host):
     )
 
 
+# --- the external-repository path ---------------------------------------------------
+
+
+def first_pointer(host) -> tuple[str, str, dict] | None:
+    """(owner, name, source.yml) of the first pointer placed on this VM, or None.
+
+    The owner is 'shared' or the host folder, which is where the pointer folder lives --
+    the removal case below deletes it from the seeded checkout and needs that path.
+    """
+    hostname = host.check_output("uname -n")
+    for owner, name, source in pointer_cases():
+        if owner in ("shared", hostname):
+            return owner, name, source
+    return None
+
+
+def state_lines(host) -> dict[str, str]:
+    return dict(ln.split(" ", 1) for ln in host.file(STATE).content_string.splitlines() if " " in ln)
+
+
+@pytest.mark.order(-1)
+def test_a_push_to_the_external_repository_restarts_only_its_service(host):
+    """A commit in the pointed repository is a deploy: that service restarts, nothing else.
+
+    The change is one `Environment=` line in the fixture's template, which reaches exactly
+    one rendered file. The state file records the external HEAD afterwards, so the next
+    tick is a no-op again.
+    """
+    found = first_pointer(host)
+    if not found:
+        pytest.skip("no pointer placed on this host")
+    _, name, source = found
+    user, unit = f"svc-{name}", f"{name}.service"
+    other = other_placed_service(host)
+    before = unit_marks(host, user, unit)
+    assert before.active_since != "0", f"{unit} has no ActiveEnterTimestamp"
+    traefik_before = unit_marks(host, "svc-traefik", "traefik.service")
+    other_before = unit_marks(host, f"svc-{other[0]}", other[1]) if other and other[0] != name else None
+
+    template = f"{EXT_SRC}/{name}/{source['path']}/quadlet/{name}.container.j2"
+    r = host.run(
+        f"cd {EXT_SRC}/{name} && sed -i 's|^Environment=TZ=.*|&\\nEnvironment=EXT_DEPLOY_MARK=2|' {template} "
+        f"&& git -c user.name=t -c user.email=t@t commit -qam 'an environment line' && git push -q origin {source['ref']}"
+    )
+    assert r.rc == 0, r.stderr
+    pushed = host.check_output(f"git -C /srv/git/{name}.git rev-parse {source['ref']}")
+
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+    rendered = host.file(f"/etc/containers/systemd/users/{host.user(user).uid}/{name}.container").content_string
+    assert "Environment=EXT_DEPLOY_MARK=2" in rendered, rendered
+    assert unit_marks(host, user, unit).active_since != before.active_since, f"{unit} was not restarted"
+    assert_the_role_did_not_restart(host, "svc-traefik", "traefik.service", traefik_before, "traefik restarted too")
+    if other_before:
+        assert_the_role_did_not_restart(host, f"svc-{other[0]}", other[1], other_before, f"{other[0]} restarted too")
+    assert state_lines(host)[f"source:{name}"] == pushed
+    assert host.run(f"systemctl --user -M {user}@ is-active {unit}").stdout.strip() == "active"
+
+
+@pytest.mark.order(-1)
+def test_a_push_that_renders_nothing_new_restarts_nothing(host):
+    """A README commit in the pointed repository runs the playbook and changes no unit."""
+    found = first_pointer(host)
+    if not found:
+        pytest.skip("no pointer placed on this host")
+    _, name, source = found
+    user, unit = f"svc-{name}", f"{name}.service"
+    before = unit_marks(host, user, unit)
+    r = host.run(
+        f"cd {EXT_SRC}/{name} && printf '\\nA line nothing renders.\\n' >> README.md "
+        f"&& git -c user.name=t -c user.email=t@t commit -qam 'readme' && git push -q origin {source['ref']}"
+    )
+    assert r.rc == 0, r.stderr
+    pushed = host.check_output(f"git -C /srv/git/{name}.git rev-parse {source['ref']}")
+    marker = host.check_output("date +%s")
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+    journal = host.run(f"journalctl -u storagebaby-deploy.service --since @{marker} --no-pager").stdout
+    assert "PLAY RECAP" in journal, f"the playbook did not run for a moved checkout:\n{journal}"
+    assert_the_role_did_not_restart(host, user, unit, before, "a README commit restarted the service")
+    assert state_lines(host)[f"source:{name}"] == pushed
+
+
+@pytest.mark.order(-1)
+def test_a_revoked_token_fails_the_tick_and_leaves_the_service_up(host):
+    """The fetch is refused, the unit fails, the journal names the repository, nothing moves.
+
+    Revoked on the server side -- the git server re-reads its credentials file on every
+    request -- so the pointer's encrypted file is untouched and put back is one `mv`.
+    """
+    found = first_pointer(host)
+    if not found:
+        pytest.skip("no pointer placed on this host")
+    _, name, _ = found
+    user, unit = f"svc-{name}", f"{name}.service"
+    before = unit_marks(host, user, unit)
+    state_before = host.file(STATE).content_string
+    assert host.run("cp -a /etc/test-git-http/credentials /etc/test-git-http/credentials.harness-backup").rc == 0
+    try:
+        assert host.run("printf 'revoked\\n' > /etc/test-git-http/credentials").rc == 0
+        # No commit is needed to provoke the fetch: the script fetches every pointer on
+        # every tick, and the refusal happens there, before the state is even compared.
+        marker = host.check_output("date +%s")
+        r = host.run(DEPLOY)
+        journal = host.run(f"journalctl -u storagebaby-deploy.service --since @{marker} --no-pager").stdout
+        assert r.rc != 0, f"the tick survived a revoked token\n{journal}"
+        assert name in journal and ("401" in journal or "Authentication failed" in journal), journal
+        assert "PLAY RECAP" not in journal, f"the playbook ran after a failed fetch\n{journal}"
+        assert host.file(STATE).content_string == state_before, "a failed tick changed the state file"
+        assert_the_role_did_not_restart(host, user, unit, before, "a failed fetch restarted the service")
+        assert host.run(f"systemctl --user -M {user}@ is-active {unit}").stdout.strip() == "active"
+    finally:
+        assert host.run("mv -f /etc/test-git-http/credentials.harness-backup /etc/test-git-http/credentials").rc == 0
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+
+
+@pytest.mark.order(-1)
+def test_a_registry_the_host_does_not_offer_is_refused(host):
+    """A service naming a registry outside the host's `registries` list fails the converge, by name.
+
+    Made in the pulled checkout and read back with `--check`, like the image-tag case in
+    `test_the_whole_playbook_runs_clean_in_check_mode`: nothing is pushed, nothing converges,
+    and `git checkout` takes it back. The assert in `registries.yml` runs under check mode
+    (asserts always do), and it runs before any copy or decrypt, so this is the message an
+    operator would read on the real host.
+    """
+    found = single_container_service(host)
+    if not found:
+        pytest.skip("no single-container service is placed on this host")
+    name, _, _, _, template = found
+    spec = str(Path(template).parent.parent.relative_to("/repo") / "service.yml")
+    assert host.run(f"cd {PULLED} && printf 'registries: [nowhere.example]\\n' >> {spec}").rc == 0
+    try:
+        r = host.run(CHECK)
+        assert r.rc != 0, f"--check accepted a registry the host does not offer\n{r.stdout[-4000:]}"
+        assert "nowhere.example" in r.stdout and name in r.stdout, r.stdout[-4000:]
+    finally:
+        assert host.run(f"cd {PULLED} && git checkout -- .").rc == 0
+    assert "nowhere.example" not in host.file(f"{PULLED}/{spec}").content_string, f"{spec} was not put back"
+
+
 # --- the storage role, from the deploy path ----------------------------------------
 #
 # Both of these push to the seeded remote and disturb the host's filesystems, so they are
@@ -685,3 +831,32 @@ def test_a_pool_option_change_remounts_the_pool_exactly_once(host):
     empty_commit(host, "a second deploy cycle over the same pool option")
     assert host.run(DEPLOY).rc == 0, host.run(JOURNAL).stdout
     assert host.run(stamp).stdout.strip() == after, "the pool was remounted again by an unchanged unit"
+
+
+@pytest.mark.order(-1)
+def test_removing_the_pointer_removes_the_fetched_repository(host):
+    """Unplacing an external service deletes its checkout under sources/ and its state line.
+
+    Last in the file on purpose: after it the service is unplaced on this VM, and `prepare`
+    is what puts the pointer back. The service's units are left as every unplaced service's
+    are today -- `docs/ownership.md` § 3 names full removal as the target and § 7.6 records
+    that it does not exist yet; when it lands, the last assertion below flips with it. The
+    route file goes with the converge like any stale route.
+    """
+    found = first_pointer(host)
+    if not found:
+        pytest.skip("no pointer placed on this host")
+    owner, name, _ = found
+    folder = f"hosts/{owner}/services/{name}"
+    r = host.run(
+        f"cd {SEEDED} && git rm -rq {folder} "
+        "&& git -c user.name=t -c user.email=t@t commit -qm 'unplace the external service' && git push -q origin stable"
+    )
+    assert r.rc == 0, r.stderr
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+    assert not host.file(f"/var/lib/storagebaby/sources/{name}").exists
+    assert f"source:{name}" not in state_lines(host)
+    # The documented half of unplacing: the units stay, like every unplaced service's. A
+    # cleanup that stopped them would be a contract change and has to fail here first.
+    assert host.run(f"systemctl --user -M svc-{name}@ is-active {name}.service").stdout.strip() == "active"
