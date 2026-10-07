@@ -20,6 +20,7 @@ from typing import NamedTuple
 import pytest
 from conftest import run_as
 from test_service import (
+    HOSTS,
     SPECS,
     container_name,
     hosts_file_map,
@@ -116,6 +117,9 @@ def other_placed_service(host) -> tuple[str, str] | None:
     """
     hostname = host.check_output("uname -n")
     for owner, spec_path in SPECS:
+        if not spec_path.is_relative_to(HOSTS):
+            # A pointer's spec lives in the fetched external tree, not under hosts/.
+            continue
         name = service_name(spec_path)
         if name != "traefik" and owner in ("shared", hostname):
             return name, pod_unit(spec_path) or f"{name}.service"
@@ -283,11 +287,18 @@ def single_container_service(host):
     A `.build`- or `.image`-backed service is skipped for the reason above `UNIT_BACKED`.
     The filter earns its keep: `build-echo` sorts first among the services of both test
     hosts, so without it every case below would pick the one service whose `Image=` names
-    a unit and cannot be repointed at a tag. With it, test-a lands on jellyfin and test-ci
-    on kopia.
+    a unit and cannot be repointed at a tag. A pointer-placed service (`ext-echo`) is
+    skipped too, for a different reason: its spec is read from the fetched external
+    tree, not from the deploy's own checkout of this repo, so the cases below that `sed`
+    a template and push to `stable` would edit a file the host never reads and see a
+    silent no-op instead of the failure or the drift they're asserting on. With both
+    filters, test-a lands on jellyfin and test-ci on kopia.
     """
     hostname = host.check_output("uname -n")
     for owner, spec_path in SPECS:
+        if not spec_path.is_relative_to(HOSTS):
+            # A pointer's template can't be mutated through the deploy's own checkout.
+            continue
         name = service_name(spec_path)
         if name == "traefik" or owner not in ("shared", hostname) or pod_unit(spec_path):
             continue
