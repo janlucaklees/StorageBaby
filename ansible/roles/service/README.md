@@ -436,6 +436,31 @@ published by no pod so nothing off the host can reach it, and the blast radius i
 service's own backups, reachable only from processes that already hold that service's
 live data.
 
+### A sidecar that cannot connect stays up and says so
+
+The sidecar is **the one container on the platform without `HealthOnFailure=kill`**, and
+a static test keeps it that way. For an application, an unhealthy container is one
+systemd should replace. For this one, health _is_ "can I reach the kopia server" -- a
+condition outside the container that `kopia-client.sh` already retries every 15 s,
+forever, logging each attempt. Killing it replaces that loop with a container recreated
+every few minutes, which throws away the log and makes the symptom read as a restart
+loop.
+
+Both halves of this were learned from one fault. A kopia server answers a **wrong client
+password** by never completing the gRPC session rather than by refusing it: the TCP
+connection is made, TLS succeeds, the stream opens, and then nothing -- no client error,
+and not even a `starting session for user` line in the server's log. So:
+
+- every call that opens a session is wrapped in `timeout $KOPIA_ATTEMPT_TIMEOUT`
+  (120 s), which turns the hang into a failed attempt with a log line that names the
+  likely cause -- `kopia_password` not matching the server's `client_<service>`;
+- the sidecar is left unhealthy rather than killed, so it keeps retrying and keeps
+  saying why, and shows up as unhealthy in `storagebaby-svc ps`.
+
+Nothing can check the two passwords match at converge time -- they are two independent
+sops values and CI holds no key -- so a loud failure at runtime is the whole of the
+defence. `Restart=always` still covers the sidecar actually dying.
+
 The sidecar also verifies an existing connection before trusting it: the server
 certificate fingerprint it pinned at connect time is frozen in `repository.config`, and
 Traefik hands out a fresh self-signed default certificate on every restart of a host
@@ -506,6 +531,9 @@ equivalent of. Restore with
 `psql --single-transaction --set ON_ERROR_STOP=on --dbname=<db> --username=<user> < <db>.sql`.
 
 ## What every `.container` must declare
+
+The generated backup sidecar is the documented exception to the second of these -- see
+"A sidecar that cannot connect stays up and says so" above.
 
 `HealthCmd=`, `HealthOnFailure=kill`, `Restart=always` and `ContainerName=`; the static
 test enforces all four. They are contract, not style: the integration verifier runs

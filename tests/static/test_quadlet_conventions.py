@@ -37,6 +37,30 @@ def test_container_declares_health_and_restart(path):
         assert any(ln.startswith(required) for ln in lines), f"{path.name}: no line starting with {required!r}"
 
 
+def test_the_backup_sidecar_reports_health_but_is_not_killed_for_it():
+    """The generated kopia sidecar is the one container that must *not* kill on health.
+
+    Its health is "can I reach the kopia server", a condition outside the container that
+    `kopia-client.sh` already retries forever and logs each time. Killing it replaces that
+    loop with a container recreated every few minutes, which is how a plain credential
+    mismatch on immich stayed invisible for two days: the error scrolled out of the
+    journal and the symptom read as a restart loop rather than a failed connection.
+
+    Asserted rather than left to a comment because `HealthOnFailure=kill` is the rule
+    everywhere else on the platform -- the test above demands it of every service-folder
+    container -- so the obvious "fix" for anyone reading this template is to add it back.
+    """
+    # Directive lines start at column 0 in this template; the explanatory Jinja comment is
+    # indented, so a prose mention of the option is not mistaken for the option.
+    lines = (ROLE_TEMPLATES / "kopia-client.container.j2").read_text().splitlines()
+    assert any(ln.startswith("HealthCmd=") for ln in lines), "the sidecar must still report its health"
+    assert any(ln.startswith("Restart=always") for ln in lines), "a sidecar that dies outright is still restarted"
+    assert not any(ln.startswith("HealthOnFailure=") for ln in lines), (
+        "kopia-client.container.j2 must not kill on health failure -- kopia-client.sh owns the retry; "
+        "see the comment on HealthStartPeriod in that template"
+    )
+
+
 @pytest.mark.parametrize("d", _service_dirs(), ids=lambda d: d.name)
 def test_no_service_declares_an_image_unit(d):
     # Quadlet's `.image` unit pulls a registry reference of its own, and the role's

@@ -56,8 +56,21 @@ server_fingerprint() {
 	printf '%s' "$fingerprint"
 }
 
+# Every call that opens a session is bounded, and this is the reason: a kopia server
+# answers a **wrong client password** by never completing the gRPC session rather than by
+# refusing it. The TCP connection is made, TLS succeeds, the stream is opened, and then
+# nothing -- no error on the client, and not even a "starting session for user" line in
+# the server's own log. Unbounded, that is an indefinite hang.
+#
+# Measured, on this platform: immich's `kopia_password` and the kopia server's
+# `client_immich` had been filled with two different strings, and the sidecar hung on
+# every connect for two days without once saying why. With a timeout the same fault is a
+# failed attempt and a log line, which is the difference between a bug somebody finds and
+# a backup that silently does not exist.
+KOPIA_ATTEMPT_TIMEOUT=${KOPIA_ATTEMPT_TIMEOUT:-120}
+
 connect_to_server() {
-	set -- kopia repository connect server \
+	set -- timeout "$KOPIA_ATTEMPT_TIMEOUT" kopia repository connect server \
 		--url="$KOPIA_SERVER_URL" \
 		--override-username="$KOPIA_CLIENT_USERNAME" \
 		--override-hostname="$KOPIA_CLIENT_HOSTNAME"
@@ -75,14 +88,23 @@ connect_to_server() {
 # is then locked out for good ("can't find certificate matching SHA256 fingerprint").
 # A connection that cannot open the repository is worth nothing, so it is thrown away
 # and made again -- which re-fetches the certificate and pins the current one.
-if [ -f "$KOPIA_CONFIG_PATH" ] && ! kopia repository status > /dev/null 2>&1; then
+if [ -f "$KOPIA_CONFIG_PATH" ] && ! timeout "$KOPIA_ATTEMPT_TIMEOUT" kopia repository status > /dev/null 2>&1; then
 	echo "kopia: the stored connection does not open, reconnecting" >&2
 	rm -f "$KOPIA_CONFIG_PATH"
 fi
 
 if [ ! -f "$KOPIA_CONFIG_PATH" ]; then
 	until connect_to_server; do
-		echo "kopia server not reachable yet, retrying in 15s" >&2
+		# `$?` here is the condition's status: `timeout` reports 124 when it had to kill
+		# the attempt, and that is a different fault from a server that is not up yet.
+		# Named explicitly because the two look identical in a restart loop otherwise,
+		# and the credential one is the one nobody guesses.
+		if [ "$?" -eq 124 ]; then
+			echo "kopia: connect timed out after ${KOPIA_ATTEMPT_TIMEOUT}s -- the server took the connection but never completed the session." >&2
+			echo "kopia: the usual cause is a credential mismatch; this service's kopia_password must equal the kopia server's client_${KOPIA_CLIENT_USERNAME} secret." >&2
+		else
+			echo "kopia server not reachable yet, retrying in 15s" >&2
+		fi
 		sleep 15
 	done
 fi

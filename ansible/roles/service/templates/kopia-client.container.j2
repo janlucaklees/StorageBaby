@@ -60,7 +60,22 @@ Volume={{ volumes['backup-cache'] }}:/app/cache
 Volume={{ volumes[path] }}:/data/{{ path }}:ro
 {% endfor %}
 HealthCmd=kopia repository status
-HealthOnFailure=kill
+{# **No `HealthOnFailure=kill`, and this is the one container on the platform without it.**
+   Every service-folder container declares it and a static test demands it, because for
+   an application an unhealthy container is one systemd should replace. For this sidecar
+   it is the opposite: its health *is* "can I reach the kopia server", which is a
+   condition outside the container, and `kopia-client.sh` already owns the answer -- it
+   retries every 15 s, forever, logging each attempt.
+
+   Killing it defeats exactly that. Measured here: immich's client password did not match
+   the server's, so the sidecar could never connect, and the kill turned a loud retry loop
+   into a container recreated every 5.5 minutes for two days -- the error scrolled out of
+   the journal, `podman ps` showed a restart loop rather than a connection failure, and
+   nobody looked at a service whose pod was otherwise green. Left unhealthy instead, it
+   stays visible in `storagebaby-svc ps` and keeps saying why in its log.
+
+   `Restart=always` below still covers the sidecar actually dying, which is the case a
+   restart can fix. A static test keeps the kill from coming back. #}
 HealthStartPeriod=180s
 
 [Service]
