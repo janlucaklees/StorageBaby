@@ -415,7 +415,7 @@ Stop the timer **before** the placing commit reaches `stable`:
 doas systemctl stop storagebaby-deploy.timer
 ```
 
-The checkout the deploy unit converges from does not exist yet — `ansible-pull` clones it
+The checkout the deploy unit converges from does not exist yet — the deploy script clones it
 on its first run, and there must be no first unattended run before this one. Make it by
 hand, at the commit CI promoted, with the host's own deploy key:
 
@@ -476,15 +476,11 @@ doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
 doas systemctl start storagebaby-deploy.timer
 ```
 
-**If the converge aborts, re-run that same command.** Do not reach for the timer or the
-deploy unit to finish it: `ansible-pull` runs with `--only-if-changed`, which compares the
-checkout's sha before and after its own `git` step, and the checkout is already at
-`stable`'s tip — so a tick converges nothing and the host sits half-done looking idle,
-until the next push to `stable`. That is right after a successful run and wrong after a
-failed one, and the hand command is what closes the gap. Measured on the test VM:
-`systemctl start storagebaby-deploy.service` against an unchanged checkout logs
-`Repository has not changed, quitting` and exits 0 without running the playbook, so
-starting the unit by hand is not a retry either.
+**If the converge aborts, re-run that same command — or start the deploy unit.**
+`storagebaby-deploy` writes `/var/lib/storagebaby/deploy.state` only after a converge that
+ended `failed=0`, so a tick after a failed run finds the state stale and runs the playbook
+again. (`ansible-pull --only-if-changed`, which the unit used to run, compared the checkout
+before and after its own fetch and would have sat idle until the next push.)
 
 Nothing needs starting afterwards: the services this converge places are started by it.
 What comes back down is only whatever the old stacks were serving, and that is what step 10

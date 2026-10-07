@@ -1,5 +1,5 @@
 [Unit]
-Description=StorageBaby deploy (ansible-pull of the stable branch)
+Description=StorageBaby deploy (fetch the stable branch and every pointed repository, converge on change)
 After=network-online.target
 Wants=network-online.target
 
@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=oneshot
 EnvironmentFile=/etc/storagebaby/deploy.conf
 Environment="GIT_SSH_COMMAND=ssh -i /etc/storagebaby/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-ExecStart=/usr/bin/ansible-pull --url ${REPO_URL} --checkout ${BRANCH} --directory /var/lib/storagebaby/repo --inventory ansible/inventory/hosts.yml --limit %H --only-if-changed $EXTRA_ARGS ansible/playbook.yml
+ExecStart=/usr/local/sbin/storagebaby-deploy
 # Without this, a host whose hostname has no hosts/<name> folder converges nothing
-# at all -- --limit matches no host and ansible-pull still exits 0. Fail visibly.
+# at all -- --limit matches no host and the playbook still exits 0. Fail visibly.
 ExecStartPost=/usr/bin/test -d /var/lib/storagebaby/repo/hosts/%H

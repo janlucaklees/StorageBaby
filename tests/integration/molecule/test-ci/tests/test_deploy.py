@@ -1,9 +1,11 @@
-"""The production deploy path: `storagebaby-deploy.service` pulling the stable branch.
+"""The production deploy path: `storagebaby-deploy.service` fetching the stable branch.
 
-The unit is a oneshot that runs `ansible-pull` against the bare repo seeded in
-prepare, so `systemctl start` blocks until the whole convergence is done -- a minute
-or two on the first run, which clones the repo first. `timeout` keeps a wedged pull
-from hanging the verifier.
+The unit is a oneshot that runs `/usr/local/sbin/storagebaby-deploy` against the bare repo
+seeded in prepare: it fetches the checkout, compares it (and every pointed external
+repository) with the SHAs of the last successful converge in /var/lib/storagebaby/deploy.state,
+and runs the playbook when anything differs. `systemctl start` blocks until the whole
+convergence is done -- a minute or two on the first run, which clones the repo first.
+`timeout` keeps a wedged pull from hanging the verifier.
 
 Every case here runs last (`order(-1)`, which keeps their relative order): all but the
 first two push to the seeded remote and restart a service or remount the pool, which every
@@ -140,14 +142,40 @@ def check_recap(result) -> list[str]:
 
 
 @pytest.mark.order(-1)
-def test_deploy_service_is_a_noop_when_nothing_changed(host):
-    # The checkout renders byte for byte what the converge already put on the host, so
-    # nothing is reported changed and no unit is restarted -- that is the whole claim.
+def test_first_deploy_converges_the_checkout_and_changes_nothing(host):
+    """The first tick finds no state file, clones the checkout and runs the playbook; the
+    checkout renders byte for byte what the converge already put on the host, so nothing
+    is reported changed and no unit is restarted.
+    """
     before = unit_marks(host, "svc-traefik", "traefik.service")
     r = host.run(DEPLOY)
     assert r.rc == 0, host.run(JOURNAL).stdout
     assert host.file("/var/lib/storagebaby/repo/ansible/playbook.yml").exists
     assert_the_role_did_not_restart(host, "svc-traefik", "traefik.service", before, "a deploy that changed nothing")
+
+
+STATE = "/var/lib/storagebaby/deploy.state"
+NOOP_LINE = "nothing changed since the last converge; not running the playbook"
+
+
+@pytest.mark.order(-1)
+def test_a_tick_with_nothing_changed_does_not_run_the_playbook(host):
+    """The second tick: the state file matches every watched checkout, so no playbook runs.
+
+    Checked on the journal line the script writes, not on timing: a playbook that runs and
+    changes nothing looks the same from the units' side, and this is the claim that the
+    tick is cheap when the world did not move.
+    """
+    state = host.file(STATE)
+    assert state.exists, "the first deploy wrote no state file"
+    repo_sha = host.check_output("git -C /var/lib/storagebaby/repo rev-parse HEAD")
+    assert f"repo {repo_sha}" in state.content_string.splitlines(), state.content_string
+    marker = host.check_output("date +%s")
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+    journal = host.run(f"journalctl -u storagebaby-deploy.service --since @{marker} --no-pager").stdout
+    assert NOOP_LINE in journal, journal
+    assert "PLAY RECAP" not in journal, f"the playbook ran on an unchanged state:\n{journal}"
 
 
 # Declared after the case above and not before it, although it changes nothing itself:
@@ -281,12 +309,12 @@ def test_deploy_restores_a_drifted_host_gateway_dropin(host):
     disk -- which is also the real failure mode, a host that has been edited by hand or
     converged from an older commit.
 
-    The commit pushed here is empty on purpose: `ansible-pull --only-if-changed` runs
-    the playbook only when the checkout moved, so the deploy needs a new sha, and an
-    empty one leaves the tree identical. Everything the converge then renders matches
-    what is already on the host except the file this test broke, which makes the pair
-    of assertions below -- this unit restarted, traefik did not -- say exactly that a
-    changed drop-in is what restarts a unit.
+    The commit pushed here is empty on purpose: the deploy script runs the playbook only
+    when a watched checkout's SHA differs from the state file, so the deploy needs a new
+    sha, and an empty commit leaves the tree identical. Everything the converge then
+    renders matches what is already on the host except the file this test broke, which
+    makes the pair of assertions below -- this unit restarted, traefik did not -- say
+    exactly that a changed drop-in is what restarts a unit.
     """
     found = single_container_service(host)
     if not found:
@@ -548,10 +576,10 @@ def pool_unit(s: dict) -> str:
 def empty_commit(host, message: str):
     """A new sha on `stable` with an identical tree.
 
-    `ansible-pull --only-if-changed` runs the playbook only when the checkout moved, so a
-    deploy that is meant to converge needs one -- and an empty commit leaves everything the
-    converge renders identical to what is already on the host, which is what makes the
-    assertions about *one* difference meaningful.
+    The deploy script runs the playbook only when a watched checkout's SHA differs from
+    the state file, so the deploy needs a new sha, and an empty commit leaves the tree
+    identical -- everything the converge renders stays identical to what is already on
+    the host, which is what makes the assertions about *one* difference meaningful.
     """
     r = host.run(
         f"cd {SEEDED} && git -c user.name=t -c user.email=t@t commit -q --allow-empty "

@@ -19,7 +19,8 @@ git push master  ──────►  CI: static tests (pytest)
                            └─ green on master ──► fast-forward `stable`
                                                               ▲
                                             storagebaby-deploy.timer (boot+2 min, then every 5 min)
-                                            └─ ansible-pull --checkout stable --only-if-changed
+                                            └─ storagebaby-deploy: fetch `stable` and every pointed repository,
+                                               run the playbook when any SHA differs from deploy.state
                                                └─ ansible/playbook.yml --limit <hostname>
                                                   ├─ role storage    (only if host.yml has `storage`)
                                                   ├─ role host_base

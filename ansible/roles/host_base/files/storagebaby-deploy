@@ -1,0 +1,152 @@
+#!/bin/bash
+# One deploy tick. Run by storagebaby-deploy.service as root.
+#
+# Installed twice from one text: by the host_base role from this file, and by bootstrap.sh
+# from a heredoc, because the first tick of a fresh host happens before host_base has ever
+# run. tests/static/test_bootstrap.py holds the two byte-identical.
+#
+# What it does: fetch the platform repository, then every external repository this host
+# points at (hosts/<host>/services/<name>/source.yml and hosts/shared/services/*/source.yml),
+# and run the playbook only when any of those checkouts differs from what the last
+# *successful* converge saw -- which is also what makes a failed converge retry on the next
+# tick instead of waiting for the next commit, as `ansible-pull --only-if-changed` did.
+set -euo pipefail
+
+# REPO_URL, BRANCH, EXTRA_ARGS, written by bootstrap.sh.
+. /etc/storagebaby/deploy.conf
+
+REPO_DIR=/var/lib/storagebaby/repo
+SOURCES_DIR=/var/lib/storagebaby/sources
+STATE_FILE=/var/lib/storagebaby/deploy.state
+HOST=$(uname -n)
+
+export SOPS_AGE_KEY_FILE=/etc/storagebaby/age.key
+# A private repository without a usable token fails here and now, instead of hanging on a
+# prompt no one will answer.
+export GIT_TERMINAL_PROMPT=0
+# Whatever credential helper the host's git might have configured is not consulted: the
+# token for an external repository comes from the host's sources file and nowhere else.
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
+
+# The token reaches git through GIT_ASKPASS and the environment, never through the remote
+# URL and never through .git/config -- so it is nowhere on disk in the clear. The askpass
+# helper itself is a few lines on tmpfs, removed when this run ends.
+ASKPASS=$(mktemp /run/storagebaby-deploy.XXXXXX)
+trap 'rm -f "$ASKPASS"' EXIT
+cat > "$ASKPASS" << 'ASKPASS_SCRIPT'
+#!/bin/sh
+case "$1" in
+	Username*) printf '%s\n' x-access-token ;;
+	*) printf '%s\n' "${STORAGEBABY_GIT_TOKEN:-}" ;;
+esac
+ASKPASS_SCRIPT
+chmod 0700 "$ASKPASS"
+export GIT_ASKPASS=$ASKPASS
+
+# sync_checkout <dir> <url> <ref>: clone or fetch, check out origin/<ref> detached, print
+# the resulting HEAD. Always a hard reset and a clean: a host never has local changes in
+# these checkouts, and a force-push upstream must not wedge the tick.
+sync_checkout() {
+	local dir=$1 url=$2 ref=$3
+	if [ ! -d "$dir/.git" ]; then
+		git clone --quiet --no-checkout "$url" "$dir"
+	fi
+	git -C "$dir" remote set-url origin "$url"
+	git -C "$dir" fetch --quiet --prune origin "+refs/heads/$ref:refs/remotes/origin/$ref"
+	git -C "$dir" checkout --quiet --detach "origin/$ref"
+	git -C "$dir" reset --quiet --hard
+	git -C "$dir" clean --quiet -fdx
+	git -C "$dir" rev-parse HEAD
+}
+
+# One line per pointer of this host: "<name> <repo> <ref> <path>".
+list_pointers() {
+	python3 - "$REPO_DIR" "$HOST" << 'PY'
+import glob
+import os
+import sys
+
+import yaml
+
+repo, host = sys.argv[1], sys.argv[2]
+pointers = sorted(
+    glob.glob(f"{repo}/hosts/shared/services/*/source.yml")
+    + glob.glob(f"{repo}/hosts/{host}/services/*/source.yml")
+)
+for pointer in pointers:
+    with open(pointer) as fh:
+        source = yaml.safe_load(fh)
+    print(os.path.basename(os.path.dirname(pointer)), source["repo"], source["ref"], source["path"])
+PY
+}
+
+# The token of one pointer, or nothing: no entry means an anonymous clone, which is what a
+# public repository needs. SOURCE_TOKENS is filled below, once the platform repository --
+# which carries the file -- is fetched.
+git_token_of() {
+	printf '%s' "$SOURCE_TOKENS" \
+		| python3 -c 'import json, sys; print(json.load(sys.stdin).get(sys.argv[1], {}).get("token", ""))' "$1"
+}
+
+install -d -m 0755 /var/lib/storagebaby
+install -d -m 0700 "$SOURCES_DIR"
+
+echo "platform repository: $REPO_URL ($BRANCH)"
+repo_sha=$(sync_checkout "$REPO_DIR" "$REPO_URL" "$BRANCH")
+if [ ! -d "$REPO_DIR/hosts/$HOST" ]; then
+	echo "the repository has no hosts/$HOST folder; nothing to converge" >&2
+	exit 1
+fi
+desired="repo $repo_sha"
+
+# The host's git tokens, decrypted once per tick and held in memory only:
+# hosts/<host>/secrets/sources.sops.yaml maps a pointer name to { token }. No file means
+# every pointed repository is public.
+SOURCE_TOKENS='{}'
+if [ -f "$REPO_DIR/hosts/$HOST/secrets/sources.sops.yaml" ]; then
+	SOURCE_TOKENS=$(sops --decrypt --output-type json "$REPO_DIR/hosts/$HOST/secrets/sources.sops.yaml")
+fi
+
+names=()
+# Captured first and not read through a process substitution: under `set -e` a python
+# failure inside `<(...)` would end the loop quietly with half the pointers, and the
+# state file would then say "converged" about repositories that were never fetched.
+pointer_lines=$(list_pointers)
+while read -r name url ref path; do
+	[ -n "$name" ] || continue
+	names+=("$name")
+	echo "external repository for $name: $url ($ref, $path)"
+	STORAGEBABY_GIT_TOKEN=$(git_token_of "$name")
+	export STORAGEBABY_GIT_TOKEN
+	sha=$(sync_checkout "$SOURCES_DIR/$name" "$url" "$ref")
+	unset STORAGEBABY_GIT_TOKEN
+	if [ ! -f "$SOURCES_DIR/$name/$path/service.yml" ]; then
+		echo "$name: $url ($ref) has no $path/service.yml" >&2
+		exit 1
+	fi
+	desired+=$'\n'"source:$name $sha"
+done <<< "$pointer_lines"
+
+# A checkout nothing points at any more goes, so the sources directory mirrors the placement.
+shopt -s nullglob
+for existing in "$SOURCES_DIR"/*/; do
+	existing=$(basename "$existing")
+	keep=0
+	for name in "${names[@]}"; do
+		[ "$name" = "$existing" ] && keep=1
+	done
+	if [ "$keep" -eq 0 ] && [[ "$existing" =~ ^[a-z0-9-]+$ ]]; then
+		echo "removing the fetched repository of $existing: no pointer names it any more"
+		rm -rf "${SOURCES_DIR:?}/$existing"
+	fi
+done
+
+if [ -f "$STATE_FILE" ] && [ "$(cat "$STATE_FILE")" = "$desired" ]; then
+	echo "nothing changed since the last converge; not running the playbook"
+	exit 0
+fi
+
+cd "$REPO_DIR"
+# shellcheck disable=SC2086
+/usr/bin/ansible-playbook --inventory ansible/inventory/hosts.yml --limit "$HOST" $EXTRA_ARGS ansible/playbook.yml
+printf '%s\n' "$desired" > "$STATE_FILE"
