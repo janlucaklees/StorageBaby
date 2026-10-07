@@ -9,3 +9,7 @@ domain: ext-echo
 volumes: {}
 secrets: [greeting]
 backup: none
+# The image is private: it lives in the throwaway registry prepare runs on the VM, behind
+# an htpasswd login. The test hosts offer that registry in their host.yml and hold the
+# login in their generated secrets/registries.sops.yaml; this line only names it.
+registries: ['127.0.0.1:5000']

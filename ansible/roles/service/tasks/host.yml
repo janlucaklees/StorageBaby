@@ -31,6 +31,7 @@
     svc_uid: '{{ getent_passwd[svc_user][1] }}'
     svc_gid: '{{ getent_passwd[svc_user][2] }}'
     unit_dir: '/etc/containers/systemd/users/{{ getent_passwd[svc_user][1] }}'
+    svc_home: '{{ getent_passwd[svc_user][4] }}'
 
 - name: Extra host groups exist
   ansible.builtin.group:
@@ -118,9 +119,17 @@
   loop_control:
     label: '{{ item.dest }}'
 
-# Images, before anything of this service is written to the host: not a unit file, not
-# the config tree, not a `podman secret`, not even a volume directory. See images.yml
-# for why that ordering is the point and not an accident.
+# A registry login is a *pull prerequisite*, like the helpers above it: it is the one other
+# thing written before the pull, because the pull is what needs it. Nothing of the service
+# proper -- no volume, no config, no secret, no unit -- is touched until images.yml is
+# through. The service names the registries; the login is the host's.
+- name: Registry login
+  ansible.builtin.include_tasks: registries.yml
+
+# Images, before anything of this service proper is written to the host (the registry
+# login above is the pull's own prerequisite): not a unit file, not the config tree, not
+# a `podman secret`, not even a volume directory. See images.yml for why that ordering
+# is the point and not an accident.
 - name: Images
   ansible.builtin.include_tasks: images.yml
 

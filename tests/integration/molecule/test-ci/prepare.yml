@@ -162,7 +162,7 @@
     # attributes.
     - name: Packages the harness needs and no role may have
       community.general.pacman:
-        name: [parted, attr]
+        name: [parted, attr, python-bcrypt]
         state: present
 
     - name: Prepare the declared disks
@@ -273,6 +273,10 @@
     storagebaby_repo_root: /repo
     _hosts_root: '{{ storagebaby_repo_root }}/hosts'
   tasks:
+    - name: Load the host's declaration (registries is read below)
+      ansible.builtin.include_vars:
+        file: '{{ _hosts_root }}/{{ inventory_hostname }}/host.yml'
+
     - name: Discover shared services (fileglob cannot expand a wildcard directory; use find)
       ansible.builtin.find:
         paths: '{{ _hosts_root }}/shared/services'
@@ -569,6 +573,40 @@
         mode: '0600'
       when: pointers | default([]) | length > 0
 
+    # The host's registry logins: `<registry>: { user, token }` for every registry this
+    # host.yml offers. `test` as the user, because the htpasswd below is written for that
+    # name; the token is a throwaway like every other.
+    - name: Write and encrypt the host's registry logins
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -f "$OUT" ] && grep -q '{{ storagebaby_age_pub }}' "$OUT"; then
+          echo keeping
+          exit 0
+        fi
+        rm -f "$TMP"
+        {% for registry in registries | default([]) %}
+        printf '%s:\n  user: "test"\n  token: "%s"\n' '{{ registry }}' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$TMP"
+        {% endfor %}
+        sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "$OUT"
+        rm -f "$TMP"
+      args:
+        executable: /bin/bash
+        chdir: /tmp
+      environment:
+        TMP: '/tmp/{{ inventory_hostname }}-registries.yaml'
+        OUT: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/registries.sops.yaml'
+      when: registries | default([]) | length > 0
+      delegate_to: localhost
+      register: _registries_secret
+      changed_when: _registries_secret.stdout != 'keeping'
+
+    - name: Copy the host's registry logins to the VM
+      ansible.builtin.copy:
+        src: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/registries.sops.yaml'
+        dest: /tmp/registries.sops.yaml
+        mode: '0600'
+      when: registries | default([]) | length > 0
+
 # Stands in for GitHub: the deploy unit that bootstrap installed already points at
 # /srv/storagebaby.git, so seeding a bare repo there is all it takes to make
 # `ansible-pull` on the host pull exactly this working tree.
@@ -652,6 +690,145 @@
         git remote add origin /srv/storagebaby.git
         git push -qf origin stable
       changed_when: true
+
+# A private registry on the loopback, for the one fixture that pulls privately. Rootless
+# and under its own throwaway user, because a root container on the VM would fail
+# `test_no_root_containers` -- and because that is how everything else here runs. The
+# login is the host's entry for 127.0.0.1:5000 in registries.sops.yaml, read back on the
+# VM like the git tokens.
+- name: Run a throwaway private registry
+  hosts: all
+  gather_facts: false
+  vars:
+    _reg_user: test-registry
+  tasks:
+    - name: The registry's user
+      ansible.builtin.user:
+        name: '{{ _reg_user }}'
+        system: true
+        shell: /usr/bin/nologin
+        create_home: true
+
+    - name: Its uid
+      ansible.builtin.getent:
+        database: passwd
+        key: '{{ _reg_user }}'
+
+    - name: Subordinate ids and linger
+      ansible.builtin.shell: |
+        set -e
+        grep -q '^{{ _reg_user }}:' /etc/subuid || usermod --add-subids {{ _reg_user }}
+        loginctl enable-linger {{ _reg_user }}
+      changed_when: true
+
+    - name: Wait for its user manager
+      ansible.builtin.command: systemctl --user -M {{ _reg_user }}@ is-system-running --wait
+      register: _reg_mgr
+      retries: 15
+      delay: 2
+      until: _reg_mgr.rc == 0 or 'degraded' in _reg_mgr.stdout
+      failed_when: _reg_mgr.rc not in [0, 1]
+      changed_when: false
+
+    - name: Registry directories
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        owner: '{{ _reg_user }}'
+        group: '{{ _reg_user }}'
+        mode: '0755'
+      loop:
+        [/srv/test-registry, /srv/test-registry/auth, /srv/test-registry/data]
+
+    - name: The htpasswd entry, from the host's login for this registry
+      ansible.builtin.shell: |
+        set -euo pipefail
+        token=$(SOPS_AGE_KEY_FILE=/etc/storagebaby/age.key sops --decrypt --extract '["127.0.0.1:5000"]["token"]' /tmp/registries.sops.yaml)
+        user=$(SOPS_AGE_KEY_FILE=/etc/storagebaby/age.key sops --decrypt --extract '["127.0.0.1:5000"]["user"]' /tmp/registries.sops.yaml)
+        python3 - "$user" "$token" > /srv/test-registry/auth/htpasswd << 'PY'
+        import sys
+        import bcrypt
+        user, token = sys.argv[1], sys.argv[2]
+        print(user + ":" + bcrypt.hashpw(token.encode(), bcrypt.gensalt()).decode())
+        PY
+        chown {{ _reg_user }}:{{ _reg_user }} /srv/test-registry/auth/htpasswd
+        chmod 0644 /srv/test-registry/auth/htpasswd
+        printf '%s %s\n' "$user" "$token" > /root/.test-registry-login
+        chmod 0600 /root/.test-registry-login
+      args:
+        executable: /bin/bash
+      changed_when: true
+      no_log: true
+
+    # Plain HTTP on the loopback: podman refuses that for a registry it does not know to be
+    # insecure. Harness configuration, written by nothing in a role.
+    - name: Podman treats the loopback registry as insecure
+      ansible.builtin.copy:
+        dest: /etc/containers/registries.conf.d/50-test-registry.conf
+        content: |
+          [[registry]]
+          location = "127.0.0.1:5000"
+          insecure = true
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: The registry's Quadlet, in its user's unit directory
+      ansible.builtin.copy:
+        dest: '/etc/containers/systemd/users/{{ getent_passwd[_reg_user][1] }}/test-registry.container'
+        content: |
+          [Unit]
+          Description=Throwaway private registry for the integration tests
+
+          [Container]
+          Image=docker.io/library/registry:2.8.3
+          ContainerName=test-registry
+          PublishPort=127.0.0.1:5000:5000
+          Volume=/srv/test-registry/auth:/auth:ro
+          Volume=/srv/test-registry/data:/var/lib/registry
+          Environment=REGISTRY_AUTH=htpasswd
+          Environment=REGISTRY_AUTH_HTPASSWD_REALM=test-registry
+          Environment=REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd
+
+          [Service]
+          Restart=always
+
+          [Install]
+          WantedBy=default.target
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: The registry runs
+      ansible.builtin.shell: |
+        set -e
+        systemctl --user -M {{ _reg_user }}@ daemon-reload
+        systemctl --user -M {{ _reg_user }}@ start test-registry.service
+        for _ in $(seq 60); do
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5000/v2/ || true)
+          [ "$code" = 401 ] && exit 0
+          sleep 2
+        done
+        echo "the registry did not come up (last status: $code)" >&2
+        exit 1
+      changed_when: true
+
+    # The fixture's image: busybox, pushed under the registry's name as the registry's own
+    # user. Pinned base, floating target tag -- the tag moves for nobody after this.
+    - name: Push the fixture image into it
+      ansible.builtin.shell: |
+        set -euo pipefail
+        read -r user token < /root/.test-registry-login
+        uid=$(id -u {{ _reg_user }})
+        as_reg() { cd /tmp && runuser -u {{ _reg_user }} -- env XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus "$@"; }
+        as_reg podman pull docker.io/library/busybox:1.37.0
+        as_reg podman tag docker.io/library/busybox:1.37.0 127.0.0.1:5000/ext-echo:latest
+        printf '%s' "$token" | as_reg podman login --tls-verify=false -u "$user" --password-stdin 127.0.0.1:5000
+        as_reg podman push --tls-verify=false 127.0.0.1:5000/ext-echo:latest
+      args:
+        executable: /bin/bash
+      changed_when: true
+      no_log: true
 
 - name: Seed every pointed external repository on the VM's git server
   hosts: all

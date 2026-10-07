@@ -2,9 +2,11 @@
 Description=External-repository fixture, deployed through a pointer
 
 [Container]
-# Pinned, like every fixture: a floating tag would let the thing a test measures change
-# under the test. Task 3 points this at the test VM's private registry.
-Image=docker.io/library/busybox:1.37.0
+# The test VM's private registry. `latest` and `AutoUpdate=registry` on a fixture, against
+# the rule the other fixtures follow, because this one measures the auto-update timer's
+# login: the image is pushed once by prepare and moves for nobody.
+Image=127.0.0.1:5000/ext-echo:latest
+AutoUpdate=registry
 ContainerName=ext-echo
 # BusyBox's httpd in the foreground, serving the service's own config tree: the page it
 # answers with came from the external repository's config/, through /etc/storagebaby/ext-echo/.

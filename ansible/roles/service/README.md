@@ -505,6 +505,22 @@ The cost is `pg_restore`'s selective and parallel restore, which plain SQL has n
 equivalent of. Restore with
 `psql --single-transaction --set ON_ERROR_STOP=on --dbname=<db> --username=<user> < <db>.sql`.
 
+## Registries
+
+`registries: [ghcr.io]` in `service.yml` names the registries the service's images are
+private on. The host offers registries in `host.yml` (`registries: [ghcr.io]`) and holds one
+login per offered registry in `hosts/<host>/secrets/registries.sops.yaml`
+(`ghcr.io: { user, token }`) -- the same split as `cert_zones` and the ACME credentials,
+`docs/ownership.md` § 4.2. A service naming a registry its host does not offer fails the
+converge with both names in the message, and `tests/static/test_hosts.py` catches it first.
+Before any image is pulled the role writes `~svc-<name>/.config/containers/auth.json`
+(0600, the service user's) with one entry per named registry, and removes the file again
+when the key goes. Rootless podman reads that path when its runtime directory holds no
+`auth.json`, for `podman pull` and for the user's own `podman-auto-update.timer` alike; the
+integration suite's `ext-echo` fixture pulls from an htpasswd registry through it and runs
+`podman auto-update --dry-run` against it. Any service may declare `registries`; the
+fixture is external only because that is where private images come from first.
+
 ## What every `.container` must declare
 
 `HealthCmd=`, `HealthOnFailure=kill`, `Restart=always` and `ContainerName=`; the static
