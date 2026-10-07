@@ -34,6 +34,12 @@ owned by a **subuid** of `svc-jellyfin` (`PUID=1000` inside → `first_subuid+99
 outside) rather than by `svc-jellyfin` itself. That is the same shape as
 stirling-pdf and what `test_volume_dirs_belong_to_the_service` already allows.
 
+Unlike stirling-pdf, the number is documented by the unit itself, so both trees
+declare it: `config` and the `media` bind carry `owner: 1000`, and the role creates
+or adopts each at `first_subuid + 999` instead of waiting for s6 to do it. The bind
+is chowned by uid alone, so the `media` group that carries everything else's access
+to the library stays as it is.
+
 ## GPU passthrough
 
 `devices: [/dev/dri]` renders `AddDevice=/dev/dri` **only** on a host whose

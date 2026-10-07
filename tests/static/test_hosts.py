@@ -1,6 +1,6 @@
 import pytest
 
-from conftest import HOSTS, host_names, load_yaml, placements
+from conftest import HOSTS, host_names, load_yaml, placements, route_fqdn, routes_of
 
 REQUIRED = {
     "domain",
@@ -29,6 +29,10 @@ OPTIONAL = {
     # address is not the one clients arrive on. Defaults to `ansible_default_ipv4.address`
     # in the playbook; no host declares it today.
     "tcp_bind_address",
+    # The domains this host can obtain a certificate for -- one wildcard request each.
+    # Defaults to `[domain]` in the playbook, so a host whose services all take names
+    # under its own domain declares nothing.
+    "cert_zones",
 }
 CLASSES = {"pool", "fast"}
 
@@ -40,6 +44,11 @@ def test_host_contract(host):
     assert not missing, f"{host}: missing keys {missing}"
     assert set(cfg) <= REQUIRED | OPTIONAL, f"{host}: unknown host keys {set(cfg) - REQUIRED - OPTIONAL}"
     assert isinstance(cfg.get("tcp_bind_address", ""), str)
+    zones = cfg.get("cert_zones", [cfg["domain"]])
+    assert isinstance(zones, list) and all(isinstance(z, str) and "." in z for z in zones), (
+        f"{host}: cert_zones must be a list of domains"
+    )
+    assert cfg["domain"] in zones, f"{host}: cert_zones must contain the host's own domain"
     assert isinstance(cfg["acme"], bool)
     assert isinstance(cfg["deploy_timer"], bool)
     assert isinstance(cfg["gpu"], bool)
@@ -61,3 +70,27 @@ def test_mountpoints_is_retired(host):
         f"{host}: `mountpoints` is Phase 3's hand-written list. The `storage` role "
         "asserts every mount it declares itself; declare `storage` instead."
     )
+
+
+@pytest.mark.parametrize("host", host_names())
+def test_every_placed_route_is_under_a_domain_the_host_can_certify(host):
+    """A service may only take a name under a domain this host says it can certify.
+
+    `cert_zones` is the allowlist (`docs/ownership.md` § 4.2). Traefik asks Let's Encrypt
+    for one wildcard per zone and every other router inherits what it obtained, so a
+    route under some other zone is served a certificate that does not cover it -- which a
+    browser refuses and which no integration test can catch, because the test hosts have
+    `acme: false` and no issuance at all.
+    """
+    cfg = load_yaml(HOSTS / host / "host.yml")
+    if not cfg["acme"]:
+        pytest.skip("no issuance on this host, so nothing to be covered by")
+    zones = cfg.get("cert_zones", [cfg["domain"]])
+    for p in (p for p in placements() if p.host == host):
+        for route in routes_of(p.spec):
+            fqdn = route_fqdn(route, cfg["domain"])
+            zone = fqdn.split(".", 1)[1]
+            assert zone in zones, (
+                f"{host}/{p.name}: {fqdn} is not under any zone this host can certify "
+                f"({', '.join(zones)}). Add the zone to cert_zones, or take a name under one."
+            )

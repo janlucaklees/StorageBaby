@@ -2,9 +2,18 @@ name: jellyfin
 port: 8096
 domain: jellyfin
 volumes:
-  config: { class: pool }
+  # `PUID=1000`/`PGID=1000` in the unit, which the linuxserver image applies through
+  # s6 -- so both trees are the container's uid 1000, not the service user.
+  config: { class: pool, owner: 1000 }
 binds:
-  media: { host: /pool/shared/media, container: /media, mode: rw, group: media }
+  media:
+    {
+      host: /pool/shared/media,
+      container: /media,
+      mode: rw,
+      group: media,
+      owner: 1000
+    }
 devices: [/dev/dri]
 groups: [render, video]
 config:

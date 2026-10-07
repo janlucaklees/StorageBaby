@@ -69,13 +69,14 @@ storage:
       - .TemporaryItems
       - .Trashes
       - .AppleDB
-      - /apps/nextcloud/html/apps/
-      - /apps/nextcloud/html/3rdparty/
-      - /apps/nextcloud/html/custom_apps/
-      - /apps/nextcloud/html/data/jlk/files/Projects/Kannji/_app_workspace/app/build/
+      - /apps/nextcloud/data/jlk/files/Projects/Kannji/_app_workspace/app/build/
       - '*.tmp'
       - '*.log'
       - /cache/
+      # SQLite's write-ahead log and shared-memory files: rewritten constantly, worthless
+      # in parity, and the database file beside them is what a restore needs.
+      - '*.db-shm'
+      - '*.db-wal'
     maintenance:
       on_calendar: '02:00'
       balance_threshold: 5

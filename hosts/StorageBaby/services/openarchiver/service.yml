@@ -5,10 +5,18 @@ name: openarchiver
 port: 3001
 domain: openarchiver
 volumes:
-  data: { class: pool }
-  database: { class: fast }
+  # `owner: 0` on `data`: the open-archiver entrypoint runs `pnpm install` before it
+  # exec's and drops no privileges, so it is container root, which is the service
+  # user -- and the tree is migrated in from the rootful stack root-owned, which only
+  # a declared owner makes the role adopt. `meilisearch` is container root too
+  # (v1.38 declares no USER) but starts empty, so the default is enough.
+  data: { class: pool, owner: 0 }
+  database: { class: fast, owner: 70 }
   meilisearch: { class: fast }
-  backups: { class: fast }
+  # No `owner`: written by the dump timer's `podman exec`, i.e. container root. `pool`
+  # and not `fast`: the SSD is 120G and a dump is a write-once nightly file, so it has no
+  # business there -- every service's dump tree is on the pool.
+  backups: { class: pool }
 config:
   database_name: openarchiver
   database_user: openarchiver

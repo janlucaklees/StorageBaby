@@ -214,7 +214,8 @@ The same `storage` block carries the rest of it.
 storage:
   snapraid:
     block_size: 256
-    excludes: ['*.bak', /lost+found/, /apps/nextcloud/html/apps/, …]
+    excludes:
+      ['*.bak', /lost+found/, /apps/nextcloud/data/jlk/files/…/build/, …]
     maintenance:
       on_calendar: '02:00'
       balance_threshold: 5
@@ -227,8 +228,9 @@ storage:
     smtp_host: smtp.example.org
     smtp_port: 587
     smtp_user: storagebaby@example.org
-    # tls: true   (default)
-    # auth: on    (default)
+    # tls: true       (default)
+    # starttls: true  (default; false for an smtps:// relay on 465)
+    # auth: on        (default)
 ```
 
 - **`/etc/snapraid.conf`** is rendered from `disks`, `parity` and `snapraid`: one `content`
@@ -237,8 +239,8 @@ storage:
   disk, the `excludes` and the `block_size`. Nothing restarts when it changes — snapraid is
   run by a timer and reads the file every time.
 - **`snapraid.excludes` are paths relative to a _disk's_ root**, which for a branch of this
-  pool is the same as relative to `pool.mount`. That is why the Nextcloud entries are
-  `/apps/nextcloud/html/…`: the pool-class volume `html` of the `nextcloud` service.
+  pool is the same as relative to `pool.mount`. That is why the Nextcloud entry is
+  `/apps/nextcloud/data/…`: the pool-class volume `data` of the `nextcloud` service.
 - **The disk `name` is snapraid's identity for that disk.** Renaming one makes snapraid treat
   the whole disk as new, which is a full parity rewrite on the next sync.
 - **`/opt/storagebaby/maintenance/`** holds six scripts, all 0755 root and **copied byte for
@@ -284,7 +286,9 @@ storage:
   `trap … INT TERM`, which is what brings a stopped service back up.)
 - **`/etc/msmtprc`** is 0600 root and carries the relay from `mail` plus `smtp_password` out
   of `hosts/<host>/secrets/mail.sops.yaml`, decrypted on the host under `no_log`. `tls`
-  defaults to on and `auth` to `on`; a test host points at a loopback sink and says
+  defaults to on and `auth` to `on`; `starttls` defaults to on as well, and a relay that
+  only speaks implicit TLS (`smtps://` on 465, storagebaby's) sets it to false beside
+  `smtp_port: 465`. A test host points at a loopback sink and says
   `tls: false, auth: plain`, because with `auth on` and no TLS msmtp considers only SCRAM and
   would never authenticate. The wrapper composes with `mutt` and names msmtp explicitly as
   its `sendmail` — the host runs no MTA, so mutt's default path does not exist.

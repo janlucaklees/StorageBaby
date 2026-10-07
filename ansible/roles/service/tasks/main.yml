@@ -39,9 +39,16 @@
       "{{ service.routes | default(([{'domain': service.domain, 'port': service.port}]
       if service.domain is defined else [])) }}"
 
+# A route's `domain` is either a bare label, which the host's own domain completes, or a
+# full hostname, which is used as it stands. The dot is the whole of the rule: a DNS label
+# cannot contain one, so the two forms cannot be confused. The second form is how a
+# service takes a name under a domain other than the host's default -- the host has to be
+# able to certify it (`cert_zones`), and the DNS record is the operator's.
 - name: Resolve route fqdns
   ansible.builtin.set_fact:
-    routes_out: "{{ routes_out + [item | combine({'fqdn': item.domain ~ '.' ~ domain})] }}"
+    routes_out: >-
+      {{ routes_out + [item | combine({'fqdn':
+         item.domain if '.' in item.domain else item.domain ~ '.' ~ domain})] }}
   loop: '{{ _route_specs }}'
   loop_control:
     label: '{{ item.domain }}'

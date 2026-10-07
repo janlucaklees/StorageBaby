@@ -15,13 +15,17 @@ from test_service import HOSTS, load_spec, placed_tcp_entries
 def test_secrets_mounted(host):
     r = run_as(host, "svc-traefik", "podman exec traefik ls /run/secrets")
     assert r.rc == 0, r.stderr
-    assert {"porkbun_api_key", "porkbun_secret_api_key"} <= set(r.stdout.split())
+    assert {"porkbun_api_key", "porkbun_secret_api_key", "dashboard_htpasswd"} <= set(r.stdout.split())
 
 
 def test_dashboard_via_https(host):
     # Not covered by the generic HTTPS check: that one only asks for a sane status on
-    # `/`, this one pins the dashboard path and a real 200 from api@internal.
-    r = host.run("curl -sk -o /dev/null -w '%{http_code}' -H 'Host: traefik.test.local' https://127.0.0.1/dashboard/")
+    # `/`, this one pins the dashboard path and a real 200 from api@internal -- behind
+    # the basicAuth middleware, with the `test:test` pair prepare.yml wrote into
+    # `dashboard_htpasswd`.
+    r = host.run(
+        "curl -sk -o /dev/null -w '%{http_code}' -u test:test -H 'Host: traefik.test.local' https://127.0.0.1/dashboard/"
+    )
     assert r.stdout.strip() == "200", r.stderr
 
 

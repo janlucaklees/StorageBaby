@@ -34,17 +34,17 @@ and generated unit, all of them share one network namespace and reach each other
 `127.0.0.1`, and the pod is the only thing that publishes a port — on loopback, for
 Traefik.
 
-| Service                              | Route → loopback port                      | Images and updates                                                                                                      | Backup                                                    | Phase |
-| ------------------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ----- |
-| traefik (`hosts/shared`, every host) | `traefik.*` → 8080 (dashboard)             | `docker.io/library/traefik:v3` — auto                                                                                   | none                                                      | 1     |
-| yuzukam                              | `yuzukam.*` → 3000                         | `ghcr.io/janlucaklees/yuzukam:latest` — auto                                                                            | none (stateless)                                          | 2     |
-| stirling-pdf                         | `stirling.*` → 8180                        | `docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest` — auto                                                       | none                                                      | 2     |
-| jellyfin                             | `jellyfin.*` → 8096                        | `lscr.io/linuxserver/jellyfin:latest` — auto                                                                            | none                                                      | 2     |
-| kopia                                | `kopia.*` → 51515                          | `docker.io/kopia/kopia:0.23.1` — pinned, bumped in git                                                                  | the repository server itself, plus one account per client | 2     |
-| paperless (pod)                      | `paperless.*` → 8000, FTP 21 + 21100–21109 | app `paperless-ngx:2.20.15` and `pure-ftpd:trixie-1.0.50` pinned; postgres, redis, gotenberg and tika auto              | `data`, `media`, `backups` (nightly dump)                 | 3, 4  |
-| openarchiver (pod)                   | `openarchiver.*` → 3001                    | app `v0.6.0`, `meilisearch:v1.38` and `tika:3.2.2.0-full` pinned; postgres and valkey auto                              | `data`, `backups` (nightly dump)                          | 3     |
-| immich (pod)                         | `immich.*` → 2283                          | server and machine learning `v2.7.5` pinned together, the vectorchord postgres pinned by digest beside them; redis auto | `upload` — Immich writes its own database dumps into it   | 3     |
-| nextcloud (pod)                      | `nextcloud.*` → 8280, `collabora.*` → 9980 | app `33-fpm-alpine` pinned; nginx, postgres, redis and Collabora auto                                                   | `html`, `backups` (nightly dump)                          | 3     |
+| Service                              | Route → loopback port                      | Images and updates                                                                                                      | Backup                                                        | Phase |
+| ------------------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ----- |
+| traefik (`hosts/shared`, every host) | `traefik.*` → 8080 (dashboard)             | `docker.io/library/traefik:v3` — auto                                                                                   | none                                                          | 1     |
+| yuzukam                              | `yuzukam.*` → 3000                         | `ghcr.io/janlucaklees/yuzukam:latest` — auto                                                                            | none (stateless)                                              | 2     |
+| stirling-pdf                         | `stirling.*` → 8180                        | `docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest` — auto                                                       | none                                                          | 2     |
+| jellyfin                             | `jellyfin.*` → 8096                        | `lscr.io/linuxserver/jellyfin:latest` — auto                                                                            | none                                                          | 2     |
+| kopia                                | `kopia.*` → 51515                          | `docker.io/kopia/kopia:0.23.1` — pinned, bumped in git                                                                  | the repository server itself, plus one account per client     | 2     |
+| paperless (pod)                      | `paperless.*` → 8000, FTP 21 + 21100–21109 | app `paperless-ngx:2.20.15` and `pure-ftpd:trixie-1.0.50` pinned; postgres, redis, gotenberg and tika auto              | `data`, `media`, `backups` (nightly dump)                     | 3, 4  |
+| openarchiver (pod)                   | `openarchiver.*` → 3001                    | app `v0.6.0`, `meilisearch:v1.38` and `tika:3.2.2.0-full` pinned; postgres and valkey auto                              | `data`, `backups` (nightly dump)                              | 3     |
+| immich (pod)                         | `immich.*` → 2283                          | server and machine learning `v3.2.0` pinned together, the vectorchord postgres pinned by digest beside them; redis auto | `upload` (minus its own `backups/`), `backups` (nightly dump) | 3     |
+| nextcloud (pod)                      | `nextcloud.*` → 8280, `collabora.*` → 9980 | app `33-fpm-alpine` pinned; nginx, postgres, redis and Collabora auto                                                   | `html`, `data`, `backups` (nightly dump)                      | 3     |
 
 Everything but traefik is placed on storagebaby; `test-a` places all eight folders by
 symlink, `test-ci` the smaller subset a GitHub runner can carry. Both test hosts also place
@@ -68,9 +68,12 @@ A service with a `backup:` block gets a Kopia client container **generated into 
 pod** by the `service` role; it is not in the service folder. It connects to
 `https://kopia.<domain>` as `<service>@<host>`, applies the retention policy from
 `service.yml` and takes its snapshots on its own schedule. Databases are backed up as
-dumps, never as data directories: a `<name>-dump.timer` writes `pg_dump -Fc` into a
-`backups` volume half an hour before the snapshot, and that volume is what the sidecar
-carries.
+dumps, never as data directories: a `<name>-dump.timer` writes a plain, uncompressed
+`pg_dump` into a `backups` volume half an hour before the snapshot, and that volume is
+what the sidecar carries. All four pods do it the same way and **no service's backup
+depends on the application being configured for it**. `backup.exclude` is how a service
+refuses to carry a backup the application writes for itself; Immich's admin-UI backup
+job is the one case. `ansible/roles/service/README.md` has both.
 
 No directory of the old repository is left. `samba/` and `snapraid/` were the last two
 at the root, and both are retired: the mounts, the pool, the array and the nightly
@@ -689,10 +692,13 @@ Two more things are not steps but expectations about that first converge:
 ## Migrating existing service data
 
 **Nothing in this repository moves the old stack's data.** The role creates a
-volume directory when it is missing, leaves an existing one alone, and never
-repairs ownership afterwards — it is create-only, by design, because images chown
-their own data tree and an enforced mode would fight them on every converge. So
-carrying the data over is the operator's job, done once, by hand, per service.
+volume directory when it is missing and leaves an existing one's contents alone —
+it is create-only, by design, because images chown their own data tree and an
+enforced mode would fight them on every converge. So carrying the data over is
+the operator's job, done once, by hand, per service. What the role _does_ do is
+the ownership: a volume or bind that declares an `owner` in its `service.yml` is
+adopted on the converge that finds it wrong, which is step 3 below and is no
+longer a chown the operator runs.
 **A service whose data is not moved simply starts empty** — new library, new
 settings — and moving it later means stopping the service and redoing the two
 steps below. For nextcloud, "starts empty" is worse than it sounds: see operator
@@ -716,26 +722,27 @@ own data root. `<stack>` is the compose project name, which is the directory the
 `/pool/apps`, `fast` → `/var/lib/storagebaby/fast`. Which volume is which class is
 in each service's `service.yml`. Concretely:
 
-| Service      | old                                                                | new                                                                                                            |
-| ------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| jellyfin     | `/pool/apps/jellyfin/volumes/jellyfin_config`                      | kept in place: `volume_overrides: { jellyfin/config: <old path> }` in `host.yml` (11 GB of subtitles; no copy) |
-| kopia        | `/pool/apps/kopia/volumes/config`                                  | `/pool/apps/kopia/config`                                                                                      |
-| kopia        | `/pool/apps/kopia/volumes/cache`                                   | `/var/lib/storagebaby/fast/kopia/cache`                                                                        |
-| kopia        | `/pool/apps/kopia/volumes/logs`                                    | `/var/lib/storagebaby/fast/kopia/logs`                                                                         |
-| stirling-pdf | `/pool/apps/stirling-pdf/volumes/{configs,logs,pipeline,tessdata}` | `/pool/apps/stirling-pdf/{configs,logs,pipeline,tessdata}`                                                     |
-| paperless    | `paperless_data` (named)                                           | `/pool/apps/paperless/data`                                                                                    |
-| paperless    | `paperless_media` (named)                                          | `/pool/apps/paperless/media`                                                                                   |
-| paperless    | `paperless_database` (named)                                       | `/var/lib/storagebaby/fast/paperless/database`                                                                 |
-| paperless    | `paperless_broker` (named)                                         | — (Redis runs without a volume; see below)                                                                     |
-| openarchiver | `/pool/apps/openarchiver/volumes/data`                             | `/pool/apps/openarchiver/data`                                                                                 |
-| openarchiver | `openarchiver_database` (named)                                    | `/var/lib/storagebaby/fast/openarchiver/database`                                                              |
-| openarchiver | `openarchiver_cache` (named)                                       | — (Valkey runs without a volume; see below)                                                                    |
-| openarchiver | `openarchiver_meilisearch` (named)                                 | — (start empty; run a full reindex from the UI afterwards)                                                     |
-| immich       | `/pool/apps/immich/volumes/immich_upload`                          | `/pool/apps/immich/upload`                                                                                     |
-| immich       | `immich_database` (named)                                          | `/var/lib/storagebaby/fast/immich/database`                                                                    |
-| immich       | `immich_model-cache` (named)                                       | — (start empty; the models are downloaded again)                                                               |
-| nextcloud    | `nextcloud_nextcloud` (named, `/var/www/html`)                     | `/pool/apps/nextcloud/html`                                                                                    |
-| nextcloud    | `nextcloud_database` (named)                                       | `/var/lib/storagebaby/fast/nextcloud/database`                                                                 |
+| Service      | old                                                                | new                                                                                      |
+| ------------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| jellyfin     | `/pool/apps/jellyfin/volumes/jellyfin_config`                      | `/pool/apps/jellyfin/config` (a rename, pool to pool; the 11 GB of subtitles never move) |
+| kopia        | `/pool/apps/kopia/volumes/config`                                  | `/pool/apps/kopia/config`                                                                |
+| kopia        | `/pool/apps/kopia/volumes/cache`                                   | `/var/lib/storagebaby/fast/kopia/cache`                                                  |
+| kopia        | `/pool/apps/kopia/volumes/logs`                                    | `/var/lib/storagebaby/fast/kopia/logs`                                                   |
+| stirling-pdf | `/pool/apps/stirling-pdf/volumes/{configs,logs,pipeline,tessdata}` | `/pool/apps/stirling-pdf/{configs,logs,pipeline,tessdata}`                               |
+| paperless    | `paperless_data` (named)                                           | `/pool/apps/paperless/data`                                                              |
+| paperless    | `paperless_media` (named)                                          | `/pool/apps/paperless/media`                                                             |
+| paperless    | `paperless_database` (named)                                       | `/var/lib/storagebaby/fast/paperless/database`                                           |
+| paperless    | `paperless_broker` (named)                                         | — (Redis runs without a volume; see below)                                               |
+| openarchiver | `/pool/apps/openarchiver/volumes/data`                             | `/pool/apps/openarchiver/data`                                                           |
+| openarchiver | `openarchiver_database` (named)                                    | `/var/lib/storagebaby/fast/openarchiver/database`                                        |
+| openarchiver | `openarchiver_cache` (named)                                       | — (Valkey runs without a volume; see below)                                              |
+| openarchiver | `openarchiver_meilisearch` (named)                                 | — (start empty; run a full reindex from the UI afterwards)                               |
+| immich       | `/pool/apps/immich/volumes/immich_upload`                          | `/pool/apps/immich/upload`                                                               |
+| immich       | `immich_database` (named)                                          | `/var/lib/storagebaby/fast/immich/database`                                              |
+| immich       | `immich_model-cache` (named)                                       | — (start empty; the models are downloaded again)                                         |
+| nextcloud    | `nextcloud_nextcloud` (named, `/var/www/html`), without `data/`    | `/var/lib/storagebaby/fast/nextcloud/html`                                               |
+| nextcloud    | `nextcloud_nextcloud`, its `data/` subdirectory                    | `/pool/apps/nextcloud/data`                                                              |
+| nextcloud    | `nextcloud_database` (named)                                       | `/var/lib/storagebaby/fast/nextcloud/database`                                           |
 
 Every Redis and Valkey part runs with `--save "" --appendonly no` and no volume: they
 hold queues, caches and file locks, nothing that is meant to outlive a restart, and a
@@ -763,48 +770,58 @@ file in it has not been ingested yet.
 2. Move each old tree onto its new path. Where both sides are on the same
    filesystem — pool to pool, or a Docker named volume under `/var/lib` to the
    `fast` root under `/var/lib` — `mv` is a rename, costs nothing and leaves no
-   second copy to forget about. The one crossing is nextcloud's `html`, from
+   second copy to forget about. The one crossing is nextcloud's `data/`, from
    Docker's data root on the system disk to the pool, which is a real copy:
-   `rsync -aHAX --info=progress2 <old>/ <new>/` and remove the old volume
-   afterwards.
-3. Fix the ownership for the rootless mapping. This is the step that is easy to
-   skip and impossible to skip, and the owner it has to be fixed _from_ differs per
-   service: jellyfin's old tree is owned by host **uid 1000**, because rootful
-   Docker ran the linuxserver image under `PUID=1000` — and under rootless Podman
-   that uid is the operator's login user, not the service. Kopia's old tree is
-   **root-owned**, because that image runs as root and Docker ran it rootful.
-   Neither is what the new mapping needs.
+   `rsync -aHAX --info=progress2 <old>/data/ <new>/ ` and remove the old volume
+   afterwards; the rest of that tree stays on the system disk as `html`.
+3. Deploy. The ownership is not a step any more: every volume and bind whose uid
+   is established already declares `owner:` in its `service.yml`, and the role
+   adopts a tree whose owner does not match it with one recursive `chown` on the
+   converge that finds it — before the units start, so the service comes up able
+   to read what was just copied in. Nothing to compute and nothing to run.
 
-**Which chown depends on what uid the image runs as _inside_ the container**, because
-that is what the user namespace maps. Container uid 0 is the service user itself;
-container uid _n_ (n ≥ 1) is the host uid `base + n - 1`, where `base` is the first
-subordinate uid of the service user in `/etc/subuid`. So the recipe is one `chown` per
-tree, with the host uid computed once, and it needs the service user to exist, which
-the first deploy creates:
+The owner each tree has to end up with is not the one it arrives with, which is why
+the step existed at all: jellyfin's old tree is owned by host **uid 1000**, because
+rootful Docker ran the linuxserver image under `PUID=1000` — and under rootless Podman
+that uid is the operator's login user, not the service. Kopia's old tree is
+**root-owned**, because that image runs as root and Docker ran it rootful.
+
+**What the right owner is depends on the uid the image runs as _inside_ the
+container**, because that is what the user namespace maps, and that container uid is
+exactly what `owner:` declares. Container uid 0 is the service user itself; container
+uid _n_ (n ≥ 1) is the host uid `base + n - 1`, where `base` is the first subordinate
+uid of the service user in `/etc/subuid`. So to check what the role did, or to work out
+the number for a service that does not declare one yet:
 
 ```bash
-svc=svc-paperless # the service's user
-base=$(awk -F: -v u="$svc" '$1==u{print $2}' /etc/subuid)
-doas chown -R $((base + 69)):$((base + 69)) /var/lib/storagebaby/fast/paperless/database           # postgres is uid 70
-doas chown -R $((base + 999)):$((base + 999)) /pool/apps/paperless/data /pool/apps/paperless/media # the app is uid 1000
-doas storagebaby-svc restart paperless
+podman exec paperless-app id -u                     # what the image runs as: 1000
+awk -F: '$1=="svc-paperless"{print $2}' /etc/subuid # base, e.g. 296611
+stat -c %u /pool/apps/paperless/data                # base + 1000 - 1 = 297610
 ```
 
-The in-container uids, read off each image: postgres `70` (`postgres:17-alpine` and
-immich's vectorchord build alike); the paperless, immich and openarchiver apps and
-jellyfin's linuxserver image `1000`; nextcloud's `www-data` `33`; kopia and stirling-pdf
-run as root, so their trees belong to the service user itself
-(`doas chown -R svc-kopia:svc-kopia <tree>`). `podman unshare chown -R <uid>:<gid>`
-run as the service user says the same thing from inside the namespace.
+The image's own `USER` or `adduser` line says the same thing without a running
+container. The in-container uids on the platform, each read off its image: postgres
+`70` in `postgres:17-alpine`, `999` in any Debian-based postgres (immich's vectorchord
+build is one — it is `pgvector/pgvector`, which builds on `postgres:<n>-bookworm`);
+paperless-ngx and jellyfin's linuxserver image `1000`; `www-data` `82` in
+`php:*-fpm-alpine`, which is what nextcloud's fpm image is; kopia, stirling-pdf,
+immich, openarchiver and meilisearch all run as container root, so their trees belong
+to the service user itself. Those declare no `owner` where the role creates the tree —
+it is the service user's from the start — and `owner: 0` where a root-owned tree is
+migrated in (immich's `upload`): 0 is the service user, and declaring it is what makes
+the role adopt the tree instead of leaving it to the image.
 
 Jellyfin writes artwork and `.nfo` files next to the media, so its media bind is
-read-write and the whole tree belongs to its uid, with an ACL that keeps your own user
-in: `doas setfacl -R -m u:jlk:rwX -m d:u:jlk:rwX /pool/shared/media`.
+read-write and declares `owner: 1000` — the role chowns the tree by uid and leaves the
+`media` group that carries everyone else's access alone. The ACL that keeps your own
+user in is still yours to set, once:
+`doas setfacl -R -m u:jlk:rwX -m d:u:jlk:rwX /pool/shared/media`.
 
-Order on the real host, as done during the rollout: copy the data in, deploy, chown,
-restart. The first deploy of a service with copied data **fails its health wait once**,
-because the container cannot read the tree yet; the role reports the service and
-converges everything else, and the restart after the chown settles it.
+Order on the real host: copy the data in, then deploy. A tree whose `owner` is declared
+no longer costs the service a failed health wait — the adoption runs before the units
+are started. A tree the operator has to own by hand, because no `owner` is declared for
+it, still does: `podman unshare chown -R <uid>:<gid>` as the service user, then
+`doas storagebaby-svc restart <svc>`.
 
 ### Databases: the directory or a dump, not both
 
@@ -819,18 +836,20 @@ be:
 - **Restore a dump into a fresh cluster.** Leave the `database` volume empty, let the
   image initialise it from whatever `database_password` says, and load a dump
   afterwards. Take the dump from the old stack before it is stopped
-  (`docker compose exec database pg_dump -Fc -U <user> <db> > <file>`), then restore
-  it into the running new one as the service user:
+  (`docker compose exec database pg_dump --clean --if-exists --no-owner -U <user> <db> > <file>`),
+  then restore it into the running new one as the service user:
 
   ```bash
   /usr/local/sbin/podman-as svc-paperless podman exec -i paperless-database \
-  	pg_restore -U paperless -d paperless --no-owner < /path/to/paperless.dump
+  	psql -U paperless -d paperless --single-transaction --set ON_ERROR_STOP=on \
+  	< /path/to/paperless.sql
   ```
 
   `-U` and `-d` are `config.database_user` and `config.database_name` from the
-  service's `service.yml`. `--no-owner` because the roles in the dump are the old
-  stack's. `pg_restore` does not empty what is already there, so restore into a
-  cluster that has just been initialised, or drop and recreate the database first.
+  service's `service.yml`. The dump is plain SQL, so it is `psql` and not `pg_restore`;
+  `--single-transaction` with `ON_ERROR_STOP=on` makes the restore all-or-nothing, and
+  the `--clean --if-exists` in the dump drops what is there before recreating it.
+  `--no-owner` because the roles in the dump are the old stack's.
   `hosts/StorageBaby/services/nextcloud/README.md`, "Restoring one", has the same
   command for nextcloud with its own user and database name.
 

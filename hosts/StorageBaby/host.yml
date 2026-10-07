@@ -1,6 +1,11 @@
 domain: home.klees.io
 acme: true
 acme_email: email@janlucaklees.de
+# The domains this host can obtain a certificate for -- one wildcard request each. Both
+# are in the same Porkbun account, so the one resolver traefik declares covers them; the
+# A records are the operator's. A service takes a name under one of these by writing it
+# out in full in its own `service.yml`.
+cert_zones: [home.klees.io, klees.io]
 tz: Europe/Berlin
 storage_roots:
   pool: /pool/apps
@@ -46,8 +51,9 @@ storage:
     options: defaults,allow_other,use_ino,category.create=pfrd,moveonenospc=true,minfreespace=20G,fsname=mergerfsPool,cache.writeback=false,cache.symlinks=false,cache.readdir=false,async_read=true,threads=4
   # The array. `excludes` are paths relative to a *disk's* root, which for a branch of this
   # pool is the same as relative to /pool -- they are the deployed ones with the Nextcloud
-  # paths moved onto the platform's volume layout (`/apps/nextcloud/volumes/nextcloud/` ->
-  # `/apps/nextcloud/html/`, the `html` volume of the nextcloud service).
+  # path moved onto the platform's volume layout (`/apps/nextcloud/volumes/nextcloud/data/`
+  # -> `/apps/nextcloud/data/`, the `data` volume of the nextcloud service; the
+  # installation's own trees are on the SSD now and need no exclude).
   snapraid:
     block_size: 256
     excludes:
@@ -64,13 +70,14 @@ storage:
       - .TemporaryItems
       - .Trashes
       - .AppleDB
-      - /apps/nextcloud/html/apps/
-      - /apps/nextcloud/html/3rdparty/
-      - /apps/nextcloud/html/custom_apps/
-      - /apps/nextcloud/html/data/jlk/files/Projects/Kannji/_app_workspace/app/build/
+      - /apps/nextcloud/data/jlk/files/Projects/Kannji/_app_workspace/app/build/
       - '*.tmp'
       - '*.log'
       - /cache/
+      # SQLite's write-ahead log and shared-memory files: rewritten constantly, worthless
+      # in parity, and the database file beside them is what a restore needs.
+      - '*.db-shm'
+      - '*.db-wal'
     maintenance:
       on_calendar: '02:00'
       balance_threshold: 5
@@ -87,11 +94,18 @@ storage:
   # hosts/StorageBaby/secrets/mail.sops.yaml, key `smtp_password`.
   mail:
     to: email@janlucaklees.de
-    from: storagebaby@janlucaklees.de
-    smtp_host: REPLACE_ME
-    smtp_port: 587
-    smtp_user: REPLACE_ME
+    # The login, as the relay insists the sender be. 465 is implicit TLS on this relay
+    # (the old ~/.muttrc said `smtps://`), hence `starttls: false`.
+    from: storagebaby@klees.io
+    smtp_host: mail.klees.io
+    smtp_port: 465
+    starttls: false
+    smtp_user: storagebaby@klees.io
 volume_overrides: {}
+# The LAN address, explicitly: this host also has a VPN interface and Docker's leftover
+# bridges, and Traefik's TCP entrypoints must bind the one address the scanner reaches.
+# It is also what the FTP server advertises in its PASV reply. Give it a DHCP reservation.
+tcp_bind_address: 192.168.178.2
 deploy_timer: true
 gpu: true
 packages:

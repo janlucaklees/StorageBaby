@@ -35,7 +35,14 @@ SEEDED = "/srv/src"
 # The checkout `ansible-pull` clones into and re-uses; the deploy unit names it.
 PULLED = "/var/lib/storagebaby/repo"
 JOURNAL = "journalctl -u storagebaby-deploy.service --no-pager | tail -80"
-DASHBOARD = "curl -sk -o /dev/null -w '%{http_code}' -H 'Host: traefik.test.local' https://127.0.0.1/dashboard/"
+# `-u test:test`: the dashboard sits behind the basicAuth middleware `route.basic_auth`
+# renders, and the pair is the one `prepare.yml` writes into `dashboard_htpasswd` on a test
+# host. Without it the probe below gets a 401, which is Traefik answering correctly and the
+# test reading it as a Traefik that did not come back up. Same pair as `test_traefik.py`.
+DASHBOARD = (
+    "curl -sk -o /dev/null -w '%{http_code}' -u test:test "
+    "-H 'Host: traefik.test.local' https://127.0.0.1/dashboard/"
+)
 
 
 class Marks(NamedTuple):

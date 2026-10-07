@@ -114,7 +114,8 @@ Only `nginx.conf` is replaced in the nginx image — `mime.types` and
 
 `nextcloud-nginx` mounts the `html` volume **read-only**: it serves the static
 half of the installation straight off the tree php-fpm owns, and has no business
-writing into it.
+writing into it. It does not mount `data` at all — its config denies `/data`, and
+the user files only ever pass through php-fpm.
 
 ## Health checks
 
@@ -271,13 +272,24 @@ under it keeps the modes the image gives it.
 
 **What this changes is a host directory, not a view inside the container.**
 `/var/www/html` is the bind mount of the `html` volume — on storagebaby
-`/pool/apps/nextcloud/html` — so after the first start that directory is **0755 on
+`/var/lib/storagebaby/fast/nextcloud/html` — so after the first start that directory is **0755 on
 the host**, overriding the 0750 the role creates volume directories with. That is
 a deliberate exception to the role's convention and the only one on the platform,
 and it is acceptable because it is the mount point alone: the tree under it keeps
-the image's modes and `data/`, which is the user data, stays 0770 and
-`www-data`-owned. The role never re-permissions an existing volume directory, so
-it does not fight back on the next converge.
+the image's modes and `data/`, which is the user data and its own volume on the
+pool, stays 0770 and `www-data`-owned. The role never re-permissions an existing
+volume directory, so it does not fight back on the next converge.
+
+## `html` on the SSD, `data` on the pool
+
+The image keeps everything under `/var/www/html`: code, config, apps and, as
+`data/`, the user files. They want different disks — the installation is a few
+hundred MB of PHP that is read on every request, the user files are the bulk and
+are read when someone opens them — so they are two volumes, `html` of class `fast`
+and `data` of class `pool`, and `data` is mounted **over** `/var/www/html/data`
+inside the app container. `datadirectory` in `config.php` keeps its default,
+`/var/www/html/data`, so nothing in Nextcloud knows about the split; the mount
+point inside `html` is created by podman and stays empty on the host.
 
 ## `AddCapability=MKNOD` on Collabora
 
@@ -412,7 +424,7 @@ otherwise keep the first address and drop the rest.
 
 ```
 nextcloud-cron.timer    every five minutes   podman exec -u www-data nextcloud-app php -f /var/www/html/cron.php
-nextcloud-dump.timer    daily at 02:30       podman exec nextcloud-database pg_dump -Fc … > /backups/nextcloud.dump
+nextcloud-dump.timer    daily at 02:30       podman exec nextcloud-database pg_dump … > /backups/nextcloud.sql
 ```
 
 Plain systemd user units in `~svc-nextcloud/.config/systemd/user/`, not Quadlet
@@ -426,33 +438,46 @@ background jobs run whether or not anybody has the web UI open.
 
 `nextcloud-dump` at 02:30 is half an hour before the snapshot at 03:00, so every
 snapshot carries a dump from the same night. The dump is written to
-`<name>.dump.tmp` and renamed, so `/backups` never holds a half-written file for
+`<name>.sql.tmp` and renamed, so `/backups` never holds a half-written file for
 the sidecar to pick up — `mv` within one volume is atomic.
 
+It is **plain SQL and uncompressed**, which is the form all four of the platform's dump
+timers use: the sidecar snapshots this file into a deduplicating repository, and a
+compressed dump differs in every byte from one night to the next so none of it dedups
+against yesterday's. `ansible/roles/service/README.md`, "The dump form", has the whole
+argument — including why `--clean --if-exists --no-owner` sit on the dump here and would
+have to sit on the restore in any archive format.
+
 **A database is backed up as a dump, never as its data directory.** `database` is
-therefore not in `backup.paths`; `backups` is.
+therefore not in `backup.paths`; `backups` is — and `backups` is class `pool`, because a
+write-once nightly file has no business on a 120G SSD.
 
 ### Restoring one
 
 The old `nextcloud/Makefile` carried a `database_restore` beside its
 `database_snapshot`; the timer replaced the snapshot and this replaces the restore.
-The format changed with it — `pg_dump -Fc`, postgres's own custom format, where the
-Makefile used `--format=tar` — so it is `pg_restore` reading the file on stdin,
+The dump is plain SQL, so it is `psql` reading the file on stdin and not `pg_restore`,
 run as the service user because the container belongs to that user's podman:
 
 ```sh
 /usr/local/sbin/podman-as svc-nextcloud podman exec -i nextcloud-database \
-	pg_restore -U oc_jlk -d nextcloud --no-owner < /path/to/nextcloud.dump
+	psql -U oc_jlk -d nextcloud --single-transaction --set ON_ERROR_STOP=on \
+	< /path/to/nextcloud.sql
 ```
 
 `-U` and `-d` are `config.database_user` and `config.database_name` in
-`service.yml`. `--no-owner` because the roles in the dump are the ones the old
-stack had, and the restore target is whatever this database initialised with.
+`service.yml`. `--single-transaction` with `ON_ERROR_STOP=on` is what makes a plain-SQL
+restore all-or-nothing — without the pair, `psql` reports each failed statement and
+carries on, leaving a half-restored database behind. The dump already carries
+`--clean --if-exists`, so it drops what is there before it recreates it, and `--no-owner`,
+so it does not insist on roles this cluster may not have.
+
 Restoring **into** the live database wants Nextcloud stopped first
-(`storagebaby-svc stop nextcloud`) or, cleaner, a `dropdb`/`createdb` pair before it —
-`pg_restore` does not empty what is already there. The file itself is either
-`/var/lib/storagebaby/fast/nextcloud/backups/nextcloud.dump` on the host or one
-restored out of a Kopia snapshot of the `backups` volume.
+(`storagebaby-svc stop nextcloud`). The file itself is either
+`/pool/apps/nextcloud/backups/nextcloud.sql` on the host or one
+restored out of a Kopia snapshot of the `backups` volume. What plain SQL costs is
+`pg_restore`'s selective and parallel restore; for a 100 MB dump on this host that is
+nothing, and the reasoning is in the role README.
 
 ## The after-change hooks
 
@@ -484,9 +509,21 @@ hooks:
         user: www-data,
         command: 'php occ maintenance:repair --include-expensive'
       }
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:system:set trusted_domains 1 --value="$NEXTCLOUD_TRUSTED_DOMAINS"'
+      }
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:app:set richdocuments wopi_url --value="$NEXTCLOUD_WOPI_URL"'
+      }
 ```
 
-These are the old `nextcloud/Makefile`'s `upgrade` target, minus the parts the
+The first five are the old `nextcloud/Makefile`'s `upgrade` target, minus the parts the
 platform already does. `make upgrade` was: pull, recreate, `chown -R www-data`,
 `occ upgrade`, then these five, then start. The pull is
 `AutoUpdate=registry` or a tag bump in git; the recreate is the role restarting a
@@ -503,26 +540,41 @@ check before each one, and on this image that wait is real — see above.
 `maintenance:mode --off` first, because `occ upgrade` leaves the instance in
 maintenance mode and the four commands after it refuse to run while it is on.
 
+The last two are the host's domain, and they are what makes a domain change a
+`host.yml` edit and nothing else. Nextcloud keeps `trusted_domains` in
+`config.php` and richdocuments keeps `wopi_url` in the database, both written
+once and never read from the environment again — `NEXTCLOUD_TRUSTED_DOMAINS` is
+applied by the entrypoint on install and upgrade only. So the two hooks set them
+on every converge, `when: always`, and they take the values from the container's
+own environment rather than from this file: a hook is `sh -c '<command>'` inside
+the container, `podman exec` inherits the unit's `Environment=` lines, and the
+unit renders `NEXTCLOUD_TRUSTED_DOMAINS` and `NEXTCLOUD_WOPI_URL` from the host's
+routes. `NEXTCLOUD_WOPI_URL` is not a variable the image knows; it exists for this
+hook. Index 1 of `trusted_domains` is where the image's installer puts the domain
+it was given, index 0 is the installer's own entry. The nightly cost is two `occ`
+calls that write what is already there.
+
 ## Backups
 
 ```yaml
 backup:
-  paths: [html, backups]
+  paths: [html, data, backups]
   schedule: '03:00'
   retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }
 ```
 
-The role generates `nextcloud-backup.container` from this, mounts the two volumes
+The role generates `nextcloud-backup.container` from this, mounts the three volumes
 read-only at `/data/<volume>`, connects to the Kopia server as
 `nextcloud@<host>` and leaves a scheduler running, so the snapshots happen at
 03:00 without a timer of their own. `ansible/roles/service/README.md` has the
 sidecar's mechanics.
 
-`html` is the installation and all of the user data under it; `backups` carries
-the nightly dump. The server lists
+`html` is the installation, `data` the user files, `backups` carries the nightly
+dump. The server lists
 
 ```
 nextcloud@test-a:/data/html
+nextcloud@test-a:/data/data
 nextcloud@test-a:/data/backups
 ```
 
@@ -543,24 +595,46 @@ nextcloud@test-a:/data/backups
 
 ## Migrating the data
 
-`nextcloud/docker-compose.yml`'s two named volumes map onto this folder's three:
+`nextcloud/docker-compose.yml`'s two named volumes map onto this folder's four —
+the old `html` tree is split in two, its `data/` subdirectory becoming a volume of
+its own:
 
-| Old (rootful compose)                   | New                                                               |
-| --------------------------------------- | ----------------------------------------------------------------- |
-| `nextcloud_nextcloud` (`/var/www/html`) | `/pool/apps/nextcloud/html`                                       |
-| `nextcloud_database`                    | `/var/lib/storagebaby/fast/nextcloud/database`                    |
-| —                                       | `/var/lib/storagebaby/fast/nextcloud/backups` (new, for the dump) |
+| Old (rootful compose)                           | New                                                         |
+| ----------------------------------------------- | ----------------------------------------------------------- |
+| `nextcloud_nextcloud` (`/var/www/html`)         | `/var/lib/storagebaby/fast/nextcloud/html`, without `data/` |
+| `nextcloud_nextcloud`, its `data/` subdirectory | `/pool/apps/nextcloud/data`                                 |
+| `nextcloud_database`                            | `/var/lib/storagebaby/fast/nextcloud/database`              |
+| —                                               | `/pool/apps/nextcloud/backups` (new, for the dump)          |
 
-The repo's root README has the recipe and the ownership rules. The nextcloud
-image runs the app as its own in-container user (`www-data`, uid 33), so the
-moved trees have to be chowned under `podman unshare` as `svc-nextcloud`, not on
-the host directly — and the database directory has to end up owned by postgres's
-in-container uid (70 in `postgres:17-alpine`), which is a subuid of
-`svc-nextcloud` on the host.
+The repo's root README has the recipe and the ownership rules; the trees are not
+chowned by hand any more. The nextcloud image runs the app as its own
+in-container user — `www-data`, uid **82**, because `nextcloud:33-fpm-alpine`
+builds on `php:*-fpm-alpine` and 82 is Alpine's standard uid for www-data (the
+`33` in the tag is the Nextcloud version, not a uid) — so `html` declares
+`owner: 82` and `database` declares `owner: 70`, postgres's uid in
+`postgres:17-alpine`. The role maps each onto the matching subuid of
+`svc-nextcloud` and adopts the tree once.
 
-Three things to check after the first converge on storagebaby, because each of
-them is something an installation carries or a path only real use takes — not
-something a unit declares and a test can read back.
+One edit before the first converge, then three things to check after it, because
+each of them is something an installation carries or a path only real use takes —
+not something a unit declares and a test can read back.
+
+**0. `dbhost` in the migrated `config.php`.** The old stack reached postgres as the
+compose service `database`; inside the pod it is `127.0.0.1`, and `POSTGRES_HOST`
+in the unit does not help — the image only reads it when it installs. With the old
+name in place every `occ` call and every page dies at "could not translate host
+name "database" to address". Edit the file on the host, as root, then restart the
+pod:
+
+```sh
+sed -i "s/'dbhost' => 'database'/'dbhost' => '127.0.0.1'/" \
+	/var/lib/storagebaby/fast/nextcloud/html/config/config.php
+storagebaby-svc restart nextcloud
+```
+
+Redis needs no such edit: the image's `redis.config.php` reads `REDIS_HOST` at
+runtime. And because the restart is not a unit change, the five `occ` hooks do not
+run on it — run them once by hand after `occ status` is right.
 
 **1. The installation came up as itself.** As root on the host; the containers
 belong to `svc-nextcloud`'s podman, so they are reached through the role's helper
@@ -577,26 +651,24 @@ storagebaby-svc ps nextcloud
 `occ status` must say `installed: true` and `maintenance: false` — the migrated
 instance, not a fresh one; see "The one ordering step that cannot be got wrong".
 
-**2. `trusted_domains`.** It comes from the migrated `config.php`, not from
-`NEXTCLOUD_TRUSTED_DOMAINS` — the entrypoint only applies that on install and
-upgrade — so if the domain changed it is one `occ config:system:set` by hand.
-
-richdocuments' `wopi_url` is the same story and is easy to forget beside it: it
-is an app setting written when Collabora was first configured and cached from
-then on (see "Collabora keeps its own TLS"), so after a domain change it still
-names the old host and documents fail to open with a healthy coolwsd. Both,
-together:
+**2. `trusted_domains` and `wopi_url` name this host.** Both come over in the
+migrated data with the old domain in them — `trusted_domains` in `config.php`,
+richdocuments' `wopi_url` in the database, written when Collabora was first
+configured — and `NEXTCLOUD_TRUSTED_DOMAINS` does not fix either, since the
+entrypoint applies it on install and upgrade only. The two `when: always` hooks
+("The after-change hooks") rewrite them on every converge, so after the first
+deploy both should already read this host's names:
 
 ```sh
-storagebaby-svc ps nextcloud # the pod; the two commands run in nextcloud-app
 doas /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
-	php occ config:system:set trusted_domains 1 --value=nextcloud.home.klees.io
+	php occ config:system:get trusted_domains
 doas /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
-	php occ config:app:set richdocuments wopi_url --value=https://collabora.home.klees.io
+	php occ config:app:get richdocuments wopi_url
 ```
 
-`occ config:app:get richdocuments wopi_url` says what it is now, and check 3 below
-is how to see whether it took.
+The old domain may still sit at index 0 of `trusted_domains`; it is harmless and
+`occ config:system:delete trusted_domains 0` removes it. A stale `wopi_url` shows
+as documents failing to open with a perfectly healthy coolwsd, which is check 3.
 
 **3. Open a document in Collabora, and watch the log while it opens.**
 

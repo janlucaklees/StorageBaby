@@ -58,11 +58,23 @@ def routes_of(spec: dict) -> list[dict]:
     return [{"domain": spec["domain"], "port": spec["port"]}] if "domain" in spec else []
 
 
+def route_fqdn(route: dict, host_domain: str) -> str:
+    """The public name of one route.
+
+    A route's `domain` is a full hostname when it carries a dot and a bare label the
+    host's own domain completes otherwise -- the rule in `roles/service/tasks/main.yml`,
+    and the dot is all of it, because a DNS label cannot contain one.
+    """
+    name = route["domain"]
+    return name if "." in name else f"{name}.{host_domain}"
+
+
 def placed_fqdns(host: str) -> list[str]:
     """Every route fqdn placed on a host -- the list the role maps to the host gateway."""
     domain = load_yaml(HOSTS / host / "host.yml")["domain"]
-    domains = {r["domain"] for p in placements() if p.host == host for r in routes_of(p.spec)}
-    return sorted(f"{d}.{domain}" for d in domains)
+    return sorted(
+        {route_fqdn(r, domain) for p in placements() if p.host == host for r in routes_of(p.spec)}
+    )
 
 
 def route_ports(spec: dict) -> list[int]:

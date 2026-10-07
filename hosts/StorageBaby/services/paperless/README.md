@@ -267,15 +267,20 @@ rather than replacing it.
 
 ```
 paperless-dump.timer    daily at 02:30
-paperless-dump.service  podman exec paperless-database pg_dump -Fc … > /backups/paperless.dump
+paperless-dump.service  podman exec paperless-database pg_dump … > /backups/paperless.sql
 ```
 
 Plain systemd user units in `~svc-paperless/.config/systemd/user/`, not Quadlet
 ones. 02:30 is half an hour before the snapshot at 03:00, so every snapshot
 carries a dump from the same night.
 
-The dump is written to `<name>.dump.tmp` and renamed, so `/backups` never holds a
+The dump is written to `<name>.sql.tmp` and renamed, so `/backups` never holds a
 half-written file for the sidecar to pick up — `mv` within one volume is atomic.
+
+It is **plain SQL and uncompressed**, the same form all four of the platform's dump
+timers use: the sidecar snapshots it into a deduplicating repository, and a compressed
+dump differs in every byte from one night to the next so none of it dedups against
+yesterday's. `ansible/roles/service/README.md`, "The dump form", has the reasoning.
 
 `Persistent=true` does **not** make the timer fire on the converge that enables it,
 which is the one thing it could have got wrong here: the pod has just started and the
@@ -287,28 +292,32 @@ run is the first real 02:30. (`nextcloud-cron.timer` is deliberately non-persist
 for a different reason: a missed cron run is not worth catching up.)
 
 **A database is backed up as a dump, never as its data directory.** `database` is
-therefore not in `backup.paths`; `backups` is. Snapshotting a running postgres
+therefore not in `backup.paths`; `backups` is — and `backups` is class `pool`, because a
+write-once nightly file has no business on a 120G SSD. Snapshotting a running postgres
 data directory copies files mid-write and restores to a database that may not
 open at all.
 
 ### Restoring one
 
 The old `paperless/Makefile` had `database_snapshot` and `database_restore` in
-`--format=tar`; the timer replaced the first and this replaces the second, in the
-custom format `pg_dump -Fc` writes. It runs as the service user, because the
+`--format=tar`; the timer replaced the first and this replaces the second. The dump is
+plain SQL, so it is `psql` and not `pg_restore`. It runs as the service user, because the
 container belongs to that user's podman:
 
 ```sh
 /usr/local/sbin/podman-as svc-paperless podman exec -i paperless-database \
-	pg_restore -U paperless -d paperless --no-owner < /path/to/paperless.dump
+	psql -U paperless -d paperless --single-transaction --set ON_ERROR_STOP=on \
+	< /path/to/paperless.sql
 ```
 
 `-U` and `-d` are `config.database_user` and `config.database_name` in
-`service.yml`. `--no-owner` because the roles in the dump are the old stack's, not
-the ones this cluster initialised with. `pg_restore` does not empty what is already
-there, so restore into a freshly initialised cluster, or drop and recreate the
-database first with paperless stopped (`storagebaby-svc stop paperless`). The file is
-either `/var/lib/storagebaby/fast/paperless/backups/paperless.dump` on the host or
+`service.yml`. `--single-transaction` with `ON_ERROR_STOP=on` is what makes the restore
+all-or-nothing — without the pair `psql` reports each failed statement and carries on,
+leaving a half-restored database. The dump itself carries `--clean --if-exists`, so it
+drops what is there before recreating it, and `--no-owner`, so it does not insist on
+roles this cluster may not have. Restore with paperless stopped
+(`storagebaby-svc stop paperless`). The file is
+either `/pool/apps/paperless/backups/paperless.sql` on the host or
 one restored out of a Kopia snapshot of the `backups` volume.
 
 ## Backups
@@ -399,15 +408,18 @@ actually restarted something and not on the nightly no-op.
 | `paperless_media` (named)    | `/pool/apps/paperless/media`                                       |
 | `paperless_database` (named) | `/var/lib/storagebaby/fast/paperless/database`                     |
 | `paperless_broker` (named)   | — (a queue; start empty)                                           |
-| —                            | `/var/lib/storagebaby/fast/paperless/backups` (new, for the dump)  |
+| —                            | `/pool/apps/paperless/backups` (new, for the dump)                 |
 | —                            | `/var/lib/storagebaby/fast/paperless/consume` (new, the FTP spool) |
 
 All four were ordinary Docker named volumes, not binds: rootful Docker keeps them
 under `/var/lib/docker/volumes/<name>/_data`, and `<name>` is the compose project
 (the directory the `docker-compose.yml` sat in) plus the volume's own name.
 
-The repo's root README has the recipe and the ownership rules. The paperless
-image runs the app as its own in-container user, so the moved trees have to be
-chowned under `podman unshare` as `svc-paperless`, not on the host directly — and
-the database directory has to end up owned by postgres's in-container uid (70 in
-`postgres:17-alpine`), which is a subuid of `svc-paperless` on the host.
+The repo's root README has the recipe and the ownership rules, and the chowns are
+the role's: `data`, `media` and `consume` declare `owner: 1000`, the uid
+paperless-ngx runs as, and `database` declares `owner: 70`, postgres's uid in
+`postgres:17-alpine`. Each is mapped onto the matching subuid of `svc-paperless`
+and adopted once, on the converge that finds a copied-in tree still owned by
+whatever Docker left it as. `backups` declares none — the dump timer's
+`podman exec` has no `-u`, so it writes as container root, which is the service
+user.

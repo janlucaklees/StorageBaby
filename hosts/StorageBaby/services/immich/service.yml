@@ -1,24 +1,41 @@
 name: immich
 port: 2283
-domain: immich
+domain: immich.klees.io
 volumes:
-  upload: { class: pool }
-  database: { class: fast }
-  model-cache: { class: fast }
+  # `owner: 0` on both trees the app writes: immich-server and
+  # immich-machine-learning declare no USER, and neither does their base image, so
+  # both run as container root -- which is the service user. Declared rather than
+  # left out because `upload` is migrated in from the rootful stack, root-owned,
+  # and only a declared owner makes the role adopt it to `svc-immich`.
+  upload: { class: pool, owner: 0 }
+  # 999 and not 70: this is `pgvector/pgvector`, which builds on
+  # `postgres:<major>-bookworm`. Debian's postgres is uid 999; only the Alpine
+  # variants the other three pods use are 70.
+  database: { class: fast, owner: 999 }
+  model-cache: { class: fast, owner: 0 }
+  # No `owner`: written by the dump timer's `podman exec`, i.e. container root. `pool`
+  # like every other service's dump tree -- the SSD is 120G and a dump is write-once
+  # nightly, so it has no business there.
+  backups: { class: pool }
 config:
   # `postgres`, not `immich`: the migrated database is the one the old compose stack
   # created, and that one is called postgres.
   database_name: postgres
   database_user: immich
-  version: v2.7.5
+  version: v3.2.0
   # Empty on purpose, and measured: see "Trusted proxies" in the README. A host that
   # really does sit behind a second proxy sets it through `service_config.immich`.
   trusted_proxies: ''
 secrets: [database_password, kopia_password]
 backup:
-  # Immich takes its own database dumps into `upload/backups`, so there is no dump
-  # timer here and no separate `backups` volume -- the README has the switch that
-  # turns them on.
-  paths: [upload]
+  paths: [upload, backups]
   schedule: '03:00'
   retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }
+  # Immich writes database dumps of its own into `upload/backups/`, on a schedule set in
+  # its admin UI. They are not this platform's backup and nothing here depends on them:
+  # `immich-dump.timer` produces `backups/immich.sql` whether that job is on, off or
+  # reset by a version bump. Carrying both would mean snapshotting the same database
+  # twice a night, and the app's copy is gzipped -- so it dedups against nothing and
+  # every night's file is ~244 MB of new blocks in the repository.
+  exclude:
+    upload: ['/backups/']

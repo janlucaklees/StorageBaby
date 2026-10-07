@@ -134,7 +134,7 @@ MAINTENANCE_KEYS = {"on_calendar", "balance_threshold", "scrub_percent", "scrub_
 MAIL_REQUIRED = {"to", "from", "smtp_host", "smtp_port", "smtp_user"}
 # Optional, and defaulted by the msmtprc template to the production values (`tls on`,
 # `auth on`). A host whose relay is a sink on its own loopback says so.
-MAIL_OPTIONAL = {"tls", "auth"}
+MAIL_OPTIONAL = {"tls", "starttls", "auth"}
 
 
 @pytest.mark.parametrize("host", STORAGE_HOSTS)

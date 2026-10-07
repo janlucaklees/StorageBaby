@@ -51,12 +51,93 @@ GroupAdd=keep-groups
 `| bool` on the two flags: they come from a `set_fact`, so a template must not rely on
 them being a real boolean rather than the string `"False"`, which would be truthy.
 
+## Volume and bind owners
+
+A `volumes` or a `binds` entry may name an `owner`, and it is **the uid the process has
+inside the container** — `1000` for paperless-ngx and for jellyfin's linuxserver image,
+`70` for `postgres:17-alpine`, `999` for a Debian-based postgres, `82` for `www-data` in
+any `php:*-fpm-alpine`. Never a host uid: the host uid is what the role works out.
+
+```yaml
+volumes:
+  data: { class: pool, owner: 1000 }
+  database: { class: fast, owner: 70 }
+binds:
+  media:
+    {
+      host: /pool/shared/media,
+      container: /media,
+      mode: rw,
+      group: media,
+      owner: 1000
+    }
+```
+
+The mapping is the rootless user namespace, nothing more:
+
+| container uid | host uid               |
+| ------------- | ---------------------- |
+| `0`           | `svc-<name>`'s own uid |
+| `n` (n ≥ 1)   | `subuid_start + n - 1` |
+
+`subuid_start` is the service user's first subordinate id — the second field of its
+`/etc/subuid` line, which the role allocates on the first converge. The gid is the same
+arithmetic over `/etc/subgid` with the same `n`; no image on the platform needs the two
+to differ. The off-by-one is the whole of the arithmetic: the range begins at container
+uid 1, because container uid 0 is the service user itself.
+
+**Adoption happens once.** A missing directory is created owned by the mapped uid and
+gid. An existing one is compared — **the directory's own owner, one `stat` of that
+inode, never a walk of the tree** — against the mapped uid, and only when the two differ
+does the role run one `chown -R` and report changed. The converge after that finds the
+owner already right and touches nothing. A volume is chowned `<uid>:<gid>`; a bind by
+uid alone, so the group that carries the service user's access into a tree it does not
+own survives. Neither changes a mode.
+
+It runs before the units are started, so a service whose data was copied in by hand
+comes up able to read it on the same converge.
+
+**Leaving `owner` out is not `owner: 0`.** With no `owner` the role never compares and
+never chowns: the directory is created owned by the service user and then left to
+whatever the image does with it, which is what stirling-pdf relies on — it chowns its
+mounts to a subuid of its own accord and documents no uid to declare, and re-asserting
+svc-ownership nightly would take the running service's access away. `owner: 0` is the explicit statement that the
+service user owns the tree, and **is** adopted.
+
+**The failure mode is a wrong number.** An `owner` that is not what the image runs as
+chowns the whole tree, once, to a uid nothing in the container is — and the role will
+not chown it back, because the next converge finds the directory matching what the spec
+says; the fix is to correct the spec and converge again. So the uid is read off the
+image (`podman exec <container> id -u` on a running one, or its `USER` / `adduser` line)
+rather than recalled, and a service whose uid is not established declares no `owner` at
+all.
+
 ## Routes
 
 A service declares either `routes: [{domain, port}, ...]` or the one-route shorthand
 `domain:` + `port:`; the role turns both into `routes`, each entry gaining `fqdn`. Every
 route gets its own Traefik file `/etc/storagebaby/traefik/dynamic.d/<name>-<domain>.yml`
 and its own router and service, both named `<name>-<domain>`.
+
+A `domain` is **either a bare label or a full hostname**, and the dot is the whole of the
+rule — a DNS label cannot contain one, so the two forms cannot be confused. A label is
+completed with the host's own `domain` (`jellyfin` → `jellyfin.home.klees.io`), which is
+what every service did before there was a second zone; a hostname is used exactly as
+written (`immich.klees.io`), which is how a service takes a name under a domain that is
+not the host's default. Two things have to be true for the second form to work, and
+neither is the role's to arrange: the host must list that zone in `cert_zones`, or the
+name is served a certificate that does not cover it (`tests/static/test_hosts.py`
+refuses the combination), and the DNS record is the operator's.
+
+**A route file is removed when the route goes.** The file is named after the route, so
+renaming one writes a new file and leaves the old one — and Traefik reads the whole
+directory, which makes a leftover a _live router_ rather than the inert thing a stale
+unit is. So the role removes every `dynamic.d/<name>-*.yml` that the converge did not
+write, which is what makes moving a service to another domain actually retire its
+previous name. The glob is only unambiguous while no service name is another service
+name followed by a dash; `tests/static/test_contract.py::test_no_service_name_shadows_another`
+holds that, because a service called `stirling` would otherwise match and delete
+`stirling-pdf`'s route files.
 
 The name carries the domain because Traefik reads one flat directory: two routes of one
 service would otherwise write the same file, and the second would win. The role removes a
@@ -75,6 +156,22 @@ route:
 ```
 
 A `routes:` entry may carry the same two keys and then overrides them for itself.
+
+A third option guards a route rather than describing its backend:
+
+```yaml
+route:
+  basic_auth: dashboard_htpasswd # a podman secret of traefik holding htpasswd lines
+```
+
+It renders a `basicAuth` middleware named `<name>-<domain>-auth` with
+`usersFile: /run/secrets/<secret>` and attaches it to the router. The secret is
+**traefik's**, whichever service's route it protects: Traefik is the process that opens
+the file, and a rootless user cannot see another user's podman secrets. So the value
+names a key in `hosts/shared/services/traefik/secrets.sops.yaml`, listed in traefik's
+`secrets:` and mounted by a `Secret=` line in its unit — not one of the protected
+service's own secrets. A `routes:` entry may override it like the other two. Today the
+only consumer is traefik's own dashboard.
 
 `scheme: https` is not about secrecy on a loopback hop — it is the only way Traefik
 speaks **HTTP/2** to a backend, and therefore the only way it can carry gRPC. Kopia's
@@ -235,7 +332,7 @@ between services on one host:
 
 ```yaml
 host_secrets:
-  kopia_password: kopia-clients.paperless # <set>.<key>
+  kopia_password: kopia-clients.paperless # <set>.<key>; an example, see below
 ```
 
 The set is `hosts/<host>/secrets/<set>.sops.yaml`, encrypted under that host's rule, so
@@ -244,9 +341,13 @@ there and syncs each entry into a Podman secret of `svc-<name>` with the same he
 own secrets use — so a changed value restarts the service's units exactly like any other.
 Key names are plaintext in a sops file, so a static test checks every reference resolves.
 
-That is how one string is the same on both sides: the kopia server declares
-`client_<service>: kopia-clients.<service>` and the client `kopia_password:
-kopia-clients.<service>`.
+That is how one string can be made the same on both sides. The kopia client passwords
+were the one use — server `client_<service>: kopia-clients.<service>`, client
+`kopia_password: kopia-clients.<service>` — and are not any more: each side carries the
+value in its own `secrets.sops.yaml` (`client_<pod>` on the server, `kopia_password` in
+the pod), filled with the same string by the operator, so a service folder depends on
+no set. The mechanism stays, supported and tested, for the next pair that needs it; the
+test harness pairs the kopia values by name without it.
 
 ## Hooks
 
@@ -296,7 +397,7 @@ started and restarted on change, while every other `quadlet/*.j2` goes to the Qu
 directory. The static contract requires the two halves as a pair: a timer without its
 service never fires, a service without its timer never runs. Used for database dumps and
 for cron-like commands; they address containers by name, e.g.
-`ExecStart=/usr/bin/podman exec paperless-database sh -c 'pg_dump ... > /backups/x.dump'`.
+`ExecStart=/usr/bin/podman exec paperless-database sh -c 'pg_dump ... > /backups/x.sql'`.
 
 ## The generated backup sidecar
 
@@ -343,8 +444,66 @@ deleted and made again rather than retried forever.
 
 The role adds two implicit volumes, `backup-config` and `backup-cache` (class `fast`),
 before the volume directories are created, so they are made and owned like any other.
-Databases are backed up as dumps, not as data directories: a dump timer writes into a
-volume that is listed in `paths`.
+They stay on the SSD where a declared `backups` volume does not: the cache is working
+state kopia reads throughout a snapshot, not a stored backup.
+
+### `backup.exclude`
+
+`exclude: { <volume>: [rule, ...] }`, optional, and every volume it names has to be in
+`paths` — a rule against a tree that is not snapshotted does nothing, and a static test
+refuses it. The rules are kopia ignore rules, gitignore syntax, relative to that
+volume's own snapshot root, so a leading `/` anchors to it: `upload: ['/backups/']`
+excludes `/data/upload/backups/` and nothing else.
+
+What it is for is the narrow case of **an application that writes its own backups into a
+tree this platform already snapshots**. Immich is the one: its admin UI has a database
+backup job that drops gzipped dumps into `upload/backups/`, and carrying those means
+snapshotting the same database twice a night — the second copy gzipped, so it dedups
+against nothing and every night's file is entirely new blocks in the repository.
+Excluding it is what makes `immich-dump.timer` the only database backup immich has.
+
+It is deliberately not a general "skip the big churning directories" knob. Previews,
+thumbnails and search indexes are regenerable, but regenerating them is work the
+operator has to know to do, and that is a different decision from refusing a second copy
+of a backup.
+
+Mechanically: the sidecar's unit carries the block as one flat `KOPIA_EXCLUDE` list of
+`<volume>:<rule>` entries — one variable rather than one per volume, because a volume
+name may contain a `-` and an environment variable name may not. Entries are separated
+by whitespace, so **a rule may not contain any**; the contract test enforces that.
+`kopia-client.sh` clears the ignore list on every start before it re-adds the rules,
+because a policy lives in the repository and outlives the container: a rule deleted from
+`service.yml` would otherwise keep excluding its tree forever. Git is the whole truth
+about what is skipped.
+
+### The dump form
+
+A database is backed up as a dump, never as its data directory: a dump timer writes into
+a volume that is listed in `paths`. All four of them dump the same way, and the form is
+load-bearing in two places:
+
+```sh
+pg_dump --clean --if-exists --no-owner --username=<user> --dbname=<db> \
+  > /backups/<db>.sql.tmp && mv /backups/<db>.sql.tmp /backups/<db>.sql
+```
+
+- **Plain SQL, uncompressed.** The sidecar snapshots this file into a deduplicating
+  repository. A compressed dump differs in every byte from one night to the next, so none
+  of it dedups against yesterday's; uncompressed, only the pages that really changed are
+  new blocks. It is also the form Immich's own documentation gives, which matters for
+  that database in particular: restoring a dump carrying `vector` columns needs a
+  `search_path` rewrite that only exists for plain SQL.
+- **`--clean --if-exists --no-owner` at dump time.** In plain format these are emitted
+  into the script. In any archive format (`-Fc`, `-Fd`) they are ignored at dump time and
+  have to be passed to `pg_restore` instead, so the dump would carry none of them.
+  `--no-owner` is what makes a dump restorable when the database user is not the one it
+  was taken from.
+- **`.tmp` then `mv`.** The sidecar may read the file at any moment; a rename is atomic,
+  a redirect into the final name is not.
+
+The cost is `pg_restore`'s selective and parallel restore, which plain SQL has no
+equivalent of. Restore with
+`psql --single-transaction --set ON_ERROR_STOP=on --dbname=<db> --username=<user> < <db>.sql`.
 
 ## What every `.container` must declare
 
@@ -518,21 +677,25 @@ really `active`.
 
 ## What the role does to the host
 
-Creates `svc-<name>` (lingering, subuid/subgid allocated), any missing volume directory (0750,
-owned by the service user), every group named by `groups` or by a bind (system groups) with
-`svc-<name>` a member, and any missing bind directory (2775, root:<group>).
+Creates `svc-<name>` (lingering, subuid/subgid allocated), any missing volume directory
+(0750, owned by the uid the spec's `owner` maps to, or by the service user when it names
+none), every group named by `groups` or by a bind (system groups) with `svc-<name>` a
+member, and any missing bind directory (2775, `<owner or root>:<group>`).
 
 The class roots themselves (`storage_roots`) are not this role's: `host_base` creates them
 root-owned and 0755, precisely so that a volume directory created here never silently
 becomes one, 0750 and owned by whichever service converged first.
 
-Both kinds of directory are created, never re-permissioned. An existing bind directory's
-permissions belong to the operator, not to the role. An existing volume directory belongs to
-the image: entrypoints routinely `chown`/`chmod` their data tree on every start — usually to a
-non-root uid inside the container, which on the host is a subuid of `svc-<name>`, not
-`svc-<name>` itself. Enforcing 0750 svc-owned on each converge would report changed forever
-_and_ take the running service's access away; with `HealthOnFailure=kill` that is a restart
-loop, run nightly by the deploy timer. So the role hands over a directory that starts out the
-service's own and then leaves it alone.
+Both kinds of directory are created and then never re-permissioned, with the single
+exception of a declared `owner`, which is adopted once (see "Volume and bind owners").
+An existing bind directory's permissions otherwise belong to the operator, not to the
+role. An existing volume directory belongs to the image: entrypoints routinely
+`chown`/`chmod` their data tree on every start — usually to a non-root uid inside the
+container, which on the host is a subuid of `svc-<name>`, not `svc-<name>` itself.
+Enforcing 0750 svc-owned on each converge would report changed forever _and_ take the
+running service's access away; with `HealthOnFailure=kill` that is a restart loop, run
+nightly by the deploy timer. So the role hands over a directory that starts out owned by
+whoever the spec says owns it and then leaves it alone. No mode is ever re-asserted,
+adoption included.
 A membership change stops and starts the user manager so the new groups take effect, which
 stops the service's containers; the unit tasks at the end of the same run start them again.

@@ -7,12 +7,26 @@ name: nextcloud
 # for itself, which nothing can verify and nothing has to, the hop being to 127.0.0.1.
 # The collabora unit has the why; kopia is the other service that does this.
 routes:
-  - { domain: nextcloud, port: 8280 }
-  - { domain: collabora, port: 9980, scheme: https, insecure_skip_verify: true }
+  - { domain: nextcloud.klees.io, port: 8280 }
+  - {
+      domain: collabora.klees.io,
+      port: 9980,
+      scheme: https,
+      insecure_skip_verify: true
+    }
 volumes:
-  html: { class: pool }
-  database: { class: fast }
-  backups: { class: fast }
+  # 82, not 33: `www-data` is uid 82 in `php:*-fpm-alpine`, and the 33 in
+  # `nextcloud:33-fpm-alpine` is the Nextcloud version.
+  # The installation -- code, config, apps -- is `html` on the SSD, and the user files
+  # are `data` on the pool, mounted over `/var/www/html/data` inside it. `datadirectory`
+  # in config.php stays `/var/www/html/data`, so Nextcloud never sees the split.
+  html: { class: fast, owner: 82 }
+  data: { class: pool, owner: 82 }
+  database: { class: fast, owner: 70 }
+  # No `owner`: written by the dump timer's `podman exec`, i.e. container root. `pool`
+  # and not `fast`: the SSD is 120G and a dump is a write-once nightly file, so it has no
+  # business there -- every service's dump tree is on the pool.
+  backups: { class: pool }
 config:
   database_name: nextcloud
   database_user: oc_jlk
@@ -29,7 +43,7 @@ secrets:
     admin_password,
     kopia_password
   ]
-# The old stack's `make upgrade` ran these five by hand after every image bump. The
+# The old stack's `make upgrade` ran the first five by hand after every image bump. The
 # image itself runs `occ upgrade` from its entrypoint; these are the steps that came
 # after it, and `when: unit_changed` (the default) is what makes them a deploy step --
 # a version bump in `nextcloud-app.container.j2` runs them, the nightly no-op does not.
@@ -60,10 +74,29 @@ hooks:
         user: www-data,
         command: 'php occ maintenance:repair --include-expensive'
       }
+    # The two settings a domain change leaves behind, both read off this container's own
+    # environment: a hook is `sh -c` inside the container, and `podman exec` inherits the
+    # unit's Environment= lines, so `$NEXTCLOUD_TRUSTED_DOMAINS` and `$NEXTCLOUD_WOPI_URL`
+    # are the rendered fqdns without any templating in this file. `when: always` because
+    # a domain change is a host.yml edit, not a unit change of this service, and it has to
+    # land on the converge that follows it. Index 1 is where the image's installer puts
+    # the domain it was given; index 0 is the installer's own entry.
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:system:set trusted_domains 1 --value="$NEXTCLOUD_TRUSTED_DOMAINS"'
+      }
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:app:set richdocuments wopi_url --value="$NEXTCLOUD_WOPI_URL"'
+      }
 backup:
-  # `html` is the installation and the user data under it; `backups` carries the
-  # nightly dump. `database` is deliberately absent -- a database is backed up as a
-  # dump, never as its data directory.
-  paths: [html, backups]
+  # `html` is the installation, `data` the user files, `backups` carries the nightly
+  # dump. `database` is deliberately absent -- a database is backed up as a dump, never
+  # as its data directory.
+  paths: [html, data, backups]
   schedule: '03:00'
   retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }

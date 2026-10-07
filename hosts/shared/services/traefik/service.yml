@@ -4,7 +4,8 @@ domain: traefik
 route:
   internal: api@internal
   wildcard_cert: true
+  basic_auth: dashboard_htpasswd
 volumes:
   letsencrypt: { class: fast }
-secrets: [porkbun_api_key, porkbun_secret_api_key]
+secrets: [porkbun_api_key, porkbun_secret_api_key, dashboard_htpasswd]
 backup: none

@@ -173,6 +173,17 @@ def routes_of(spec: dict) -> list[dict]:
     return [{"domain": spec["domain"], "port": spec["port"]}] if "domain" in spec else []
 
 
+def route_fqdn(route: dict, host_domain: str) -> str:
+    """The public name of one route.
+
+    A route's `domain` is a full hostname when it carries a dot and a bare label the
+    host's own domain completes otherwise -- the rule in `roles/service/tasks/main.yml`,
+    and the dot is all of it, because a DNS label cannot contain one.
+    """
+    name = route["domain"]
+    return name if "." in name else f"{name}.{host_domain}"
+
+
 @service_case
 def test_route_rendered(host, owner, spec_path):
     hostvars = placed(host, owner)
@@ -183,10 +194,20 @@ def test_route_rendered(host, owner, spec_path):
     for route in routes:
         f = host.file(f"/etc/storagebaby/traefik/dynamic.d/{spec['name']}-{route['domain']}.yml")
         assert f.exists and f.mode == 0o644
-        assert f"Host(`{route['domain']}.{hostvars['domain']}`)" in f.content_string
+        assert f"Host(`{route_fqdn(route, hostvars['domain'])}`)" in f.content_string
     # One file per route replaced the single `<name>.yml`; a leftover would keep serving
     # the old router next to the new ones, because Traefik reads the whole directory.
     assert not host.file(f"/etc/storagebaby/traefik/dynamic.d/{spec['name']}.yml").exists
+    # And *exactly* the files this service's routes name. The role removes every
+    # `<name>-*.yml` it did not just write, which is what retires a public name a service
+    # no longer serves -- a route file is a live router, so moving a service to another
+    # domain would otherwise leave the old name answering forever.
+    d = "/etc/storagebaby/traefik/dynamic.d"
+    expected = {f"{d}/{spec['name']}-{route['domain']}.yml" for route in routes}
+    if spec.get("tcp_ports"):
+        expected.add(f"{d}/{spec['name']}-tcp.yml")
+    listing = host.run(f"ls -1 {d}/{spec['name']}-*.yml")
+    assert set(listing.stdout.split()) == expected, listing.stdout
 
 
 def subuid_range(host, user: str) -> tuple[int, int]:
@@ -214,6 +235,43 @@ def test_volume_dirs_belong_to_the_service(host, owner, spec_path):
         # range. Either is the service and nothing else -- another service's user, its
         # subuids or root would all still fail.
         assert d.uid == svc_uid or first <= d.uid < first + count, f"{path}: owned by uid {d.uid}"
+
+
+@service_case
+def test_declared_volume_owners_are_adopted(host, owner, spec_path):
+    """A volume with `owner` is owned by exactly the uid that maps to, not just by a subuid.
+
+    The test above accepts the service user's whole subordinate range, because a volume
+    with no `owner` is the image's to chown and the role has no business knowing which
+    uid it picks. A declared `owner` is the role's, and what this pins down is the
+    arithmetic in `host.yml`: container uid 0 is the service user, container uid n is
+    `first_subuid + n - 1`. An off-by-one there lands inside the range and sails through
+    the looser assertion.
+
+    What this sees is the result on a directory the role created, not an adoption. To
+    catch the `chown -R` the volume directory would have to already exist with the wrong
+    owner when the converge runs, and the scenario has no step between the role creating
+    one and this asserting on it -- there is nowhere to plant it. The real case is the
+    rollout's copied-in trees, verified on the host.
+    """
+    hostvars = placed(host, owner)
+    spec = load_spec(spec_path)
+    declared = {v: c["owner"] for v, c in (spec["volumes"] or {}).items() if "owner" in c}
+    if not declared:
+        pytest.skip("no volume declares an owner")
+    user = f"svc-{spec['name']}"
+    svc_uid = host.user(user).uid
+    first, count = subuid_range(host, user)
+    for volume, container_uid in declared.items():
+        path = volume_path(hostvars, spec, volume)
+        expected = svc_uid if container_uid == 0 else first + container_uid - 1
+        assert container_uid == 0 or expected < first + count, (
+            f"{path}: container uid {container_uid} falls outside {user}'s subuid range"
+        )
+        found = host.file(path).uid
+        assert found == expected, (
+            f"{path}: container uid {container_uid} maps to {expected} on this host, found {found}"
+        )
 
 
 @service_case
@@ -318,7 +376,7 @@ def test_domain_answers_over_https(host, owner, spec_path):
     # Every route, not just the first: a pod that publishes two ports is exactly the
     # case where checking one of them proves nothing about the other.
     for route in routes:
-        fqdn = f"{route['domain']}.{hostvars['domain']}"
+        fqdn = route_fqdn(route, hostvars["domain"])
         r = host.run(f"curl -sk -o /dev/null -w '%{{http_code}}' -H 'Host: {fqdn}' https://127.0.0.1/")
         code = r.stdout.strip()
         # The rc is not optional: curl prints `000` and exits non-zero when it never got
@@ -384,9 +442,43 @@ def test_dump_service_writes_a_dump(host, owner, spec_path, template):
     journal = f"journalctl _SYSTEMD_USER_UNIT={unit} --no-pager | tail -40"
     assert r.rc == 0, host.run(journal).stdout
     listing = host.run(f"ls -1 {path}")
-    assert any(f.endswith(".dump") for f in listing.stdout.split()), (
-        f"{path} holds no *.dump after {unit}: {listing.stdout!r}\n{host.run(journal).stdout}"
-    )
+    dumps = [f for f in listing.stdout.split() if f.endswith(".sql")]
+    assert dumps, f"{path} holds no *.sql after {unit}: {listing.stdout!r}\n{host.run(journal).stdout}"
+    # Plain SQL and uncompressed is the load-bearing half of the dump form -- the sidecar
+    # snapshots this file into a deduplicating repository and a compressed dump dedups
+    # against nothing. A silent regression to `-Fc` would still write a file and still
+    # pass the assertion above, so the format is read back off the first bytes: plain
+    # output opens with pg_dump's own comment banner, custom format with the magic
+    # "PGDMP". Size, too: an empty file is a dump that failed without saying so.
+    dump = f"{path}/{dumps[0]}"
+    size = int(host.check_output(f"stat -c %s {dump}"))
+    assert size > 0, f"{dump} is empty after {unit}\n{host.run(journal).stdout}"
+    head = host.check_output(f"head -c 3 {dump}")
+    assert head.startswith("--"), f"{dump} is not plain SQL (starts {head!r}) -- compressed dump?"
+
+
+@service_case
+def test_backup_excludes_reach_the_kopia_policy(host, owner, spec_path):
+    """`backup.exclude` is only worth anything if it lands in the repository's policy.
+
+    The rules travel from `service.yml` through one space-separated environment variable
+    into `kopia policy set --add-ignore`, and every step of that is silent when it goes
+    wrong: a mangled variable, a rule against the wrong snapshot root or a kopia that
+    stopped accepting the flag all leave a sidecar that backs up strictly more than it
+    was told to. So the policy is read back from the client rather than the unit file.
+    """
+    placed(host, owner)
+    spec = load_spec(spec_path)
+    exclude = (spec["backup"] or {}).get("exclude") if spec["backup"] != "none" else None
+    if not exclude:
+        pytest.skip("no backup excludes")
+    name = spec["name"]
+    user = f"svc-{name}"
+    for volume, rules in exclude.items():
+        r = run_as(host, user, f"podman exec {name}-backup kopia policy show /data/{volume}")
+        assert r.rc == 0, f"could not read the policy for /data/{volume}: {r.stderr}"
+        for rule in rules:
+            assert rule in r.stdout, f"{name}: {rule!r} is not in the policy for /data/{volume}:\n{r.stdout}"
 
 
 @service_case
@@ -397,7 +489,8 @@ def test_backup_sidecar_snapshots_to_the_server(host, owner, spec_path):
     nothing, and checking only the sidecar's own view would pass for a snapshot that
     never left it. So the snapshot is triggered on the client and looked for on the
     server, under the `<service>@<host>` identity the server registered it as -- which
-    is also what proves the two halves of the shared `kopia-clients` password match.
+    is also what proves the two copies of the client password -- the pod's
+    `kopia_password` and kopia's `client_<pod>` -- match.
     """
     placed(host, owner)
     spec = load_spec(spec_path)
@@ -427,7 +520,7 @@ def placed_route_fqdns(host) -> list[str]:
     hostname = host.check_output("uname -n")
     domain = load_spec(HOSTS / hostname / "host.yml")["domain"]
     found = {
-        f"{route['domain']}.{domain}"
+        route_fqdn(route, domain)
         for owner, spec_path in SPECS
         if owner in ("shared", hostname)
         for route in routes_of(load_spec(spec_path))
