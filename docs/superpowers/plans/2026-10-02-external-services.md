@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-02-external-services-design.md`
 
+**Base:** `master` at a306d15, merged into `external-services` on 2026-10-07 (fe48579). The plan was written against `podman-platform` at 709d403; the merge brought the volume `owner` mapping, `cert_zones` and full-hostname routes, Traefik's dashboard basic auth, the route-file cleanup, `docs/architecture.md` and `docs/ownership.md`. The host folder is `hosts/StorageBaby/` (capitalised). Nothing in `host_base`, `bootstrap.sh` or the deploy test mechanics changed.
+
 ## Global Constraints
 
 - **Decisions in the spec §1 are locked.** External repo owns the whole service definition including `secrets.sops.yaml`; this repo holds only `source.yml` (three required keys `repo`, `ref`, `path`, no defaults) and `source.sops.yaml` (`git_token`, `registry_user`, `registry_token`); live fetch with no gate in this repo's CI; one service per external repository; branch refs only; `registries` is accepted only on a pointer service.
@@ -28,6 +30,8 @@
 - Ansible idioms as in the existing roles: `check_mode: false` on read-only probes whose result a later task reads; `| bool` on any conditional fed from `-e`; `find` with `follow: true` for service folders; the per-host `service_config` merge stays in the playbook.
 - `ansible-lint --offline ansible/` stays clean (`tests/static/test_lint.py`) and `mise run fmt-check` stays green. The pre-commit hook formats staged files; a bash file in `ansible/roles/host_base/files/` is formatted by prettier-plugin-sh (tabs), so run `mise run format` before committing anything shell.
 - Heredoc terminators inside the deploy script must not be `EOF`: `bootstrap.sh` embeds the whole script in a heredoc of its own.
+- **No unpaired apostrophe anywhere inside a `shell:` block of a Molecule playbook, shell comments included.** Ansible runs `split_args` over the value and fails the whole playbook at load time; `tests/static/test_lint.py::test_molecule_playbooks_parse` syntax-checks every scenario playbook and is the first place this shows.
+- `docs/ownership.md` is the charter a change to the `service` role or to a `service.yml` key is measured against (CLAUDE.md § Start here). `docs/architecture.md` is the map and has to keep describing the deploy loop as built.
 
 ---
 
@@ -44,7 +48,7 @@ Spec §3. No pointer exists yet; this task only changes _how_ a host decides to 
 - Modify: `tests/static/test_bootstrap.py`
 - Modify: `tests/integration/molecule/test-ci/tests/test_host_base.py`
 - Modify: `tests/integration/molecule/test-ci/tests/test_deploy.py` (docstrings that explain the mechanism; one new case)
-- Modify: `README.md` lines around 415 and 477 (the two paragraphs that describe `ansible-pull --only-if-changed`); `CLAUDE.md` line 190
+- Modify: `README.md` (the two paragraphs under "The checkout, and the pre-flight" and "The outage" that describe `ansible-pull --only-if-changed`); `CLAUDE.md` § Deployment, the "From then on the host deploys itself" paragraph; `docs/architecture.md` § 1, the `ansible-pull --checkout stable --only-if-changed` line of the loop diagram
 
 **Interfaces:**
 
@@ -361,7 +365,14 @@ In the two docstrings of `test_deploy_restores_a_drifted_host_gateway_dropin` an
 
 > **If the converge aborts, re-run that same command — or start the deploy unit.** `storagebaby-deploy` writes `/var/lib/storagebaby/deploy.state` only after a converge that ended `failed=0`, so a tick after a failed run finds the state stale and runs the playbook again. (`ansible-pull --only-if-changed`, which the unit used to run, compared the checkout before and after its own fetch and would have sat idle until the next push.)
 
-`CLAUDE.md` line 190 becomes:
+`docs/architecture.md` § 1: replace the diagram line `└─ ansible-pull --checkout stable --only-if-changed` with
+
+```
+└─ storagebaby-deploy: fetch `stable` and every pointed repository,
+   run the playbook when any SHA differs from deploy.state
+```
+
+`CLAUDE.md` § Deployment, the paragraph beginning "From then on the host deploys itself" becomes:
 
 > From then on the host deploys itself: the timer runs `/usr/local/sbin/storagebaby-deploy` as root every 5 minutes (2 min after boot). It fetches the `stable` branch into `/var/lib/storagebaby/repo` and every external repository this host points at into `/var/lib/storagebaby/sources/<name>`, and runs `ansible/playbook.yml --limit <hostname>` when any of those checkouts differs from `/var/lib/storagebaby/deploy.state`, the SHAs of the last converge that succeeded. A failed converge is therefore retried on the next tick.
 
@@ -373,7 +384,7 @@ Expected: every existing deploy case green, the two new ones green. If the VM is
 - [ ] **Step 8: Commit**
 
 ```bash
-git add ansible/roles/host_base bootstrap.sh tests/static/test_bootstrap.py tests/integration/molecule/test-ci/tests/test_host_base.py tests/integration/molecule/test-ci/tests/test_deploy.py README.md CLAUDE.md
+git add ansible/roles/host_base bootstrap.sh tests/static/test_bootstrap.py tests/integration/molecule/test-ci/tests/test_host_base.py tests/integration/molecule/test-ci/tests/test_deploy.py README.md CLAUDE.md docs/architecture.md
 git commit -m "Replace ansible-pull with a deploy script that watches more than one repository
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
@@ -1394,7 +1405,7 @@ def test_an_in_tree_service_has_no_registry_login(host):
 
 - [ ] **Step 2: The role**
 
-`ansible/roles/service/tasks/host.yml`: in "Record uid and unit dir" add `svc_home: '{{ getent_passwd[svc_user][4] }}'`. After "Install the service-user helpers" and before the `# Images, before anything...` comment, insert:
+`ansible/roles/service/tasks/host.yml`: in "Record uid, gid and unit dir" add `svc_home: '{{ getent_passwd[svc_user][4] }}'`. After "Install the service-user helpers" and before the `# Images, before anything...` comment, insert:
 
 ```yaml
 # A registry login is a *pull prerequisite*, like the helpers above it: it is the one other
@@ -1875,7 +1886,9 @@ def test_removing_the_pointer_removes_the_fetched_repository(host):
 
     Last in the file on purpose: after it the service is unplaced on this VM, and `prepare`
     is what puts the pointer back. The service's units are left as every unplaced service's
-    are; the route file goes with the converge like any stale route.
+    are today -- `docs/ownership.md` § 3 names full removal as the target and § 7.6 records
+    that it does not exist yet; when it lands, the last assertion below flips with it. The
+    route file goes with the converge like any stale route.
     """
     found = first_pointer(host)
     if not found:
@@ -1922,6 +1935,8 @@ Spec §7 and §10.
 - Create: `docs/external-service.md`
 - Modify: `CLAUDE.md` ("Managing services": the pointer folder; the key list: `registries`; the fixture list; Deployment paragraph already changed in Task 1)
 - Modify: `docs/quickstart.md` (a step "Place a repository of your own")
+- Modify: `docs/architecture.md` (§ 2 table: the Placement row gains the pointer folder, the `host_base` row the deploy script, the Site playbook row the pointer resolution, the Test fixtures row `ext-echo` and `tests/fixtures/sources/`; § 3: the registry login as the step between the helpers and the pre-pull; § 5: `registries` in the key count sentence)
+- Modify: `docs/ownership.md` (§ 2 "Service": "one folder under `hosts/**/services/<name>/`, or the same folder in the service's own repository, placed by a pointer"; § 3 rows "When to deploy" → "when any watched checkout differs from the last successful converge", "What to deploy" → "`stable`, plus the branch each pointer names", "Where a service runs" and "Discovering what is placed" → the pointer folder counts as placement)
 - Modify: `docs/superpowers/specs/2026-10-02-external-services-design.md` (Status line → implemented, plus an "Amendments" section listing whatever changed during Tasks 1–4)
 
 - [ ] **Step 1: README**
@@ -1946,11 +1961,11 @@ platform. The repository holds the contract in a folder — `service.yml`, `quad
 `config/`, `secrets.sops.yaml`, a README — exactly as a folder under `hosts/` would, and
 this repository holds only the pointer:
 
-    hosts/storagebaby/services/<name>/source.yml
+    hosts/StorageBaby/services/<name>/source.yml
       repo: https://github.com/<you>/<repository>
       ref: main
       path: deploy/storagebaby
-    hosts/storagebaby/services/<name>/source.sops.yaml     # git_token; registry_user + registry_token for a private image
+    hosts/StorageBaby/services/<name>/source.sops.yaml     # git_token; registry_user + registry_token for a private image
 
 Placement is still the folder. The deploy tick (`/usr/local/sbin/storagebaby-deploy`)
 fetches every pointed repository into `/var/lib/storagebaby/sources/<name>` beside the
@@ -2024,14 +2039,14 @@ you push a commit that changes it.
 
 ## 4. The pointer (StorageBaby repository)
 
-    hosts/storagebaby/services/<name>/source.yml
+    hosts/StorageBaby/services/<name>/source.yml
       repo: https://github.com/<you>/<repository>
       ref: main
       path: deploy/storagebaby
 
 For a private repository: a fine-grained personal access token (resource owner you, only
 this repository, Contents: read-only), stored with
-`mise run sops hosts/storagebaby/services/<name>/source.sops.yaml` as `git_token`. Commit,
+`mise run sops hosts/StorageBaby/services/<name>/source.sops.yaml` as `git_token`. Commit,
 let CI promote `stable`; the next tick fetches and converges.
 
 ## 5. Looking at it
@@ -2059,11 +2074,15 @@ In the fixture sentence ("The exceptions are the **test-only fixtures** — `tcp
 
 `docs/quickstart.md`: add a step `## 8. A repository of your own` with the four commands/paths from `docs/external-service.md` §4 and a link to that page.
 
-- [ ] **Step 4: Spec status and amendments**
+- [ ] **Step 4: Architecture map and ownership charter**
+
+Apply the edits listed under **Files** for `docs/architecture.md` and `docs/ownership.md`. Do not re-measure the line counts in architecture.md § 2; they are dated to 60b402f in the text and a new measurement is its own commit.
+
+- [ ] **Step 5: Spec status and amendments**
 
 Set the spec's `Status:` line to `implemented 2026-10-0X` and add `## 11. Amendments` listing every deviation Tasks 1–4 made (the `json_query` fallback if taken, the `dict_kv` shape chosen, anything the VM taught). If nothing deviated, write "None."
 
-- [ ] **Step 5: Format check and commit**
+- [ ] **Step 6: Format check and commit**
 
 Run: `mise run fmt-check && mise run test-static`
 Expected: PASS.

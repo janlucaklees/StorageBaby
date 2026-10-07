@@ -330,8 +330,8 @@ cases, plus `test_service.py` where the generic claims already loop over placeme
    push.
 2. On GitHub: a fine-grained token for that one repository, Contents read-only; for a
    private image, the package token section 5 settles on.
-3. Here: `hosts/storagebaby/services/<name>/source.yml`, `mise run sops
-hosts/storagebaby/services/<name>/source.sops.yaml`, commit, let CI promote `stable`.
+3. Here: `hosts/StorageBaby/services/<name>/source.yml`, `mise run sops
+hosts/StorageBaby/services/<name>/source.sops.yaml`, commit, let CI promote `stable`.
 4. Watch one tick: `journalctl -u storagebaby-deploy.service -n 50`,
    `storagebaby-svc ps <name>`.
 
