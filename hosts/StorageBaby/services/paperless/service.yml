@@ -13,8 +13,10 @@ volumes:
   consume: { class: fast, owner: 1000 }
   database: { class: fast, owner: 70 }
   # No `owner`: the dump timer writes here through `podman exec` with no `-u`, which
-  # is container root, which is the service user -- what the role creates it as.
-  backups: { class: fast }
+  # is container root, which is the service user -- what the role creates it as. `pool`
+  # and not `fast`: the SSD is 120G and a dump is a write-once nightly file, so it has no
+  # business there -- every service's dump tree is on the pool.
+  backups: { class: pool }
 tcp_ports:
   # Traefik listens on 21 and forwards to the pod's 2121: the control connection. 21
   # because that is the only port a printer's FTP client offers to speak, and it is why

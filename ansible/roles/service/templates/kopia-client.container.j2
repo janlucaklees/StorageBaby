@@ -19,6 +19,17 @@ Environment=KOPIA_PIN_SERVER_CERT={{ '0' if acme else '1' }}
 {# Quoted: systemd splits an unquoted Environment= on whitespace and keeps only the
    first word, which would reduce a multi-volume backup to its first volume. #}
 Environment="KOPIA_PATHS={{ service.backup.paths | join(' ') }}"
+{# `backup.exclude` as one flat `<volume>:<rule>` list, in the order the block declares
+   them. One variable and not one per volume: a volume name may contain a `-` and an
+   environment variable name may not. The script splits on the first colon, so a rule
+   may carry one; it may not carry whitespace, which is what separates the entries. #}
+{% set _exclude = [] %}
+{% for _vol, _rules in (service.backup.exclude | default({})).items() %}
+{% for _rule in _rules %}
+{% set _ = _exclude.append(_vol ~ ':' ~ _rule) %}
+{% endfor %}
+{% endfor %}
+Environment="KOPIA_EXCLUDE={{ _exclude | join(' ') }}"
 Environment=KOPIA_SNAPSHOT_TIME={{ service.backup.schedule }}
 {# Also exported by the script, and repeated here for HealthCmd: a health check is its
    own process, and `kopia repository status` has to read the same config and cache as

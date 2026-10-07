@@ -397,7 +397,7 @@ started and restarted on change, while every other `quadlet/*.j2` goes to the Qu
 directory. The static contract requires the two halves as a pair: a timer without its
 service never fires, a service without its timer never runs. Used for database dumps and
 for cron-like commands; they address containers by name, e.g.
-`ExecStart=/usr/bin/podman exec paperless-database sh -c 'pg_dump ... > /backups/x.dump'`.
+`ExecStart=/usr/bin/podman exec paperless-database sh -c 'pg_dump ... > /backups/x.sql'`.
 
 ## The generated backup sidecar
 
@@ -444,8 +444,66 @@ deleted and made again rather than retried forever.
 
 The role adds two implicit volumes, `backup-config` and `backup-cache` (class `fast`),
 before the volume directories are created, so they are made and owned like any other.
-Databases are backed up as dumps, not as data directories: a dump timer writes into a
-volume that is listed in `paths`.
+They stay on the SSD where a declared `backups` volume does not: the cache is working
+state kopia reads throughout a snapshot, not a stored backup.
+
+### `backup.exclude`
+
+`exclude: { <volume>: [rule, ...] }`, optional, and every volume it names has to be in
+`paths` — a rule against a tree that is not snapshotted does nothing, and a static test
+refuses it. The rules are kopia ignore rules, gitignore syntax, relative to that
+volume's own snapshot root, so a leading `/` anchors to it: `upload: ['/backups/']`
+excludes `/data/upload/backups/` and nothing else.
+
+What it is for is the narrow case of **an application that writes its own backups into a
+tree this platform already snapshots**. Immich is the one: its admin UI has a database
+backup job that drops gzipped dumps into `upload/backups/`, and carrying those means
+snapshotting the same database twice a night — the second copy gzipped, so it dedups
+against nothing and every night's file is entirely new blocks in the repository.
+Excluding it is what makes `immich-dump.timer` the only database backup immich has.
+
+It is deliberately not a general "skip the big churning directories" knob. Previews,
+thumbnails and search indexes are regenerable, but regenerating them is work the
+operator has to know to do, and that is a different decision from refusing a second copy
+of a backup.
+
+Mechanically: the sidecar's unit carries the block as one flat `KOPIA_EXCLUDE` list of
+`<volume>:<rule>` entries — one variable rather than one per volume, because a volume
+name may contain a `-` and an environment variable name may not. Entries are separated
+by whitespace, so **a rule may not contain any**; the contract test enforces that.
+`kopia-client.sh` clears the ignore list on every start before it re-adds the rules,
+because a policy lives in the repository and outlives the container: a rule deleted from
+`service.yml` would otherwise keep excluding its tree forever. Git is the whole truth
+about what is skipped.
+
+### The dump form
+
+A database is backed up as a dump, never as its data directory: a dump timer writes into
+a volume that is listed in `paths`. All four of them dump the same way, and the form is
+load-bearing in two places:
+
+```sh
+pg_dump --clean --if-exists --no-owner --username=<user> --dbname=<db> \
+  > /backups/<db>.sql.tmp && mv /backups/<db>.sql.tmp /backups/<db>.sql
+```
+
+- **Plain SQL, uncompressed.** The sidecar snapshots this file into a deduplicating
+  repository. A compressed dump differs in every byte from one night to the next, so none
+  of it dedups against yesterday's; uncompressed, only the pages that really changed are
+  new blocks. It is also the form Immich's own documentation gives, which matters for
+  that database in particular: restoring a dump carrying `vector` columns needs a
+  `search_path` rewrite that only exists for plain SQL.
+- **`--clean --if-exists --no-owner` at dump time.** In plain format these are emitted
+  into the script. In any archive format (`-Fc`, `-Fd`) they are ignored at dump time and
+  have to be passed to `pg_restore` instead, so the dump would carry none of them.
+  `--no-owner` is what makes a dump restorable when the database user is not the one it
+  was taken from.
+- **`.tmp` then `mv`.** The sidecar may read the file at any moment; a rename is atomic,
+  a redirect into the final name is not.
+
+The cost is `pg_restore`'s selective and parallel restore, which plain SQL has no
+equivalent of. Restore with
+`psql --single-transaction --set ON_ERROR_STOP=on --dbname=<db> --username=<user> < <db>.sql`.
 
 ## What every `.container` must declare
 

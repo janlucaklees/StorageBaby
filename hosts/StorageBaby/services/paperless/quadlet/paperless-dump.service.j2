@@ -10,4 +10,12 @@ Requisite=paperless-database.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/podman exec paperless-database sh -c 'pg_dump -U {{ service.config.database_user }} -Fc {{ service.config.database_name }} > /backups/{{ service.config.database_name }}.dump.tmp && mv /backups/{{ service.config.database_name }}.dump.tmp /backups/{{ service.config.database_name }}.dump'
+{# Plain SQL and uncompressed, which is one decision and not two: the sidecar snapshots
+   this file into a deduplicating repository, and a compressed dump differs in every byte
+   from one night to the next, so nothing in it dedups against yesterday's. Uncompressed,
+   only the pages that really changed are new blocks. `--clean --if-exists --no-owner` are
+   meaningful at dump time in this format -- in an archive format they would be pg_restore
+   flags and the dump would carry none of them. Restore with
+   `psql --single-transaction --set ON_ERROR_STOP=on`, not `pg_restore`.
+   `ansible/roles/service/README.md`, "The dump form", has the reasoning. #}
+ExecStart=/usr/bin/podman exec paperless-database sh -c 'pg_dump --clean --if-exists --no-owner --username={{ service.config.database_user }} --dbname={{ service.config.database_name }} > /backups/{{ service.config.database_name }}.sql.tmp && mv /backups/{{ service.config.database_name }}.sql.tmp /backups/{{ service.config.database_name }}.sql'

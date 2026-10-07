@@ -88,18 +88,39 @@ if [ ! -f "$KOPIA_CONFIG_PATH" ]; then
 fi
 
 for path in $KOPIA_PATHS; do
+	# `--clear-ignore` on every start, before anything is added below: a policy lives in
+	# the repository and outlives this container, so a rule dropped from `service.yml`
+	# would otherwise keep excluding its tree forever. Cleared and re-added is what makes
+	# `backup.exclude` declarative -- git is the whole truth about what is skipped.
+	# Its own invocation and not another flag on the one below, because the order kopia
+	# applies `--clear-ignore` and `--add-ignore` within a single call is not specified,
+	# and the wrong order would clear the rules it had just added.
 	kopia policy set "/data/$path" \
 		--inherit=false \
 		--no-manual \
 		--snapshot-time="$KOPIA_SNAPSHOT_TIME" \
 		--run-missed=true \
 		--ignore-identical-snapshots=true \
+		--clear-ignore \
 		--keep-latest="$KOPIA_KEEP_LATEST" \
 		--keep-hourly=0 \
 		--keep-daily="$KOPIA_KEEP_DAILY" \
 		--keep-weekly="$KOPIA_KEEP_WEEKLY" \
 		--keep-monthly="$KOPIA_KEEP_MONTHLY" \
 		--keep-annual="$KOPIA_KEEP_ANNUAL"
+
+	# `KOPIA_EXCLUDE` is one flat `<volume>:<rule>` list rather than a variable per
+	# volume: a volume name may carry a `-`, which an environment variable name cannot,
+	# so the per-volume form would need mangling on one side and `eval` on the other.
+	# Built with `set --` because this is dash and there are no arrays; a rule therefore
+	# may not contain whitespace, which the role's README states.
+	set --
+	for entry in ${KOPIA_EXCLUDE:-}; do
+		case "$entry" in
+			"$path":*) set -- "$@" --add-ignore="${entry#"$path":}" ;;
+		esac
+	done
+	[ "$#" -eq 0 ] || kopia policy set "/data/$path" "$@"
 done
 
 exec kopia server start \

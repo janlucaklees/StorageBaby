@@ -424,7 +424,7 @@ otherwise keep the first address and drop the rest.
 
 ```
 nextcloud-cron.timer    every five minutes   podman exec -u www-data nextcloud-app php -f /var/www/html/cron.php
-nextcloud-dump.timer    daily at 02:30       podman exec nextcloud-database pg_dump -Fc … > /backups/nextcloud.dump
+nextcloud-dump.timer    daily at 02:30       podman exec nextcloud-database pg_dump … > /backups/nextcloud.sql
 ```
 
 Plain systemd user units in `~svc-nextcloud/.config/systemd/user/`, not Quadlet
@@ -438,33 +438,46 @@ background jobs run whether or not anybody has the web UI open.
 
 `nextcloud-dump` at 02:30 is half an hour before the snapshot at 03:00, so every
 snapshot carries a dump from the same night. The dump is written to
-`<name>.dump.tmp` and renamed, so `/backups` never holds a half-written file for
+`<name>.sql.tmp` and renamed, so `/backups` never holds a half-written file for
 the sidecar to pick up — `mv` within one volume is atomic.
 
+It is **plain SQL and uncompressed**, which is the form all four of the platform's dump
+timers use: the sidecar snapshots this file into a deduplicating repository, and a
+compressed dump differs in every byte from one night to the next so none of it dedups
+against yesterday's. `ansible/roles/service/README.md`, "The dump form", has the whole
+argument — including why `--clean --if-exists --no-owner` sit on the dump here and would
+have to sit on the restore in any archive format.
+
 **A database is backed up as a dump, never as its data directory.** `database` is
-therefore not in `backup.paths`; `backups` is.
+therefore not in `backup.paths`; `backups` is — and `backups` is class `pool`, because a
+write-once nightly file has no business on a 120G SSD.
 
 ### Restoring one
 
 The old `nextcloud/Makefile` carried a `database_restore` beside its
 `database_snapshot`; the timer replaced the snapshot and this replaces the restore.
-The format changed with it — `pg_dump -Fc`, postgres's own custom format, where the
-Makefile used `--format=tar` — so it is `pg_restore` reading the file on stdin,
+The dump is plain SQL, so it is `psql` reading the file on stdin and not `pg_restore`,
 run as the service user because the container belongs to that user's podman:
 
 ```sh
 /usr/local/sbin/podman-as svc-nextcloud podman exec -i nextcloud-database \
-	pg_restore -U oc_jlk -d nextcloud --no-owner < /path/to/nextcloud.dump
+	psql -U oc_jlk -d nextcloud --single-transaction --set ON_ERROR_STOP=on \
+	< /path/to/nextcloud.sql
 ```
 
 `-U` and `-d` are `config.database_user` and `config.database_name` in
-`service.yml`. `--no-owner` because the roles in the dump are the ones the old
-stack had, and the restore target is whatever this database initialised with.
+`service.yml`. `--single-transaction` with `ON_ERROR_STOP=on` is what makes a plain-SQL
+restore all-or-nothing — without the pair, `psql` reports each failed statement and
+carries on, leaving a half-restored database behind. The dump already carries
+`--clean --if-exists`, so it drops what is there before it recreates it, and `--no-owner`,
+so it does not insist on roles this cluster may not have.
+
 Restoring **into** the live database wants Nextcloud stopped first
-(`storagebaby-svc stop nextcloud`) or, cleaner, a `dropdb`/`createdb` pair before it —
-`pg_restore` does not empty what is already there. The file itself is either
-`/var/lib/storagebaby/fast/nextcloud/backups/nextcloud.dump` on the host or one
-restored out of a Kopia snapshot of the `backups` volume.
+(`storagebaby-svc stop nextcloud`). The file itself is either
+`/pool/apps/nextcloud/backups/nextcloud.sql` on the host or one
+restored out of a Kopia snapshot of the `backups` volume. What plain SQL costs is
+`pg_restore`'s selective and parallel restore; for a 100 MB dump on this host that is
+nothing, and the reasoning is in the role README.
 
 ## The after-change hooks
 
@@ -586,12 +599,12 @@ nextcloud@test-a:/data/backups
 the old `html` tree is split in two, its `data/` subdirectory becoming a volume of
 its own:
 
-| Old (rootful compose)                           | New                                                               |
-| ----------------------------------------------- | ----------------------------------------------------------------- |
-| `nextcloud_nextcloud` (`/var/www/html`)         | `/var/lib/storagebaby/fast/nextcloud/html`, without `data/`       |
-| `nextcloud_nextcloud`, its `data/` subdirectory | `/pool/apps/nextcloud/data`                                       |
-| `nextcloud_database`                            | `/var/lib/storagebaby/fast/nextcloud/database`                    |
-| —                                               | `/var/lib/storagebaby/fast/nextcloud/backups` (new, for the dump) |
+| Old (rootful compose)                           | New                                                         |
+| ----------------------------------------------- | ----------------------------------------------------------- |
+| `nextcloud_nextcloud` (`/var/www/html`)         | `/var/lib/storagebaby/fast/nextcloud/html`, without `data/` |
+| `nextcloud_nextcloud`, its `data/` subdirectory | `/pool/apps/nextcloud/data`                                 |
+| `nextcloud_database`                            | `/var/lib/storagebaby/fast/nextcloud/database`              |
+| —                                               | `/pool/apps/nextcloud/backups` (new, for the dump)          |
 
 The repo's root README has the recipe and the ownership rules; the trees are not
 chowned by hand any more. The nextcloud image runs the app as its own

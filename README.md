@@ -34,17 +34,17 @@ and generated unit, all of them share one network namespace and reach each other
 `127.0.0.1`, and the pod is the only thing that publishes a port — on loopback, for
 Traefik.
 
-| Service                              | Route → loopback port                      | Images and updates                                                                                                      | Backup                                                    | Phase |
-| ------------------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ----- |
-| traefik (`hosts/shared`, every host) | `traefik.*` → 8080 (dashboard)             | `docker.io/library/traefik:v3` — auto                                                                                   | none                                                      | 1     |
-| yuzukam                              | `yuzukam.*` → 3000                         | `ghcr.io/janlucaklees/yuzukam:latest` — auto                                                                            | none (stateless)                                          | 2     |
-| stirling-pdf                         | `stirling.*` → 8180                        | `docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest` — auto                                                       | none                                                      | 2     |
-| jellyfin                             | `jellyfin.*` → 8096                        | `lscr.io/linuxserver/jellyfin:latest` — auto                                                                            | none                                                      | 2     |
-| kopia                                | `kopia.*` → 51515                          | `docker.io/kopia/kopia:0.23.1` — pinned, bumped in git                                                                  | the repository server itself, plus one account per client | 2     |
-| paperless (pod)                      | `paperless.*` → 8000, FTP 21 + 21100–21109 | app `paperless-ngx:2.20.15` and `pure-ftpd:trixie-1.0.50` pinned; postgres, redis, gotenberg and tika auto              | `data`, `media`, `backups` (nightly dump)                 | 3, 4  |
-| openarchiver (pod)                   | `openarchiver.*` → 3001                    | app `v0.6.0`, `meilisearch:v1.38` and `tika:3.2.2.0-full` pinned; postgres and valkey auto                              | `data`, `backups` (nightly dump)                          | 3     |
-| immich (pod)                         | `immich.*` → 2283                          | server and machine learning `v3.2.0` pinned together, the vectorchord postgres pinned by digest beside them; redis auto | `upload` — Immich writes its own database dumps into it   | 3     |
-| nextcloud (pod)                      | `nextcloud.*` → 8280, `collabora.*` → 9980 | app `33-fpm-alpine` pinned; nginx, postgres, redis and Collabora auto                                                   | `html`, `data`, `backups` (nightly dump)                  | 3     |
+| Service                              | Route → loopback port                      | Images and updates                                                                                                      | Backup                                                        | Phase |
+| ------------------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ----- |
+| traefik (`hosts/shared`, every host) | `traefik.*` → 8080 (dashboard)             | `docker.io/library/traefik:v3` — auto                                                                                   | none                                                          | 1     |
+| yuzukam                              | `yuzukam.*` → 3000                         | `ghcr.io/janlucaklees/yuzukam:latest` — auto                                                                            | none (stateless)                                              | 2     |
+| stirling-pdf                         | `stirling.*` → 8180                        | `docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest` — auto                                                       | none                                                          | 2     |
+| jellyfin                             | `jellyfin.*` → 8096                        | `lscr.io/linuxserver/jellyfin:latest` — auto                                                                            | none                                                          | 2     |
+| kopia                                | `kopia.*` → 51515                          | `docker.io/kopia/kopia:0.23.1` — pinned, bumped in git                                                                  | the repository server itself, plus one account per client     | 2     |
+| paperless (pod)                      | `paperless.*` → 8000, FTP 21 + 21100–21109 | app `paperless-ngx:2.20.15` and `pure-ftpd:trixie-1.0.50` pinned; postgres, redis, gotenberg and tika auto              | `data`, `media`, `backups` (nightly dump)                     | 3, 4  |
+| openarchiver (pod)                   | `openarchiver.*` → 3001                    | app `v0.6.0`, `meilisearch:v1.38` and `tika:3.2.2.0-full` pinned; postgres and valkey auto                              | `data`, `backups` (nightly dump)                              | 3     |
+| immich (pod)                         | `immich.*` → 2283                          | server and machine learning `v3.2.0` pinned together, the vectorchord postgres pinned by digest beside them; redis auto | `upload` (minus its own `backups/`), `backups` (nightly dump) | 3     |
+| nextcloud (pod)                      | `nextcloud.*` → 8280, `collabora.*` → 9980 | app `33-fpm-alpine` pinned; nginx, postgres, redis and Collabora auto                                                   | `html`, `data`, `backups` (nightly dump)                      | 3     |
 
 Everything but traefik is placed on storagebaby; `test-a` places all eight folders by
 symlink, `test-ci` the smaller subset a GitHub runner can carry. Both test hosts also place
@@ -68,9 +68,12 @@ A service with a `backup:` block gets a Kopia client container **generated into 
 pod** by the `service` role; it is not in the service folder. It connects to
 `https://kopia.<domain>` as `<service>@<host>`, applies the retention policy from
 `service.yml` and takes its snapshots on its own schedule. Databases are backed up as
-dumps, never as data directories: a `<name>-dump.timer` writes `pg_dump -Fc` into a
-`backups` volume half an hour before the snapshot, and that volume is what the sidecar
-carries.
+dumps, never as data directories: a `<name>-dump.timer` writes a plain, uncompressed
+`pg_dump` into a `backups` volume half an hour before the snapshot, and that volume is
+what the sidecar carries. All four pods do it the same way and **no service's backup
+depends on the application being configured for it**. `backup.exclude` is how a service
+refuses to carry a backup the application writes for itself; Immich's admin-UI backup
+job is the one case. `ansible/roles/service/README.md` has both.
 
 No directory of the old repository is left. `samba/` and `snapraid/` were the last two
 at the root, and both are retired: the mounts, the pool, the array and the nightly
@@ -833,18 +836,20 @@ be:
 - **Restore a dump into a fresh cluster.** Leave the `database` volume empty, let the
   image initialise it from whatever `database_password` says, and load a dump
   afterwards. Take the dump from the old stack before it is stopped
-  (`docker compose exec database pg_dump -Fc -U <user> <db> > <file>`), then restore
-  it into the running new one as the service user:
+  (`docker compose exec database pg_dump --clean --if-exists --no-owner -U <user> <db> > <file>`),
+  then restore it into the running new one as the service user:
 
   ```bash
   /usr/local/sbin/podman-as svc-paperless podman exec -i paperless-database \
-  	pg_restore -U paperless -d paperless --no-owner < /path/to/paperless.dump
+  	psql -U paperless -d paperless --single-transaction --set ON_ERROR_STOP=on \
+  	< /path/to/paperless.sql
   ```
 
   `-U` and `-d` are `config.database_user` and `config.database_name` from the
-  service's `service.yml`. `--no-owner` because the roles in the dump are the old
-  stack's. `pg_restore` does not empty what is already there, so restore into a
-  cluster that has just been initialised, or drop and recreate the database first.
+  service's `service.yml`. The dump is plain SQL, so it is `psql` and not `pg_restore`;
+  `--single-transaction` with `ON_ERROR_STOP=on` makes the restore all-or-nothing, and
+  the `--clean --if-exists` in the dump drops what is there before recreating it.
+  `--no-owner` because the roles in the dump are the old stack's.
   `hosts/StorageBaby/services/nextcloud/README.md`, "Restoring one", has the same
   command for nextcloud with its own user and database name.
 

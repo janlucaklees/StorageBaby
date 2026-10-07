@@ -231,25 +231,32 @@ against, and it is the public URL, not a proxy address.
 
 ```
 openarchiver-dump.timer    daily at 02:30
-openarchiver-dump.service  podman exec openarchiver-database pg_dump -Fc … > /backups/openarchiver.dump
+openarchiver-dump.service  podman exec openarchiver-database pg_dump … > /backups/openarchiver.sql
 ```
 
 Plain systemd user units in `~svc-openarchiver/.config/systemd/user/`, not Quadlet
 ones. 02:30 is half an hour before the snapshot at 03:00, so every snapshot
 carries a dump from the same night.
 
-The dump is written to `<name>.dump.tmp` and renamed, so `/backups` never holds a
+The dump is written to `<name>.sql.tmp` and renamed, so `/backups` never holds a
 half-written file for the sidecar to pick up — `mv` within one volume is atomic.
+
+It is **plain SQL and uncompressed**, the same form all four of the platform's dump
+timers use: the sidecar snapshots it into a deduplicating repository, and a compressed
+dump differs in every byte from one night to the next so none of it dedups against
+yesterday's. Restore it with `psql --single-transaction --set ON_ERROR_STOP=on`, not
+`pg_restore`. `ansible/roles/service/README.md`, "The dump form", has the reasoning.
 
 The unit is ordered `After=openarchiver-database.service` and, more importantly,
 `Requisite=` it. Without that, a dump attempted while the pod is down would fail
-its `podman exec` and leave **yesterday's** `openarchiver.dump` sitting in
+its `podman exec` and leave **yesterday's** `openarchiver.sql` sitting in
 `/backups` for the sidecar to snapshot as though it were tonight's. `Requisite=`
 does not start the database — it refuses to run at all without it, which turns a
 silently stale backup into a failed unit somebody can see.
 
 **A database is backed up as a dump, never as its data directory.** `database` is
-therefore not in `backup.paths`; `backups` is. Snapshotting a running postgres
+therefore not in `backup.paths`; `backups` is — and `backups` is class `pool`, because a
+write-once nightly file has no business on a 120G SSD. Snapshotting a running postgres
 data directory copies files mid-write and restores to a database that may not
 open at all.
 
@@ -297,13 +304,13 @@ the archive and the database.
 `openarchiver/docker-compose.yml`'s three named volumes and one bind map onto
 this folder's five:
 
-| Old (rootful compose)                      | New                                                    |
-| ------------------------------------------ | ------------------------------------------------------ |
-| `/pool/apps/openarchiver/volumes/data`     | `/pool/apps/openarchiver/data`                         |
-| `openarchiver_database` (docker volume)    | `/var/lib/storagebaby/fast/openarchiver/database`      |
-| `openarchiver_cache` (docker volume)       | `/var/lib/storagebaby/fast/openarchiver/cache`         |
-| `openarchiver_meilisearch` (docker volume) | `/var/lib/storagebaby/fast/openarchiver/meilisearch`   |
-| —                                          | `/var/lib/storagebaby/fast/openarchiver/backups` (new) |
+| Old (rootful compose)                      | New                                                  |
+| ------------------------------------------ | ---------------------------------------------------- |
+| `/pool/apps/openarchiver/volumes/data`     | `/pool/apps/openarchiver/data`                       |
+| `openarchiver_database` (docker volume)    | `/var/lib/storagebaby/fast/openarchiver/database`    |
+| `openarchiver_cache` (docker volume)       | `/var/lib/storagebaby/fast/openarchiver/cache`       |
+| `openarchiver_meilisearch` (docker volume) | `/var/lib/storagebaby/fast/openarchiver/meilisearch` |
+| —                                          | `/pool/apps/openarchiver/backups` (new)              |
 
 A docker named volume lives at `/var/lib/docker/volumes/openarchiver_<name>/_data`.
 The repo's root README has the recipe and the ownership rules; the chown is the

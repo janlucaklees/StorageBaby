@@ -30,6 +30,10 @@ SPEC_KEYS = {
 }
 CLASSES = {"pool", "fast"}
 MODES = {"ro", "rw"}
+# What a `backup` block may carry. `exclude` is the one optional key: `{<volume>: [rule]}`,
+# gitignore-style rules relative to that volume's snapshot root, for a tree the
+# application itself writes and this platform has no reason to carry a second copy of.
+BACKUP_KEYS = {"paths", "schedule", "retention", "exclude"}
 # What a `volumes` and a `binds` entry may carry. Same argument as SPEC_KEYS, and
 # sharper for `owner`: a misspelled `ownner:` would be accepted, ignored, and the
 # operator would be back to chowning the tree by hand wondering why the role did not.
@@ -65,6 +69,30 @@ def check_backend(p, opts: dict) -> None:
     skip = opts.get("insecure_skip_verify", False)
     assert isinstance(skip, bool), f"{p.name}: insecure_skip_verify must be a boolean"
     assert not (skip and scheme != "https"), f"{p.name}: insecure_skip_verify needs scheme: https"
+
+
+def check_backup(p, spec: dict) -> None:
+    """`backup`: either the string `none` or the block, whose keys are closed.
+
+    Closed for the same reason `SPEC_KEYS` is: `excludes:` or `exclude: {upload: ...}`
+    against a volume that is not snapshotted would both be accepted and silently never
+    reach a kopia policy, and the operator would be left reading a snapshot listing
+    wondering why the tree is still in it. A rule may not contain whitespace -- it
+    travels to the sidecar in a space-separated environment variable.
+    """
+    backup = spec["backup"]
+    if backup == "none":
+        return
+    assert {"paths", "schedule", "retention"} <= set(backup), f"{p.name}: backup needs paths, schedule, retention"
+    assert set(backup) <= BACKUP_KEYS, f"{p.name}: unknown backup keys {set(backup) - BACKUP_KEYS}"
+    for path in backup["paths"]:
+        assert path in spec["volumes"], f"{p.name}: backup path {path} is not a volume"
+    for vol, rules in backup.get("exclude", {}).items():
+        assert vol in backup["paths"], f"{p.name}: exclude names {vol}, which is not in backup.paths"
+        assert isinstance(rules, list) and rules, f"{p.name}: exclude {vol} must be a non-empty list"
+        for rule in rules:
+            assert isinstance(rule, str) and rule, f"{p.name}: exclude {vol} has a non-string rule {rule!r}"
+            assert not re.search(r"\s", rule), f"{p.name}: exclude rule {rule!r} contains whitespace"
 
 
 def check_owner(p, what: str, cfg: dict) -> None:
@@ -115,7 +143,7 @@ def test_service_contract(p):
         assert GROUP_RE.match(g), f"invalid group name {g}"
     assert isinstance(spec.get("config", {}), dict)
     assert isinstance(spec["secrets"], list)
-    assert spec["backup"] == "none" or {"paths", "schedule", "retention"} <= set(spec["backup"])
+    check_backup(p, spec)
     block = spec.get("route", {})
     assert set(block) <= BLOCK_KEYS, f"{p.name}: unknown route block keys {set(block) - BLOCK_KEYS}"
     routes = spec.get("routes")

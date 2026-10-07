@@ -442,9 +442,43 @@ def test_dump_service_writes_a_dump(host, owner, spec_path, template):
     journal = f"journalctl _SYSTEMD_USER_UNIT={unit} --no-pager | tail -40"
     assert r.rc == 0, host.run(journal).stdout
     listing = host.run(f"ls -1 {path}")
-    assert any(f.endswith(".dump") for f in listing.stdout.split()), (
-        f"{path} holds no *.dump after {unit}: {listing.stdout!r}\n{host.run(journal).stdout}"
-    )
+    dumps = [f for f in listing.stdout.split() if f.endswith(".sql")]
+    assert dumps, f"{path} holds no *.sql after {unit}: {listing.stdout!r}\n{host.run(journal).stdout}"
+    # Plain SQL and uncompressed is the load-bearing half of the dump form -- the sidecar
+    # snapshots this file into a deduplicating repository and a compressed dump dedups
+    # against nothing. A silent regression to `-Fc` would still write a file and still
+    # pass the assertion above, so the format is read back off the first bytes: plain
+    # output opens with pg_dump's own comment banner, custom format with the magic
+    # "PGDMP". Size, too: an empty file is a dump that failed without saying so.
+    dump = f"{path}/{dumps[0]}"
+    size = int(host.check_output(f"stat -c %s {dump}"))
+    assert size > 0, f"{dump} is empty after {unit}\n{host.run(journal).stdout}"
+    head = host.check_output(f"head -c 3 {dump}")
+    assert head.startswith("--"), f"{dump} is not plain SQL (starts {head!r}) -- compressed dump?"
+
+
+@service_case
+def test_backup_excludes_reach_the_kopia_policy(host, owner, spec_path):
+    """`backup.exclude` is only worth anything if it lands in the repository's policy.
+
+    The rules travel from `service.yml` through one space-separated environment variable
+    into `kopia policy set --add-ignore`, and every step of that is silent when it goes
+    wrong: a mangled variable, a rule against the wrong snapshot root or a kopia that
+    stopped accepting the flag all leave a sidecar that backs up strictly more than it
+    was told to. So the policy is read back from the client rather than the unit file.
+    """
+    placed(host, owner)
+    spec = load_spec(spec_path)
+    exclude = (spec["backup"] or {}).get("exclude") if spec["backup"] != "none" else None
+    if not exclude:
+        pytest.skip("no backup excludes")
+    name = spec["name"]
+    user = f"svc-{name}"
+    for volume, rules in exclude.items():
+        r = run_as(host, user, f"podman exec {name}-backup kopia policy show /data/{volume}")
+        assert r.rc == 0, f"could not read the policy for /data/{volume}: {r.stderr}"
+        for rule in rules:
+            assert rule in r.stdout, f"{name}: {rule!r} is not in the policy for /data/{volume}:\n{r.stdout}"
 
 
 @service_case

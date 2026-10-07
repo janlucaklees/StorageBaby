@@ -23,8 +23,10 @@ volumes:
   html: { class: fast, owner: 82 }
   data: { class: pool, owner: 82 }
   database: { class: fast, owner: 70 }
-  # No `owner`: written by the dump timer's `podman exec`, i.e. container root.
-  backups: { class: fast }
+  # No `owner`: written by the dump timer's `podman exec`, i.e. container root. `pool`
+  # and not `fast`: the SSD is 120G and a dump is a write-once nightly file, so it has no
+  # business there -- every service's dump tree is on the pool.
+  backups: { class: pool }
 config:
   database_name: nextcloud
   database_user: oc_jlk

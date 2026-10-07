@@ -48,10 +48,10 @@ mechanism.
 
 ## Secrets
 
-| Secret              | Where from                                                   |
-| ------------------- | ------------------------------------------------------------ |
-| `database_password` | `secrets.sops.yaml` in this folder                           |
-| `kopia_password`    | `hosts/<host>/secrets/kopia-clients.sops.yaml`, key `immich` |
+| Secret              | Where from                         |
+| ------------------- | ---------------------------------- |
+| `database_password` | `secrets.sops.yaml` in this folder |
+| `kopia_password`    | `secrets.sops.yaml` in this folder |
 
 > **`database_password` is `REPLACE_ME` and must be filled before the first
 > deploy on storagebaby**, with
@@ -126,33 +126,66 @@ second proxy.
 
 ```yaml
 backup:
-  paths: [upload]
+  paths: [upload, backups]
   schedule: '03:00'
   retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }
+  exclude:
+    upload: ['/backups/']
 ```
 
-One path, and no dump timer — this is the one service on the platform that backs
-its own database up. Immich writes periodic `pg_dump` output into
-`upload/backups/`, inside the tree that is snapshotted anyway, so the platform's
-`<name>-dump.timer` would only duplicate it. The role generates
-`immich-backup.container`, mounts `upload` read-only at `/data/upload`, connects
-as `immich@<host>` and leaves a scheduler running, so the snapshot happens at
-03:00 without a timer of its own. The server lists it as
+Exactly the shape the other three pods have, and that is the point: `immich-dump.timer`
+dumps the database into the `backups` volume at 02:30 and the sidecar snapshots it at
+03:00. **Nothing about this backup depends on Immich being configured for it.** The role
+generates `immich-backup.container`, mounts both volumes read-only under `/data`, connects
+as `immich@<host>` and leaves a scheduler running. The server lists
 
 ```
 immich@<host>:/data/upload
+immich@<host>:/data/backups
 ```
 
-> **The database dumps are off by default.** After the first deploy, turn them on
-> under **Administration → Settings → Backup**: enable the job and leave it at
-> 02:00, an hour before the snapshot, so every snapshot carries that night's dump.
-> Without this the snapshots hold the photos and no way to rebuild the database
-> that indexes them.
+This folder used to say Immich was the one service that backed its own database up, and
+to instruct the operator to switch that on in the admin UI. That was the wrong shape:
+an application setting decided whether the platform had a usable backup, and nothing
+reported it when the answer was no — a version bump, a restored instance or a stray click
+would have left the snapshots holding 500 GB of photos and no index to them.
+
+### `exclude: { upload: ['/backups/'] }`
+
+Immich's own backup job — **Administration → Settings → Backup** — writes gzipped dumps
+into `upload/backups/` and keeps 14 of them by default. That is inside a snapshotted tree,
+so without this rule every snapshot would carry the same database twice. The app's copy is
+also the worse one to carry: gzip output differs in every byte from one night to the next,
+so it dedups against nothing and each night's file is ~244 MB of new blocks in the
+repository, where the uncompressed dump beside it is mostly unchanged pages.
+
+The rule makes the job harmless rather than required. Turning it off in the UI is still
+the tidier end state — it frees ~3.3 GB on the pool and stops the nightly work — but
+nothing in this repository needs it off, and nothing breaks if someone turns it back on.
+
+### Restoring
+
+Plain SQL, so `psql` and not `pg_restore`. The `sed` is Immich's own documented
+requirement and is why this database is dumped in plain format: the dump sets an empty
+`search_path`, and the `vector` types the index is built on cannot be resolved under it.
+
+The dump is `backups/postgres.sql` — named after the database, which this stack calls
+`postgres` and not `immich`; `config.database_name` in `service.yml` has the why.
+
+```sh
+storagebaby-svc stop immich # the server; leave the database up
+sed "s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g" \
+	/pool/apps/immich/backups/postgres.sql \
+	| /usr/local/sbin/podman-as svc-immich podman exec -i immich-database \
+		psql --username=immich --dbname=postgres --single-transaction --set ON_ERROR_STOP=on
+```
 
 `database` is deliberately **not** in `paths`. A database is backed up as a dump,
 never as its data directory: snapshotting a running postgres data directory copies
 files mid-write and restores to a cluster that may not open at all. `model-cache`
-is absent too — it is downloadable weights.
+is absent too — it is downloadable weights. `upload/thumbs/` and `upload/encoded-video/`
+are regenerable from the originals and are still carried: that is churn, not a second
+copy of a backup, and dropping it is a decision about restore work, not about redundancy.
 
 ## Dropped from the compose stack
 
