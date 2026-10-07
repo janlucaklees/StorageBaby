@@ -1,6 +1,6 @@
 # External services: deploying a service from its own repository
 
-Status: draft, awaiting review
+Status: implemented 2026-10-07
 Date: 2026-10-02
 Builds on: `2026-09-21-gitops-podman-platform-design.md` (the platform), `2026-09-23-phase-3-pods-and-backups-design.md` (the service contract as built), `2026-09-25-phase-4-storage-and-ftp-design.md` (the deploy path as built)
 
@@ -387,3 +387,38 @@ cases, plus `test_service.py` where the generic claims already loop over placeme
 
 `yuzukam` is the first candidate: its in-tree folder moves to its repository and is
 replaced by a pointer in one commit.
+
+## 11. Amendments
+
+Recorded during Tasks 1–4, against the shape above.
+
+1. **`sources_root` is a Molecule group var, not a `converge.yml` argument.** § 4's table and
+   § 6 said `converge.yml` would pass `sources_root=/repo/tests/fixtures/sources`; it is instead set
+   once as a group var in `tests/integration/molecule/test-ci/molecule.yml`, which reaches
+   the playbook the same way and needs no change to `converge.yml` itself.
+2. **`storagebaby_repo_root` is a play var, repeated per play.** `prepare.yml`'s "Seed every
+   pointed external repository on the VM's git server" play declares
+   `storagebaby_repo_root: /repo` as its own play var, alongside the other plays in that
+   file that need it, because Ansible play vars do not cross a play boundary — there is no
+   single place to set it once for the whole file.
+3. **`single_container_service()` and `other_placed_service()` in `test_deploy.py` skip
+   pointer-placed services.** The cases built on them edit a template and push to `stable`,
+   or restart a service and read its unit's restart count, against the seeded platform
+   checkout at `/var/lib/storagebaby/repo`; a pointer service's spec is read from the
+   fetched external tree instead, so picking one there would edit or watch a file the host
+   never reads and see a silent no-op rather than the restart or drift being asserted on.
+   `ext-echo` is covered by its own cases instead (§ 6, "Verify").
+4. **Whether the `REGISTRY_AUTH_FILE` fallback is needed is still open.** The implementation
+   plan (`docs/superpowers/plans/2026-10-02-external-services.md`) named a fallback in case
+   `runuser -u`'s `HOME` reset and containers/image's default lookup turned out not to find
+   the service user's `auth.json`: a Quadlet drop-in setting `REGISTRY_AUTH_FILE` and the
+   same export in `podman-as`. Neither is in the role or the templates — the static work
+   found no reason so far to believe the fallback is needed. That is not the same as having
+   run the pull against the throwaway private registry on real hardware; the integration run
+   that would settle it had not happened as of this task, so the fallback's necessity is
+   unverified rather than ruled out.
+5. **The pointer folder carries no credential file.** § 1's decisions list the
+   2026-10-07 host-owns-credentials amendment already; it is restated here only to confirm
+   that Tasks 1–4 built exactly that — `source.yml` and nothing else under the pointer
+   folder, with `sources.sops.yaml` and `registries.sops.yaml` living under
+   `hosts/<host>/secrets/` as designed.

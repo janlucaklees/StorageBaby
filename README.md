@@ -12,6 +12,9 @@ whose §2, §4 and §9 describe the pre-Phase-4 world and carry a pointer to
   of (disks, parity, the mergerfs pool, the snapraid array and its nightly run).
 - `hosts/<host>/services/<name>/` — a service placed on that host.
 - `hosts/shared/services/<name>/` — a service that runs on every host.
+- `hosts/<host>/services/<name>/source.yml` — a service whose definition lives in its own
+  repository: the pointer names the repository, the branch and the folder, and the host
+  fetches it on every deploy tick ("External services" below).
 - `ansible/` — the site playbook and roles that turn the above into a running host.
 - `tests/` — static checks and the Molecule integration scenario.
 
@@ -48,12 +51,16 @@ Traefik.
 
 Everything but traefik is placed on storagebaby; `test-a` places all eight folders by
 symlink, `test-ci` the smaller subset a GitHub runner can carry. Both test hosts also place
-two test-only fixtures, in no table here because they are not NAS services: `tcp-echo`,
-which echoes a payload back so the `tcp_ports` path can be measured end to end, and
+three test-only fixtures, in no table here because they are not NAS services: `tcp-echo`,
+which echoes a payload back so the `tcp_ports` path can be measured end to end,
 `build-echo`, which runs the image its own `.build` unit produces so the host-build path
-stays covered. They are the only placements that are a real folder per host rather than a
-symlink — there is nothing to link to, and neither belongs on the NAS — and a static test
-keeps each one's two copies byte-identical.
+stays covered, and `ext-echo`, a service that lives in its own repository
+(`tests/fixtures/sources/ext-echo`) and is placed by a pointer, fetched by the VM from a
+throwaway basic-auth git server and pulling its image from a throwaway private registry,
+so the external path and the private-image path both run for real. They are the only
+placements that are a real folder per host rather than a symlink — there is nothing to
+link to, and none belongs on the NAS — and a static test keeps each one's two copies
+byte-identical.
 
 Kopia is pinned on purpose — a kopia upgrade can carry a repository format upgrade,
 which is not a decision for a nightly timer. The pods pin on the same rule: whatever
@@ -865,6 +872,50 @@ Two service-specific notes:
   skips the connect whenever that file is present — which is the point, the
   connection is already made. To force a fresh connect from `service.yml` and the
   secrets instead, delete `repository.config` before starting.
+
+## External services
+
+A repository of your own can carry its whole service definition and be deployed by this
+platform. The repository holds the contract in a folder — `service.yml`, `quadlet/`,
+`config/`, `secrets.sops.yaml`, a README — exactly as a folder under `hosts/` would. This
+repository holds the pointer, and the host holds the credentials to reach the repository
+and its images:
+
+    hosts/StorageBaby/services/<name>/source.yml
+      repo: https://github.com/<you>/<repository>
+      ref: main
+      path: deploy/storagebaby
+    hosts/StorageBaby/secrets/sources.sops.yaml          # <name>: { token }   -- the host's git token for that repository
+    hosts/StorageBaby/secrets/registries.sops.yaml       # ghcr.io: { user, token }, for every registry host.yml offers
+
+Placement is still the folder. The deploy tick (`/usr/local/sbin/storagebaby-deploy`)
+fetches every pointed repository into `/var/lib/storagebaby/sources/<name>` beside the
+platform checkout and converges when any of them moved; the playbook treats the fetched
+folder like a service folder. Nothing external passes through this repository's CI — the
+external repository tests itself, and the host asserts two things at converge time: the
+fetched `service.yml` names the service its folder names, and no two services on the host
+claim one loopback port.
+
+The external repository's `secrets.sops.yaml` is encrypted to your operator key **and the
+host's age key** (the `&storagebaby` recipient in `.sops.yaml` here), so the external
+repository needs a `.sops.yaml` of its own listing both. `docs/external-service.md` is the
+page to read from that repository's side.
+
+Credentials are the host's, like storage classes and certifiable domains
+(`docs/ownership.md`). One fine-grained GitHub token per repository (Contents: read-only,
+only that repository) goes into `hosts/<host>/secrets/sources.sops.yaml` under the pointer's
+name, with `mise run sops`. The host presents it over HTTPS through `GIT_ASKPASS`; it is
+never written to disk in the clear. A public repository needs no entry. A private image
+needs `registries: [ghcr.io]` in the external `service.yml`, the same registry in the host's
+`registries` list in `host.yml`, and a login for it in
+`hosts/<host>/secrets/registries.sops.yaml`; the role writes the service user's `auth.json`
+from that before the pull, and refuses a service that names a registry the host does not
+offer. Check when you create the registry token whether a fine-grained token can read
+packages on GitHub as it is then; if not, it is a classic token with `read:packages`, which
+is account-wide — the one place where the per-repository isolation does not hold.
+
+Unplacing is deleting the pointer folder: the next tick removes the fetched checkout. The
+service's units stay, as for any unplaced service.
 
 ## Secrets, in one minute
 

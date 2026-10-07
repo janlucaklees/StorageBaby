@@ -36,19 +36,19 @@ host holds outside git is two keys under `/etc/storagebaby/` (`bootstrap.sh` mak
 
 ## 2. Layers, and who owns what
 
-| Layer                              | Lives in                                                | Owns                                                                                                    | Code lines |
-| ---------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ---------: |
-| Host declaration                   | `hosts/<host>/host.yml`                                 | domain, ACME, storage roots, the `storage` block, `gpu`, `packages`, per-host `service_config`          |        115 |
-| Placement                          | the folder under `hosts/<host>/services/`               | which services a host runs; test hosts place by symlink                                                 |          — |
-| Service contract                   | `hosts/**/services/<name>/`                             | `service.yml` (15 keys), `quadlet/*.j2`, `config/`, `secrets.sops.yaml`, README                         |      2,544 |
-| `service` role (the platform)      | `ansible/roles/service/`                                | user, images, dirs and their owners, secrets, units, routes, timers, hooks, backup sidecar, restarts    |      1,606 |
-| `host_base` role                   | `ansible/roles/host_base/`                              | packages, sysctl, platform dirs, deploy timer, test-host default cert, GPU udev rule, `storagebaby-svc` |        279 |
-| `storage` role (NAS, not platform) | `ansible/roles/storage/`                                | disk/parity mounts, mergerfs pool, snapraid, nightly maintenance, mail                                  |      1,470 |
-| Site playbook                      | `ansible/playbook.yml`                                  | discovery of placed specs, host-wide lists (route fqdns, TCP ports), per-service `config` merge         |        193 |
-| Entry and glue                     | `bootstrap.sh`, `mise.toml`, `.github/workflows/ci.yml` | one-time host setup, workstation tasks, promotion of `stable`                                           |        395 |
-| Static tests                       | `tests/static/`                                         | 46 tests: contract shape, ports, secrets recipients, render + `quadlet -dryrun`, storage, lint          |      1,504 |
-| Integration tests                  | `tests/integration/`                                    | Molecule on libvirt/KVM, 67 testinfra tests, custom create/prepare/destroy playbooks                    |      3,245 |
-| Test fixtures                      | `hosts/test-a/`, `hosts/test-ci/`                       | two test hosts, `tcp-echo` and `build-echo` fixture services (duplicated per host by design)            |        453 |
+| Layer                              | Lives in                                                     | Owns                                                                                                                             | Code lines |
+| ---------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ---------: |
+| Host declaration                   | `hosts/<host>/host.yml`                                      | domain, ACME, storage roots, the `storage` block, `gpu`, `packages`, per-host `service_config`                                   |        115 |
+| Placement                          | the folder under `hosts/<host>/services/`                    | which services a host runs, including by pointer folder (`source.yml`) to one in its own repository; test hosts place by symlink |          — |
+| Service contract                   | `hosts/**/services/<name>/`                                  | `service.yml` (15 keys), `quadlet/*.j2`, `config/`, `secrets.sops.yaml`, README                                                  |      2,544 |
+| `service` role (the platform)      | `ansible/roles/service/`                                     | user, images, dirs and their owners, secrets, units, routes, timers, hooks, backup sidecar, restarts                             |      1,606 |
+| `host_base` role                   | `ansible/roles/host_base/`                                   | packages, sysctl, platform dirs, the deploy timer and script, test-host default cert, GPU udev rule, `storagebaby-svc`           |        279 |
+| `storage` role (NAS, not platform) | `ansible/roles/storage/`                                     | disk/parity mounts, mergerfs pool, snapraid, nightly maintenance, mail                                                           |      1,470 |
+| Site playbook                      | `ansible/playbook.yml`                                       | discovery of placed specs, including pointer resolution, host-wide lists (route fqdns, TCP ports), per-service `config` merge    |        193 |
+| Entry and glue                     | `bootstrap.sh`, `mise.toml`, `.github/workflows/ci.yml`      | one-time host setup, workstation tasks, promotion of `stable`                                                                    |        395 |
+| Static tests                       | `tests/static/`                                              | 46 tests: contract shape, ports, secrets recipients, render + `quadlet -dryrun`, storage, lint                                   |      1,504 |
+| Integration tests                  | `tests/integration/`                                         | Molecule on libvirt/KVM, 67 testinfra tests, custom create/prepare/destroy playbooks                                             |      3,245 |
+| Test fixtures                      | `hosts/test-a/`, `hosts/test-ci/`, `tests/fixtures/sources/` | two test hosts, `tcp-echo`, `build-echo` and `ext-echo` fixture services (duplicated per host by design)                         |        453 |
 
 Code lines are YAML, Jinja, Python, shell and TOML, measured with `wc -l`. Prose is on top
 of that: README 1,004, CLAUDE.md 194, role READMEs 934, service READMEs 2,300, design
@@ -62,7 +62,7 @@ tests are 2.3× the platform code. 184 commits landed between 2026-09-21 and 202
 ## 3. One service, end to end
 
 What the `service` role does with a folder, in order (`tasks/main.yml` → `host.yml` →
-`images.yml` → `secrets.yml` → `units.yml` → `timers.yml` → `hooks.yml`):
+`registries.yml` → `images.yml` → `secrets.yml` → `units.yml` → `timers.yml` → `hooks.yml`):
 
 1. Derive facts: `svc-<name>`, volume paths from `storage_roots[class]` or
    `volume_overrides`, routes (from `routes:` or the `domain:`+`port:` shorthand), which
@@ -70,27 +70,33 @@ What the `service` role does with a folder, in order (`tasks/main.yml` → `host
 2. Create the system user with subuid/subgid and linger; add it to bind groups; if a
    membership changed, stop and start `user@<uid>.service`; wait for the user manager.
 3. Install `podman-as` and `podman-secret-sync` to `/usr/local/sbin`.
-4. **Pre-pull every image** the templates name (rendered once via `lookup('template')`
+4. **Refuse and log in for `registries`.** Every registry the service names has to be in
+   the host's own `registries` list, or the converge fails naming the service, the
+   registry and the host. Then write `~/.config/containers/auth.json` for the service user
+   from the host's `registries.sops.yaml`, one entry per registry the service named (the
+   file is removed if it names none) — a pull prerequisite beside the helpers, written
+   before anything is pulled.
+5. **Pre-pull every image** the templates name (rendered once via `lookup('template')`
    only to read `Image=`), three attempts, ten minutes each, stop at the first failure.
    Before anything is written, so a failed converge leaves the old service running.
-5. Create missing volume and bind directories. Each may declare an `owner`, the uid the
+6. Create missing volume and bind directories. Each may declare an `owner`, the uid the
    process has inside the container, which the role maps onto the service's subuid range;
    a directory whose owner differs is adopted with one `chown -R`, once. Modes are never
    re-permissioned.
-6. Copy `config/` to `/etc/storagebaby/<name>/`.
-7. Copy `secrets.sops.yaml` to the host, decrypt there with the host age key, sync each
+7. Copy `config/` to `/etc/storagebaby/<name>/`.
+8. Copy `secrets.sops.yaml` to the host, decrypt there with the host age key, sync each
    value into a `podman secret` of the service user; report changed only on a real change.
-8. Render `quadlet/*.j2` (except `*.timer.j2`/`*.service.j2`) into
+9. Render `quadlet/*.j2` (except `*.timer.j2`/`*.service.j2`) into
    `/etc/containers/systemd/users/<uid>/`, the generated `<name>-backup.container` if
    `backup:` is a block, the `10-storagebaby-hosts.conf` drop-in (every placed route fqdn
    → `host-gateway`), one Traefik file-provider route per `routes[]` entry, one TCP route
    file if `tcp_ports`. Remove stale drop-ins, the pre-Phase-3 route file, a stale TCP file.
-9. Map rendered files to unit names, order build → pod → container, restart only what
-   changed (config or secret change restarts all; a changed pod restart covers its
-   containers), start what is not active (a `.build` counts as up once it ran
-   successfully), enable `podman-auto-update.timer`.
-10. Render timer/service pairs into `~svc-<name>/.config/systemd/user/`, enable, restart on change.
-11. Run `hooks.after_change` through `podman exec`, each waiting up to ten minutes for the
+10. Map rendered files to unit names, order build → pod → container, restart only what
+    changed (config or secret change restarts all; a changed pod restart covers its
+    containers), start what is not active (a `.build` counts as up once it ran
+    successfully), enable `podman-auto-update.timer`.
+11. Render timer/service pairs into `~svc-<name>/.config/systemd/user/`, enable, restart on change.
+12. Run `hooks.after_change` through `podman exec`, each waiting up to ten minutes for the
     container's health check; a container that never gets healthy skips that service's
     hooks, is recorded, and the playbook fails on the list as its last task.
 
@@ -146,8 +152,8 @@ decision, and the one that buys the isolation):
 
 Contract keys by how many of the nine real services use them: `volumes`, `secrets`,
 `backup` 9; `port`, `domain` 8; `config` 6; `hooks`, `route` 2; `routes`, `binds`,
-`devices`, `groups`, `tcp_ports` 1; `host_secrets` 0. `owner`, a sub-key of `volumes` and
-`binds`, is declared by 5.
+`devices`, `groups`, `tcp_ports` 1; `host_secrets`, `registries` 0 — no real service
+declares a private image yet. `owner`, a sub-key of `volumes` and `binds`, is declared by 5.
 
 ## 6. What a service folder really is
 
