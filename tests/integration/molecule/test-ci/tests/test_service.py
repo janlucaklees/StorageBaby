@@ -14,6 +14,7 @@ import yaml
 from conftest import run_as
 
 HOSTS = Path("/repo/hosts")
+FIXTURE_SOURCES = Path("/repo/tests/fixtures/sources")
 
 
 def load_spec(path: Path) -> dict:
@@ -21,17 +22,41 @@ def load_spec(path: Path) -> dict:
         return yaml.safe_load(fh)
 
 
+def service_name(spec_path: Path) -> str:
+    """The service's name: the `name` key, which the contract holds equal to its folder.
+
+    Not `spec_path.parent.name`: an external service's `service.yml` sits at
+    `tests/fixtures/sources/<name>/<path>/service.yml`, and its parent is the last
+    component of `path`, not the service.
+    """
+    return load_spec(spec_path)["name"]
+
+
+def _resolve(folder: Path) -> Path | None:
+    """A service folder's spec: its own service.yml, or the one its pointer fetches."""
+    if (folder / "service.yml").exists():
+        return folder / "service.yml"
+    if (folder / "source.yml").exists():
+        source = load_spec(folder / "source.yml")
+        spec = FIXTURE_SOURCES / folder.name / source["path"] / "service.yml"
+        return spec if spec.exists() else None
+    return None
+
+
 def _specs() -> list[tuple[str, Path]]:
     """(owner, spec path) for every service spec; owner is 'shared' or a host name."""
-    found = [("shared", p) for p in sorted((HOSTS / "shared" / "services").glob("*/service.yml"))]
-    for host_dir in sorted(p for p in HOSTS.iterdir() if p.is_dir() and p.name != "shared"):
-        found += [(host_dir.name, p) for p in sorted((host_dir / "services").glob("*/service.yml"))]
+    found = []
+    for owner_dir in [HOSTS / "shared"] + sorted(p for p in HOSTS.iterdir() if p.is_dir() and p.name != "shared"):
+        for folder in sorted(p for p in (owner_dir / "services").iterdir() if p.is_dir()):
+            spec = _resolve(folder)
+            if spec is not None:
+                found.append((owner_dir.name, spec))
     return found
 
 
 SPECS = _specs()
 service_case = pytest.mark.parametrize(
-    "owner,spec_path", SPECS, ids=[f"{owner}/{p.parent.name}" for owner, p in SPECS]
+    "owner,spec_path", SPECS, ids=[f"{owner}/{service_name(p)}" for owner, p in SPECS]
 )
 
 
@@ -116,7 +141,7 @@ def kopia_server(host) -> tuple[str, str] | None:
     """
     hostname = host.check_output("uname -n")
     for owner, spec_path in SPECS:
-        if spec_path.parent.name == "kopia" and owner in ("shared", hostname):
+        if service_name(spec_path) == "kopia" and owner in ("shared", hostname):
             return "svc-kopia", container_name(quadlets(spec_path, "container")[0])
     return None
 

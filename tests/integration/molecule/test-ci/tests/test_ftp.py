@@ -17,7 +17,7 @@ import time
 
 import pytest
 from conftest import run_as
-from test_service import HOSTS, SPECS, load_spec, placed_tcp_entries, quadlets, volume_path
+from test_service import HOSTS, SPECS, load_spec, placed_tcp_entries, quadlets, service_name, volume_path
 from test_traefik import traefik_tcp_bind_address, vm_address
 
 # A plain text file and not a PDF, deliberately. What is under test is the path -- an FTP
@@ -49,7 +49,7 @@ def paperless(host):
     """
     hostname = host.check_output("uname -n")
     for owner, spec_path in SPECS:
-        if spec_path.parent.name == "paperless" and owner in ("shared", hostname):
+        if service_name(spec_path) == "paperless" and owner in ("shared", hostname):
             return load_spec(spec_path), load_spec(HOSTS / hostname / "host.yml"), spec_path
     pytest.skip("paperless is not placed on this host")
 

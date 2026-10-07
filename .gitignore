@@ -8,3 +8,4 @@ mounts/
 __pycache__/
 .pytest_cache/
 hosts/test-*/secrets/
+tests/fixtures/sources/*/**/secrets.sops.yaml

@@ -28,6 +28,9 @@ provisioner:
       all:
         ansible_user: root
         ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        # Where the controller finds the external repositories a test host points at:
+        # the fixture tree, which prepare also pushes to the VM's git server.
+        sources_root: /repo/tests/fixtures/sources
   playbooks:
     create: create.yml
     destroy: destroy.yml

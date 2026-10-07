@@ -99,6 +99,50 @@
         enabled: true
         state: started
 
+    # Stands in for GitHub, for the external repositories a pointer names: a basic-auth
+    # git server over HTTP on the loopback, serving /srv/git. The credentials file is
+    # filled below, once the host's tokens exist.
+    - name: Install the throwaway git HTTP server
+      ansible.builtin.copy:
+        src: files/test-git-http.py
+        dest: /usr/local/sbin/test-git-http
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Its credentials directory and served root
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop: [/etc/test-git-http, /srv/git]
+
+    - name: The git server's unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/test-git-http.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Throwaway basic-auth git server for the integration tests
+
+          [Service]
+          ExecStart=/usr/local/sbin/test-git-http
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: The git server runs
+      ansible.builtin.systemd:
+        name: test-git-http.service
+        daemon_reload: true
+        enabled: true
+        state: started
+
 # Runs after bootstrap, so pacman's databases are already synced and upgraded -- a
 # `-Sy parted` before it would be a partial upgrade -- and before the converge, which is
 # the first thing that needs the partitions to exist.
@@ -429,6 +473,102 @@
       register: _mail_secret
       changed_when: _mail_secret.stdout != 'keeping'
 
+    # External services. A pointer names a repository; the host fetches it and reads the
+    # service's secrets from *that* tree, so the fixture's secrets file is generated into the
+    # fixture tree (gitignored there) and never as a host override -- the override path is
+    # exactly what this fixture must not take. The host's own sources file gets one token per
+    # pointer, which the git server below will accept.
+    - name: Discover this host's pointers (shared and own)
+      ansible.builtin.find:
+        paths:
+          - '{{ _hosts_root }}/shared/services'
+          - '{{ _hosts_root }}/{{ inventory_hostname }}/services'
+        patterns: source.yml
+        recurse: true
+        depth: 2
+        follow: true
+      register: _pointer_files
+      delegate_to: localhost
+      become: false
+
+    - name: The pointers, resolved against the fixture tree
+      ansible.builtin.set_fact:
+        pointers: >-
+          {{ pointers | default([]) + [{
+               'name': item.path | dirname | basename,
+               'ref': (lookup('file', item.path) | from_yaml).ref,
+               'source_dir': storagebaby_repo_root ~ '/tests/fixtures/sources/' ~ (item.path | dirname | basename) ~ '/' ~ (lookup('file', item.path) | from_yaml).path
+             }] }}
+      loop: '{{ _pointer_files.files }}'
+      loop_control:
+        label: '{{ item.path | dirname | basename }}'
+
+    - name: Write and encrypt the fixture's own secrets file into its tree
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -f "$OUT" ] && grep -q '{{ storagebaby_age_pub }}' "$OUT"; then
+          echo keeping
+          exit 0
+        fi
+        rm -f "$TMP"
+        {% for key in (lookup('file', item.source_dir ~ '/service.yml') | from_yaml).secrets %}
+        printf '%s: "%s"\n' '{{ key }}' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$TMP"
+        {% endfor %}
+        sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "$OUT"
+        rm -f "$TMP"
+      args:
+        executable: /bin/bash
+        chdir: /tmp
+      environment:
+        TMP: '/tmp/{{ inventory_hostname }}-ext-{{ item.name }}-secrets.yaml'
+        OUT: '{{ item.source_dir }}/secrets.sops.yaml'
+      loop: '{{ pointers | default([]) }}'
+      loop_control:
+        label: '{{ item.name }}'
+      when: (lookup('file', item.source_dir ~ '/service.yml') | from_yaml).secrets | length > 0
+      delegate_to: localhost
+      register: _ext_secret
+      changed_when: _ext_secret.stdout != 'keeping'
+
+    # The host's git tokens: one nested document, `<name>: { token }` per pointer, in the same
+    # generated-and-gitignored secrets directory as every other test-host secret -- so the
+    # platform seed below carries it to the VM with no extra step, and the recipients test
+    # already leaves it alone. Written only when a pointer exists, kept when it is ours.
+    - name: Write and encrypt the host's sources file, one token per pointer
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -f "$OUT" ] && grep -q '{{ storagebaby_age_pub }}' "$OUT"; then
+          echo keeping
+          exit 0
+        fi
+        rm -f "$TMP"
+        {% for p in pointers %}
+        printf '%s:\n  token: "%s"\n' '{{ p.name }}' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$TMP"
+        {% endfor %}
+        sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "$OUT"
+        rm -f "$TMP"
+      args:
+        executable: /bin/bash
+        chdir: /tmp
+      environment:
+        TMP: '/tmp/{{ inventory_hostname }}-sources.yaml'
+        OUT: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/sources.sops.yaml'
+      when: pointers | default([]) | length > 0
+      delegate_to: localhost
+      register: _sources_secret
+      changed_when: _sources_secret.stdout != 'keeping'
+
+    # The tokens the host will present are read back from this file *on the VM*, where the key
+    # is: prepare on a surviving VM keeps the file ("keeping" above) and the controller cannot
+    # decrypt it. The git server play reads the copy; Task 3 copies registries.sops.yaml the
+    # same way.
+    - name: Copy the host's sources file to the VM
+      ansible.builtin.copy:
+        src: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/sources.sops.yaml'
+        dest: /tmp/sources.sops.yaml
+        mode: '0600'
+      when: pointers | default([]) | length > 0
+
 # Stands in for GitHub: the deploy unit that bootstrap installed already points at
 # /srv/storagebaby.git, so seeding a bare repo there is all it takes to make
 # `ansible-pull` on the host pull exactly this working tree.
@@ -511,6 +651,87 @@
         git remote remove origin 2> /dev/null || true
         git remote add origin /srv/storagebaby.git
         git push -qf origin stable
+      changed_when: true
+
+- name: Seed every pointed external repository on the VM's git server
+  hosts: all
+  gather_facts: false
+  vars:
+    storagebaby_repo_root: /repo
+  tasks:
+    # One line per token in the server's credentials file, decrypted on the VM from the copy
+    # the secrets play made.
+    - name: The git server accepts exactly those tokens
+      ansible.builtin.shell: |
+        set -euo pipefail
+        : > /etc/test-git-http/credentials
+        {% for p in pointers | default([]) %}
+        SOPS_AGE_KEY_FILE=/etc/storagebaby/age.key sops --decrypt --extract '["{{ p.name }}"]["token"]' /tmp/sources.sops.yaml >> /etc/test-git-http/credentials
+        echo >> /etc/test-git-http/credentials
+        {% endfor %}
+        chmod 0600 /etc/test-git-http/credentials
+      args:
+        executable: /bin/bash
+      changed_when: true
+      no_log: true
+
+    - name: Archive each fixture repository on the controller
+      ansible.builtin.shell: |
+        set -e
+        tar -C "$SRC" --exclude=__pycache__ -cf "$TAR" .
+        gzip -f "$TAR"
+      environment:
+        SRC: '{{ storagebaby_repo_root }}/tests/fixtures/sources/{{ item.name }}'
+        TAR: '/tmp/{{ inventory_hostname }}-ext-{{ item.name }}.tar'
+      loop: '{{ pointers | default([]) }}'
+      loop_control:
+        label: '{{ item.name }}'
+      delegate_to: localhost
+      changed_when: true
+
+    - name: A working copy directory per external repository
+      ansible.builtin.file:
+        path: '/srv/ext-src/{{ item.name }}'
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop: '{{ pointers | default([]) }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    # `--no-same-owner`, like the platform seed: the archive carries the operator's uid.
+    - name: Copy and extract each one under /srv/ext-src
+      ansible.builtin.unarchive:
+        src: '/tmp/{{ inventory_hostname }}-ext-{{ item.name }}.tar.gz'
+        dest: '/srv/ext-src/{{ item.name }}'
+        extra_opts: [--no-same-owner]
+      loop: '{{ pointers | default([]) }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    # Same shape as the platform seed: a working copy, a bare remote, a force-push of the
+    # branch the pointer names, every run -- so a test's pushes are undone by the next
+    # prepare. `post-update` is what keeps the dumb protocol's index files current.
+    - name: Seed each bare remote from its working copy
+      ansible.builtin.shell: |
+        set -e
+        cd /srv/ext-src/{{ item.name }}
+        [ -d .git ] || git init -q -b {{ item.ref }}
+        git -c user.name=t -c user.email=t@t add -A
+        git -c user.name=t -c user.email=t@t add -f $(find . -name secrets.sops.yaml)
+        git -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'seed'
+        if [ ! -d /srv/git/{{ item.name }}.git ]; then
+          git clone -q --bare . /srv/git/{{ item.name }}.git
+          cp /srv/git/{{ item.name }}.git/hooks/post-update.sample /srv/git/{{ item.name }}.git/hooks/post-update
+        fi
+        git remote remove origin 2> /dev/null || true
+        git remote add origin /srv/git/{{ item.name }}.git
+        git push -qf origin {{ item.ref }}
+        git -C /srv/git/{{ item.name }}.git update-server-info
+      loop: '{{ pointers | default([]) }}'
+      loop_control:
+        label: '{{ item.name }}'
       changed_when: true
 
 # The pre-flight of a host that has never converged, run before the converge that makes it

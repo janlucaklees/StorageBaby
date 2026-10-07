@@ -18,11 +18,11 @@ that matters the service's README says how its access is really granted.
 
 import pytest
 from conftest import run_as
-from test_service import SPECS, container_name, load_spec, placed, quadlets
+from test_service import SPECS, container_name, load_spec, placed, quadlets, service_name
 
 BIND_SPECS = [(owner, p) for owner, p in SPECS if load_spec(p).get("binds")]
 bind_case = pytest.mark.parametrize(
-    "owner,spec_path", BIND_SPECS, ids=[f"{owner}/{p.parent.name}" for owner, p in BIND_SPECS]
+    "owner,spec_path", BIND_SPECS, ids=[f"{owner}/{service_name(p)}" for owner, p in BIND_SPECS]
 )
 
 

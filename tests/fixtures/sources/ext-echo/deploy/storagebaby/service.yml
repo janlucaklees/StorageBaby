@@ -1,0 +1,11 @@
+# A test-only fixture: a service that lives in its *own* repository and is placed by a
+# pointer (`hosts/test-*/services/ext-echo/source.yml`). The contract is the ordinary one;
+# what the fixture measures is the path that brings it here -- the deploy script's fetch
+# with a token, the playbook's resolution of a pointer, the secrets file read from the
+# external tree rather than from this repository.
+name: ext-echo
+port: 8118
+domain: ext-echo
+volumes: {}
+secrets: [greeting]
+backup: none

@@ -26,6 +26,7 @@ from test_service import (
     load_spec,
     pod_unit,
     quadlets,
+    service_name,
     unit_stem,
 )
 from test_storage import storage
@@ -115,7 +116,7 @@ def other_placed_service(host) -> tuple[str, str] | None:
     """
     hostname = host.check_output("uname -n")
     for owner, spec_path in SPECS:
-        name = spec_path.parent.name
+        name = service_name(spec_path)
         if name != "traefik" and owner in ("shared", hostname):
             return name, pod_unit(spec_path) or f"{name}.service"
     return None
@@ -287,7 +288,7 @@ def single_container_service(host):
     """
     hostname = host.check_output("uname -n")
     for owner, spec_path in SPECS:
-        name = spec_path.parent.name
+        name = service_name(spec_path)
         if name == "traefik" or owner not in ("shared", hostname) or pod_unit(spec_path):
             continue
         containers = quadlets(spec_path, "container")
