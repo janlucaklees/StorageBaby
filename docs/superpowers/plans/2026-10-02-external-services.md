@@ -4,7 +4,7 @@
 
 **Goal:** A service whose definition lives in its own repository is deployed by this platform through a pointer folder, with the host fetching that repository on every deploy tick and converging when it moved.
 
-**Architecture:** `hosts/<host>/services/<name>/source.yml` points at a repository, a branch and a folder; the host's deploy unit runs a script that fetches this repository and every pointed one into `/var/lib/storagebaby/sources/<name>` and runs the playbook when any checkout differs from the SHAs of the last successful converge. The playbook resolves a pointer to the fetched `service.yml` and from there the `service` role treats it like any in-tree service. One new `service.yml` key, `registries`, makes the role write the service user's `auth.json` from the pointer's `source.sops.yaml` so private images pull. A fixture external repository under `tests/fixtures/sources/` is served to the test VM by a throwaway basic-auth git HTTP server and pulls its image from a throwaway htpasswd registry, so the token path and the private-image path both run for real.
+**Architecture:** `hosts/<host>/services/<name>/source.yml` points at a repository, a branch and a folder; the host's deploy unit runs a script that fetches this repository and every pointed one into `/var/lib/storagebaby/sources/<name>` and runs the playbook when any checkout differs from the SHAs of the last successful converge. The playbook resolves a pointer to the fetched `service.yml` and from there the `service` role treats it like any in-tree service. One new `service.yml` key, `registries`, names the registries a service's images are private on; the host offers registries in `host.yml` and holds the logins in `hosts/<host>/secrets/registries.sops.yaml`, and the role writes the service user's `auth.json` from that before the pull. The git tokens are the host's too, in `hosts/<host>/secrets/sources.sops.yaml`, one per pointed service. A fixture external repository under `tests/fixtures/sources/` is served to the test VM by a throwaway basic-auth git HTTP server and pulls its image from a throwaway htpasswd registry, so the token path and the private-image path both run for real.
 
 **Tech Stack:** As before (Ansible, rootless Podman + Quadlet, sops + age, Molecule on libvirt VMs, pytest/testinfra). New: a bash deploy script with `GIT_ASKPASS`, python `http.server` for the dumb git protocol, `docker.io/library/registry:2` with htpasswd on the VM.
 
@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- **Decisions in the spec §1 are locked.** External repo owns the whole service definition including `secrets.sops.yaml`; this repo holds only `source.yml` (three required keys `repo`, `ref`, `path`, no defaults) and `source.sops.yaml` (`git_token`, `registry_user`, `registry_token`); live fetch with no gate in this repo's CI; one service per external repository; branch refs only; `registries` is accepted only on a pointer service.
+- **Decisions in the spec §1 are locked.** External repo owns the whole service definition including `secrets.sops.yaml`; the pointer folder holds only `source.yml` (three required keys `repo`, `ref`, `path`, no defaults); **the host owns both credentials** (JLK, 2026-10-07): git tokens in `hosts/<host>/secrets/sources.sops.yaml` keyed by pointer name, registry logins in `hosts/<host>/secrets/registries.sops.yaml` keyed by registry host, and `host.yml` lists the registries it offers; live fetch with no gate in this repo's CI; one service per external repository; branch refs only; any service may declare `registries`, and one naming a registry its host does not offer is refused.
 - **The external folder is the existing contract verbatim.** No new template variable, no translation. Everything in `ansible/roles/service/` keeps working on an in-tree service exactly as before; a pointer service only differs in where `service_dir` is.
 - Rootless only, one user per service, loopback publishing only, nothing privileged, no hostname in roles/templates/tasks. The host name reaches the deploy script as `$(uname -n)` (the Arch cloud image has no `hostname` binary).
 - Secrets: `no_log: true` on every task that carries a decrypted value; a token is never written to disk in the clear (the deploy script hands it to git through `GIT_ASKPASS` and the process environment only); `*.sops.yaml` copied to the host are `0600 root`.
@@ -53,7 +53,7 @@ Spec §3. No pointer exists yet; this task only changes _how_ a host decides to 
 **Interfaces:**
 
 - Produces: `/usr/local/sbin/storagebaby-deploy`, run by `storagebaby-deploy.service`. Reads `/etc/storagebaby/deploy.conf` (`REPO_URL`, `BRANCH`, `EXTRA_ARGS`), keeps `/var/lib/storagebaby/repo`, creates `/var/lib/storagebaby/sources/` (0700) and `/var/lib/storagebaby/deploy.state`. State file format: one line per watched checkout, `repo <sha>` first, then `source:<name> <sha>` sorted by name. Exit 0 and the log line `nothing changed since the last converge; not running the playbook` when the state matches.
-- Produces: the shell function `sync_checkout <dir> <url> <ref>` (prints HEAD) and the pointer loop that Task 2's fixture will exercise; the pointer format it reads is `source.yml` with `repo`, `ref`, `path`, and the optional `source.sops.yaml` key `git_token`.
+- Produces: the shell function `sync_checkout <dir> <url> <ref>` (prints HEAD) and the pointer loop that Task 2's fixture will exercise; the pointer format it reads is `source.yml` with `repo`, `ref`, `path`, and the token for pointer `<name>` is `<name>.token` in `hosts/<hostname>/secrets/sources.sops.yaml` (optional file, optional entry; absent means an anonymous clone).
 
 - [ ] **Step 1: Write the failing static test**
 
@@ -121,7 +121,7 @@ export SOPS_AGE_KEY_FILE=/etc/storagebaby/age.key
 # prompt no one will answer.
 export GIT_TERMINAL_PROMPT=0
 # Whatever credential helper the host's git might have configured is not consulted: the
-# token for an external repository comes from its pointer and nowhere else.
+# token for an external repository comes from the host's sources file and nowhere else.
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
 
 # The token reaches git through GIT_ASKPASS and the environment, never through the remote
@@ -155,7 +155,7 @@ sync_checkout() {
 	git -C "$dir" rev-parse HEAD
 }
 
-# One line per pointer of this host: "<name> <repo> <ref> <path> <pointer folder>".
+# One line per pointer of this host: "<name> <repo> <ref> <path>".
 list_pointers() {
 	python3 - "$REPO_DIR" "$HOST" << 'PY'
 import glob
@@ -172,18 +172,16 @@ pointers = sorted(
 for pointer in pointers:
     with open(pointer) as fh:
         source = yaml.safe_load(fh)
-    folder = os.path.dirname(pointer)
-    print(os.path.basename(folder), source["repo"], source["ref"], source["path"], folder)
+    print(os.path.basename(os.path.dirname(pointer)), source["repo"], source["ref"], source["path"])
 PY
 }
 
-# The git_token of a pointer, or nothing: no source.sops.yaml, or one without that key,
-# means an anonymous clone (a public repository, or a private image on a public one).
+# The token of one pointer, or nothing: no entry means an anonymous clone, which is what a
+# public repository needs. SOURCE_TOKENS is filled below, once the platform repository --
+# which carries the file -- is fetched.
 git_token_of() {
-	local sops_file=$1/source.sops.yaml
-	[ -f "$sops_file" ] || return 0
-	sops --decrypt --output-type json "$sops_file" \
-		| python3 -c 'import json, sys; print(json.load(sys.stdin).get("git_token", ""))'
+	printf '%s' "$SOURCE_TOKENS" \
+		| python3 -c 'import json, sys; print(json.load(sys.stdin).get(sys.argv[1], {}).get("token", ""))' "$1"
 }
 
 install -d -m 0755 /var/lib/storagebaby
@@ -197,16 +195,24 @@ if [ ! -d "$REPO_DIR/hosts/$HOST" ]; then
 fi
 desired="repo $repo_sha"
 
+# The host's git tokens, decrypted once per tick and held in memory only:
+# hosts/<host>/secrets/sources.sops.yaml maps a pointer name to { token }. No file means
+# every pointed repository is public.
+SOURCE_TOKENS='{}'
+if [ -f "$REPO_DIR/hosts/$HOST/secrets/sources.sops.yaml" ]; then
+	SOURCE_TOKENS=$(sops --decrypt --output-type json "$REPO_DIR/hosts/$HOST/secrets/sources.sops.yaml")
+fi
+
 names=()
 # Captured first and not read through a process substitution: under `set -e` a python
 # failure inside `<(...)` would end the loop quietly with half the pointers, and the
 # state file would then say "converged" about repositories that were never fetched.
 pointer_lines=$(list_pointers)
-while read -r name url ref path folder; do
+while read -r name url ref path; do
 	[ -n "$name" ] || continue
 	names+=("$name")
 	echo "external repository for $name: $url ($ref, $path)"
-	STORAGEBABY_GIT_TOKEN=$(git_token_of "$folder")
+	STORAGEBABY_GIT_TOKEN=$(git_token_of "$name")
 	export STORAGEBABY_GIT_TOKEN
 	sha=$(sync_checkout "$SOURCES_DIR/$name" "$url" "$ref")
 	unset STORAGEBABY_GIT_TOKEN
@@ -398,23 +404,23 @@ Spec §2, §4 (all but `registries`), §6 fixture, prepare's git server. At the 
 
 **Files:**
 
-- Modify: `ansible/playbook.yml` (pre_tasks: `sources_root`, pointer discovery and resolution, missing-source fail/skip, name assert, loopback-port assert; `pointer_dir` passed to the role)
+- Modify: `ansible/playbook.yml` (pre_tasks: `sources_root`, pointer discovery and resolution, missing-source fail/skip, name assert, loopback-port assert)
 - Modify: `tests/static/conftest.py` (`Placement.pointer`, pointer resolution through the fixture tree, `pointers()`, `FIXTURE_SOURCES`, `rendered` passes `sources_root`)
 - Create: `tests/static/test_sources.py`
-- Modify: `tests/static/test_contract.py` (`name == p.name`; `registries` key accepted, pointer-only), `tests/static/test_secrets.py` (exclusions and the fixture skip)
+- Modify: `tests/static/test_contract.py` (`name == p.name`; `registries` key accepted on any service), `tests/static/test_secrets.py` (the fixture skip)
 - Create: `tests/fixtures/sources/ext-echo/README.md`, `tests/fixtures/sources/ext-echo/deploy/storagebaby/{service.yml,README.md}`, `.../quadlet/ext-echo.container.j2`, `.../config/www/index.html`
 - Create: `hosts/test-a/services/ext-echo/source.yml`, `hosts/test-ci/services/ext-echo/source.yml`
 - Modify: `.gitignore`
 - Create: `tests/integration/molecule/test-ci/files/test-git-http.py`
-- Modify: `tests/integration/molecule/test-ci/prepare.yml` (fixture secrets, pointer credentials, git server, external seed, archive of the pointer's generated file)
+- Modify: `tests/integration/molecule/test-ci/prepare.yml` (fixture secrets into the fixture tree, the host's `sources.sops.yaml`, git server, external seed)
 - Modify: `tests/integration/molecule/test-ci/molecule.yml` (`sources_root` group var)
 - Modify: `tests/integration/molecule/test-ci/tests/test_service.py` (`service_name()`, `_specs()` resolves pointers) and the seven other `parent.name` sites listed in Step 7
 - Create: `tests/integration/molecule/test-ci/tests/test_external.py`
 
 **Interfaces:**
 
-- Consumes: Task 1's script (`/var/lib/storagebaby/sources/<name>` layout, `source.sops.yaml` key `git_token`).
-- Produces: playbook var `sources_root` (default `/var/lib/storagebaby/sources`; Molecule `/repo/tests/fixtures/sources`; static `<REPO>/tests/fixtures/sources`), include_role var `pointer_dir` (`''` for an in-tree service, the pointer folder's path otherwise — Task 3 reads `source.sops.yaml` from it), static helpers `conftest.FIXTURE_SOURCES`, `conftest.pointers() -> list[tuple[host, name, folder: Path, source: dict]]`, `Placement.pointer: Path | None`; integration helper `test_service.service_name(spec_path) -> str`; on the VM: git server `http://127.0.0.1:8418/<name>.git` with tokens in `/etc/test-git-http/credentials`, external working copy `/srv/ext-src/<name>`, bare remote `/srv/git/<name>.git`.
+- Consumes: Task 1's script (`/var/lib/storagebaby/sources/<name>` layout, the host's `secrets/sources.sops.yaml` with `<name>: { token }`).
+- Produces: playbook var `sources_root` (default `/var/lib/storagebaby/sources`; Molecule `/repo/tests/fixtures/sources`; static `<REPO>/tests/fixtures/sources`), static helpers `conftest.FIXTURE_SOURCES`, `conftest.pointers() -> list[tuple[host, name, folder: Path, source: dict]]`, `Placement.pointer: Path | None`; integration helper `test_service.service_name(spec_path) -> str`; on the VM: git server `http://127.0.0.1:8418/<name>.git` with tokens in `/etc/test-git-http/credentials`, external working copy `/srv/ext-src/<name>`, bare remote `/srv/git/<name>.git`.
 
 - [ ] **Step 1: Static tests first — the pointer contract**
 
@@ -504,12 +510,11 @@ import pytest
 from conftest import FIXTURE_SOURCES, HOSTS, load_yaml, placements, pointers
 
 SOURCE_KEYS = {"repo", "ref", "path"}
-# Plaintext key names in a sops file, like `test_secrets.py` relies on.
-SOURCE_SECRET_KEYS = {"git_token", "registry_user", "registry_token"}
-# What a pointer folder may hold. The generated test credential is gitignored and may or
-# may not be present; nothing else belongs beside the pointer -- a `quadlet/` here would be
-# a service half in this repository and half in its own.
-POINTER_FILES = {"source.yml", "source.sops.yaml", "README.md"}
+# What a pointer folder may hold: the pointer and a note. Nothing else belongs beside it --
+# a `quadlet/` here would be a service half in this repository and half in its own, and a
+# credential here would be the host's business in the service's folder (the token is in
+# hosts/<host>/secrets/sources.sops.yaml).
+POINTER_FILES = {"source.yml", "README.md"}
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 # https anywhere; plain http only to the loopback, which is the throwaway git server the
 # test VM runs. A token over plain http to anything else would be a token on the wire.
@@ -531,10 +536,6 @@ def test_pointer_contract(owner, name, folder, source):
     assert not (folder / "service.yml").exists(), f"{name}: a folder is a pointer or a service, never both"
     extra = {p.name for p in folder.iterdir()} - POINTER_FILES
     assert not extra, f"{name}: a pointer folder holds only {sorted(POINTER_FILES)}, found {sorted(extra)}"
-    secret = folder / "source.sops.yaml"
-    if secret.exists():
-        keys = set(load_yaml(secret)) - {"sops"}
-        assert keys <= SOURCE_SECRET_KEYS, f"{name}: unknown keys in source.sops.yaml: {keys - SOURCE_SECRET_KEYS}"
 
 
 def test_a_pointer_on_a_test_host_has_its_repository_in_the_fixture_tree():
@@ -555,15 +556,9 @@ def test_test_host_copies_of_a_pointer_are_identical():
             by_name.setdefault(name, set()).add((folder / "source.yml").read_bytes())
     for name, texts in by_name.items():
         assert len(texts) == 1, f"{name}: the test hosts' source.yml files differ"
-
-
-def test_registries_is_declared_only_by_an_external_service():
-    """The credential for a registry login comes from the pointer's source.sops.yaml; an
-    in-tree service has no such file, and nothing in tree pulls a private image."""
-    for p in placements():
-        if p.spec.get("registries"):
-            assert p.pointer is not None, f"{p.host}/{p.name}: registries without a pointer"
 ```
+
+(`placements` and `load_yaml` stay imported for the fixture test above; drop whichever the linter reports unused.)
 
 `tests/static/test_contract.py`: add `"registries"` to `SPEC_KEYS`; change `assert spec["name"] == p.dir.name, "name must equal the folder name"` to `assert spec["name"] == p.name, "name must equal the folder name"`; before the `for secret, ref in spec.get("host_secrets"...` loop add
 
@@ -576,24 +571,16 @@ def test_registries_is_declared_only_by_an_external_service():
 
 with, at the top, `REGISTRY_RE = re.compile(r"^(localhost|[a-z0-9-]+(\.[a-z0-9-]+)+)(:\d+)?$")`.
 
-`tests/static/test_secrets.py`: in `sops_files()` add a second exclusion after the first:
-
-```python
-        if re.match(r"^hosts/test-[^/]+/services/[^/]+/source\.sops\.yaml$", rel):
-            continue  # gitignored, test-key-encrypted pointer credentials written by the integration scenario
-```
-
-and at the top of `test_declared_secrets_exist_in_file`:
+`tests/static/test_secrets.py`, at the top of `test_declared_secrets_exist_in_file`:
 
 ```python
     if p.pointer is not None and not (p.dir / "secrets.sops.yaml").exists():
         pytest.skip("external fixture: prepare generates its secrets file, encrypted to the VM")
 ```
 
-`.gitignore`, append:
+`.gitignore`, append (the host-side generated files land in `hosts/test-*/secrets/`, which is ignored already):
 
 ```
-hosts/test-*/services/*/source.sops.yaml
 tests/fixtures/sources/*/**/secrets.sops.yaml
 ```
 
@@ -673,8 +660,9 @@ WantedBy=default.target
 ```yaml
 # A test-only pointer, placed on the test hosts and nowhere else. The repository is the
 # throwaway git HTTP server `prepare.yml` runs on the VM, and the token the host presents to
-# it is in the generated, gitignored source.sops.yaml beside this file. The tree it serves
-# is tests/fixtures/sources/ext-echo. A real pointer names a GitHub repository over https.
+# it is the `ext-echo` entry of the generated, gitignored hosts/<host>/secrets/sources.sops.yaml.
+# The tree it serves is tests/fixtures/sources/ext-echo. A real pointer names a GitHub
+# repository over https.
 repo: http://127.0.0.1:8418/ext-echo.git
 ref: main
 path: deploy/storagebaby
@@ -792,10 +780,6 @@ After "Discover this host's service specs":
   loop: '{{ _resolved_pointers }}'
   loop_control:
     label: '{{ item.name }}'
-
-- name: Which pointer folder a spec came from (empty for an in-tree service)
-  ansible.builtin.set_fact:
-    _pointer_dir_of: "{{ dict(_resolved_pointers | map(attribute='spec') | zip(_resolved_pointers | map(attribute='pointer_dir'))) }}"
 ```
 
 Change "Collect placed services (shared first, then this host's)" to
@@ -847,11 +831,7 @@ After "The host's TCP entrypoint ports, in a stable order" add the loopback-port
     _duplicates: "{{ _all | community.general.counter | dict2items | selectattr('value', 'gt', 1) | map(attribute='key') | list }}"
 ```
 
-In the role include at the end of the playbook add `pointer_dir` to its `vars`:
-
-```yaml
-pointer_dir: "{{ _pointer_dir_of[placed_service] | default('') }}"
-```
+The role include at the end of the playbook is unchanged: the role never learns where a spec came from.
 
 - [ ] **Step 5: Static suite green**
 
@@ -985,8 +965,8 @@ if __name__ == "__main__":
 # External services. A pointer names a repository; the host fetches it and reads the
 # service's secrets from *that* tree, so the fixture's secrets file is generated into the
 # fixture tree (gitignored there) and never as a host override -- the override path is
-# exactly what this fixture must not take. The pointer's own credential file gets the
-# token the git server below will accept.
+# exactly what this fixture must not take. The host's own sources file gets one token per
+# pointer, which the git server below will accept.
 - name: Discover this host's pointers (shared and own)
   ansible.builtin.find:
     paths:
@@ -1039,60 +1019,49 @@ if __name__ == "__main__":
   register: _ext_secret
   changed_when: _ext_secret.stdout != 'keeping'
 
-# git_token only here; Task 3 adds registry_user and registry_token to the same file.
-- name: Write and encrypt the pointer's credential file
+# The host's git tokens: one nested document, `<name>: { token }` per pointer, in the same
+# generated-and-gitignored secrets directory as every other test-host secret -- so the
+# platform seed below carries it to the VM with no extra step, and the recipients test
+# already leaves it alone. Written only when a pointer exists, kept when it is ours.
+- name: Write and encrypt the host's sources file, one token per pointer
   ansible.builtin.shell: |
     set -euo pipefail
     if [ -f "$OUT" ] && grep -q '{{ storagebaby_age_pub }}' "$OUT"; then
       echo keeping
       exit 0
     fi
-    printf 'git_token: "%s"\n' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" > "$TMP"
+    rm -f "$TMP"
+    {% for p in pointers %}
+    printf '%s:\n  token: "%s"\n' '{{ p.name }}' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$TMP"
+    {% endfor %}
     sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "$OUT"
     rm -f "$TMP"
   args:
     executable: /bin/bash
     chdir: /tmp
   environment:
-    TMP: '/tmp/{{ inventory_hostname }}-pointer-{{ item.name }}.yaml'
-    OUT: '{{ item.folder }}/source.sops.yaml'
-  loop: '{{ pointers | default([]) }}'
-  loop_control:
-    label: '{{ item.name }}'
+    TMP: '/tmp/{{ inventory_hostname }}-sources.yaml'
+    OUT: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/sources.sops.yaml'
+  when: pointers | default([]) | length > 0
   delegate_to: localhost
-  register: _pointer_secret
-  changed_when: _pointer_secret.stdout != 'keeping'
+  register: _sources_secret
+  changed_when: _sources_secret.stdout != 'keeping'
 
-# The token the host will present is read back from this file *on the VM*, where the key
+# The tokens the host will present are read back from this file *on the VM*, where the key
 # is: prepare on a surviving VM keeps the file ("keeping" above) and the controller cannot
-# decrypt it. The git server play and Task 3's registry play both read the copy.
-- name: Copy each pointer's credential file to the VM
+# decrypt it. The git server play reads the copy; Task 3 copies registries.sops.yaml the
+# same way.
+- name: Copy the host's sources file to the VM
   ansible.builtin.copy:
-    src: '{{ item.folder }}/source.sops.yaml'
-    dest: /tmp/pointer-{{ item.name }}.sops.yaml
+    src: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/sources.sops.yaml'
+    dest: /tmp/sources.sops.yaml
     mode: '0600'
-  loop: '{{ pointers | default([]) }}'
-  loop_control:
-    label: '{{ item.name }}'
+  when: pointers | default([]) | length > 0
 ```
 
 The `pointers` fact also needs the branch the seed pushes: add `'ref': (lookup('file', item.path) | from_yaml).ref` to the dict in "The pointers, resolved against the fixture tree".
 
-(c) In the "Seed a local git remote" play, in the archive step add the pointer credentials after the line that appends the host's secrets (the generated `source.sops.yaml` is gitignored, so `--exclude-vcs-ignores` dropped it, like the secrets):
-
-```
-        tar -C /repo -rf "$TAR" hosts/{{ inventory_hostname }}/secrets
-        (cd /repo && find hosts/{{ inventory_hostname }}/services hosts/shared/services -name source.sops.yaml -print0 \
-          | xargs -0 -r tar -C /repo -rf "$TAR")
-```
-
-In "Seed the repo and the bare remote from the extracted tree" force-add them after the secrets:
-
-```
-        for f in $(find hosts/{{ inventory_hostname }}/services hosts/shared/services -name source.sops.yaml 2> /dev/null); do
-          git -c user.name=t -c user.email=t@t add -f "$f"
-        done
-```
+(c) The "Seed a local git remote" play needs no change: `hosts/<host>/secrets/` is already appended to the archive and force-added to the seed, and the new file lives there.
 
 (d) A new play after it, "Seed the external repositories and let the git server accept their tokens":
 
@@ -1108,7 +1077,7 @@ In "Seed the repo and the bare remote from the extracted tree" force-add them af
         set -euo pipefail
         : > /etc/test-git-http/credentials
         {% for p in pointers | default([]) %}
-        SOPS_AGE_KEY_FILE=/etc/storagebaby/age.key sops --decrypt --extract '["git_token"]' /tmp/pointer-{{ p.name }}.sops.yaml >> /etc/test-git-http/credentials
+        SOPS_AGE_KEY_FILE=/etc/storagebaby/age.key sops --decrypt --extract '["{{ p.name }}"]["token"]' /tmp/sources.sops.yaml >> /etc/test-git-http/credentials
         echo >> /etc/test-git-http/credentials
         {% endfor %}
         chmod 0600 /etc/test-git-http/credentials
@@ -1326,25 +1295,62 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: `registries` — a private image for a pointer service
+### Task 3: `registries` — a private image from a registry the host offers
 
-Spec §2 (`registries`), §4 (`auth.json`), §5 images, §6 registry fixture.
+Spec §2 (`registries`, the host's offer and login), §4 (`auth.json`, the refusal), §5 images, §6 registry fixture.
 
 **Files:**
 
 - Create: `ansible/roles/service/tasks/registries.yml`
 - Modify: `ansible/roles/service/tasks/host.yml` (`svc_home`, include between the helpers and `Images`, the ordering comment)
+- Modify: `hosts/test-a/host.yml`, `hosts/test-ci/host.yml` (`registries: ['127.0.0.1:5000']`)
+- Modify: `tests/static/test_hosts.py` (`registries` optional key; every placed service's registries ⊆ the host's; a real host's offered registries have a login entry)
 - Modify: `tests/fixtures/sources/ext-echo/deploy/storagebaby/service.yml` and `quadlet/ext-echo.container.j2`
-- Modify: `tests/integration/molecule/test-ci/prepare.yml` (`registry_user`/`registry_token` in the pointer credential; the registry user, its Quadlet, htpasswd, insecure-registry drop-in, the pushed image)
+- Modify: `tests/integration/molecule/test-ci/prepare.yml` (the host's `registries.sops.yaml`; the registry user, its Quadlet, htpasswd, insecure-registry drop-in, the pushed image)
 - Modify: `tests/integration/molecule/test-ci/tests/test_external.py`
 - Modify: `ansible/roles/service/README.md` (a `## Registries` section — the reference is part of the feature, the rest of the docs are Task 5)
 
 **Interfaces:**
 
-- Consumes: `pointer_dir` from Task 2; `source.sops.yaml` keys `registry_user`, `registry_token`.
-- Produces: `/home/svc-<name>/.config/containers/auth.json` (0600, svc-owned) for a service with `registries`, removed for one without; `/etc/storagebaby/<name>.source.sops.yaml` (0600 root); role fact `svc_home`. On the VM: registry `127.0.0.1:5000` run by user `test-registry`, htpasswd user `test`, image `127.0.0.1:5000/ext-echo:latest`.
+- Consumes: `host.yml` key `registries` (list of registry hosts, optional, default `[]`) and `hosts/<host>/secrets/registries.sops.yaml` (`<registry>: { user, token }`).
+- Produces: `/home/svc-<name>/.config/containers/auth.json` (0600, svc-owned) for a service with `registries`, removed for one without; `/etc/storagebaby/set-registries.secrets.sops.yaml` (0600 root, the host's file copied); role facts `svc_home`, `service_registries`. On the VM: registry `127.0.0.1:5000` run by user `test-registry`, htpasswd user `test`, image `127.0.0.1:5000/ext-echo:latest`.
 
-- [ ] **Step 1: Failing verifier first**
+- [ ] **Step 1: Failing tests first — static and verifier**
+
+`tests/static/test_hosts.py`: add `"registries"` to `OPTIONAL` with the comment _"The registries this host can log into; `secrets/registries.sops.yaml` holds one login per entry. A service may only name a registry listed here."_ In `test_host_contract` add
+
+```python
+    registries = cfg.get("registries", [])
+    assert isinstance(registries, list) and registries == sorted(set(registries)), f"{host}: registries is a sorted list"
+```
+
+and two new tests:
+
+```python
+@pytest.mark.parametrize("host", host_names())
+def test_every_placed_service_names_only_registries_the_host_offers(host):
+    """The static half of the refusal: a service asks, the host offers or the converge fails.
+
+    Same shape as the cert_zones test above it, and for the same reason -- the role cannot
+    log a service into a registry the host holds no credential for, and a pull from a
+    private registry without one is "unauthorized" five minutes into a nightly converge.
+    """
+    offered = set(load_yaml(HOSTS / host / "host.yml").get("registries", []))
+    for p in (p for p in placements() if p.host == host):
+        missing = set(p.spec.get("registries", [])) - offered
+        assert not missing, f"{host}/{p.name}: names registries this host does not offer: {sorted(missing)}"
+
+
+# Test hosts generate theirs in prepare; a real host commits the file.
+@pytest.mark.parametrize("host", [h for h in host_names() if not h.startswith("test-")])
+def test_an_offered_registry_has_a_login(host):
+    offered = load_yaml(HOSTS / host / "host.yml").get("registries", [])
+    if not offered:
+        pytest.skip("this host offers no registry")
+    path = HOSTS / host / "secrets" / "registries.sops.yaml"
+    assert path.exists(), f"{host}: registries are offered but {path.name} is missing"
+    assert set(offered) <= set(load_yaml(path)) - {"sops"}, f"{host}: {path.name} lacks a login for an offered registry"
+```
 
 `tests/integration/molecule/test-ci/tests/test_external.py`, append:
 
@@ -1358,10 +1364,12 @@ AUTH_JSON = ".config/containers/auth.json"
 def test_a_service_with_registries_has_a_login_its_user_owns(host, owner, name, source):
     """`registries` becomes the service user's auth.json, 0600, written before the pull.
 
-    The path is the one podman falls back to for a user whose runtime dir holds no
-    auth.json -- and that it *is* read is what the pull of this very image proved: the role
-    fetched `127.0.0.1:5000/ext-echo:latest` as the service user, and the registry answers
-    nothing without the login.
+    The login is the host's (hosts/<host>/secrets/registries.sops.yaml, copied to the host
+    like a secret set); the service only named the registry. The path is the one podman
+    falls back to for a user whose runtime dir holds no auth.json -- and that it *is* read
+    is what the pull of this very image proved: the role fetched
+    `127.0.0.1:5000/ext-echo:latest` as the service user, and the registry answers nothing
+    without the login.
     """
     placed(host, owner)
     spec = load_spec(FIXTURE / name / source["path"] / "service.yml")
@@ -1373,7 +1381,7 @@ def test_a_service_with_registries_has_a_login_its_user_owns(host, owner, name, 
     assert auth.exists and auth.mode == 0o600 and auth.user == user and auth.group == user, auth.path
     for registry in spec["registries"]:
         assert f'"{registry}"' in auth.content_string, f"{registry} is not in {auth.path}"
-    credential = host.file(f"/etc/storagebaby/{name}.source.sops.yaml")
+    credential = host.file("/etc/storagebaby/set-registries.secrets.sops.yaml")
     assert credential.exists and credential.mode == 0o600 and credential.user == "root"
 
 
@@ -1411,7 +1419,7 @@ def test_an_in_tree_service_has_no_registry_login(host):
 # A registry login is a *pull prerequisite*, like the helpers above it: it is the one other
 # thing written before the pull, because the pull is what needs it. Nothing of the service
 # proper -- no volume, no config, no secret, no unit -- is touched until images.yml is
-# through. Only a pointer service declares `registries`; the credential is the pointer's.
+# through. The service names the registries; the login is the host's.
 - name: Registry login
   ansible.builtin.include_tasks: registries.yml
 ```
@@ -1421,12 +1429,15 @@ and change the first line of the `# Images, before anything of this service is w
 `ansible/roles/service/tasks/registries.yml`:
 
 ```yaml
-# `registries`: the registry hosts this service pulls private images from. The service user
+# `registries`: the registry hosts this service's images are private on. The service names
+# them; the host offers them (`registries` in host.yml) and holds the login
+# (hosts/<host>/secrets/registries.sops.yaml, `<registry>: { user, token }`) -- the same
+# split as cert_zones and the ACME credentials, docs/ownership.md § 4.2. The service user
 # gets an auth.json at the path rootless podman reads when its runtime directory holds
-# none -- ~/.config/containers/auth.json -- from the `registry_user`/`registry_token` of the
-# pointer's source.sops.yaml. Written before the pull (host.yml orders it so), and read by
-# the user's own podman-auto-update.timer too; the integration suite's private-registry
-# fixture is what proves both.
+# none, ~/.config/containers/auth.json, with one entry per registry it named. Written
+# before the pull (host.yml orders it so), and read by the user's own
+# podman-auto-update.timer too; the integration suite's private-registry fixture is what
+# proves both.
 #
 # A service that declares none gets the file removed, so a `registries` line that goes away
 # takes the login with it.
@@ -1446,56 +1457,67 @@ and change the first line of the `# Images, before anything of this service is w
 - name: Registry login for a service that declares registries
   when: service_registries | length > 0
   block:
-    - name: Only an external service can declare registries
+    # The refusal. The host's list is the allowlist; a registry outside it is a service
+    # asking for something this host cannot provide, said out loud rather than discovered
+    # as "unauthorized" at the pull.
+    - name: The host offers every registry this service names
       ansible.builtin.assert:
-        that:
-          - pointer_dir != ''
-          - (pointer_dir ~ '/source.sops.yaml') is file
+        that: service_registries | difference(registries | default([])) | length == 0
         fail_msg: >-
-          {{ service.name }} declares registries, but the credential for a registry login is
-          the pointer's source.sops.yaml -- and {{ 'this is an in-tree service' if pointer_dir == '' else pointer_dir ~ ' has no source.sops.yaml' }}.
+          {{ service.name }} names registries {{ inventory_hostname }} does not offer:
+          {{ service_registries | difference(registries | default([])) | join(', ') }}.
+          Add them to `registries` in hosts/{{ inventory_hostname }}/host.yml with a login in
+          hosts/{{ inventory_hostname }}/secrets/registries.sops.yaml, or pull from one it offers.
         quiet: true
 
-    - name: Copy the pointer's credential file to the host
+    # The same path and name shape the host-secret-set tasks use (`set-<name>`), because
+    # that is what this file is: a per-host set the operator maintains.
+    - name: Copy the host's registry logins to the host
       ansible.builtin.copy:
-        src: '{{ pointer_dir }}/source.sops.yaml'
-        dest: '/etc/storagebaby/{{ service.name }}.source.sops.yaml'
+        src: '{{ storagebaby_repo_root }}/hosts/{{ inventory_hostname }}/secrets/registries.sops.yaml'
+        dest: /etc/storagebaby/set-registries.secrets.sops.yaml
         owner: root
         group: root
         mode: '0600'
 
-    # A pre-flight of a service that is gaining its first `registries` line finds no copy on
-    # the host yet (the copy above is skipped under --check); the decrypt is skipped with it
-    # and the login is only described. On a converged service the file is there.
-    - name: Look for the credential file on the host
+    # A pre-flight of a host that is gaining its first `registries` finds no copy on the
+    # host yet (the copy above is skipped under --check); the decrypt is skipped with it
+    # and the login is only described. On a converged host the file is there.
+    - name: Look for the logins on the host
       ansible.builtin.stat:
-        path: '/etc/storagebaby/{{ service.name }}.source.sops.yaml'
-      register: _source_file
+        path: /etc/storagebaby/set-registries.secrets.sops.yaml
+      register: _registries_file
 
-    - name: Decrypt the pointer's credential on the host
-      ansible.builtin.command: sops --decrypt --output-type json /etc/storagebaby/{{ service.name }}.source.sops.yaml
+    - name: Decrypt the registry logins on the host
+      ansible.builtin.command: sops --decrypt --output-type json /etc/storagebaby/set-registries.secrets.sops.yaml
       environment:
         SOPS_AGE_KEY_FILE: /etc/storagebaby/age.key
-      register: _source_decrypted
+      register: _registries_decrypted
       check_mode: false
       changed_when: false
       failed_when: false
       no_log: true
-      when: _source_file.stat.exists
+      when: _registries_file.stat.exists
 
-    - name: The host could decrypt it
+    - name: The host could decrypt them
       ansible.builtin.assert:
-        that: _source_decrypted.rc == 0
-        fail_msg: 'sops failed to decrypt the registry credential of {{ service.name }}: {{ _source_decrypted.stderr }}'
+        that: _registries_decrypted.rc == 0
+        fail_msg: 'sops failed to decrypt the registry logins on {{ inventory_hostname }}: {{ _registries_decrypted.stderr }}'
         quiet: true
-      when: _source_file.stat.exists
+      when: _registries_file.stat.exists
 
-    - name: The credential carries a user and a token
+    # Key names are not secret; the values never reach a message.
+    - name: Every registry this service names has a user and a token
       ansible.builtin.assert:
-        that: "['registry_user', 'registry_token'] | difference(_source_decrypted.stdout | from_json) | length == 0"
-        fail_msg: '{{ service.name }} declares registries but source.sops.yaml has no registry_user and registry_token'
+        that:
+          - item in _logins
+          - "'user' in _logins[item] and 'token' in _logins[item]"
+        fail_msg: 'registries.sops.yaml on {{ inventory_hostname }} has no user and token for {{ item }}, which {{ service.name }} names'
         quiet: true
-      when: _source_file.stat.exists
+      vars:
+        _logins: '{{ _registries_decrypted.stdout | from_json }}'
+      loop: '{{ service_registries }}'
+      when: _registries_file.stat.exists
 
     - name: The service user's config directories
       ansible.builtin.file:
@@ -1506,17 +1528,16 @@ and change the first line of the `# Images, before anything of this service is w
         mode: '0700'
       loop: [.config, .config/containers]
 
-    # The file podman reads: {"auths": {"<registry>": {"auth": "<base64 user:token>"}}}. Built
-    # with a loop, one entry per declared registry, all from the one credential pair.
-    - name: One login entry per declared registry
+    # The file podman reads: {"auths": {"<registry>": {"auth": "<base64 user:token>"}}}, one
+    # entry per registry the service named, each from that registry's own login.
+    - name: One login entry per named registry
       ansible.builtin.set_fact:
-        _auths: "{{ _auths | combine({item: {'auth': _auth}}) }}"
+        _auths: "{{ _auths | combine({item: {'auth': (_logins[item].user ~ ':' ~ _logins[item].token) | b64encode}}) }}"
       vars:
-        _creds: '{{ _source_decrypted.stdout | from_json }}'
-        _auth: "{{ (_creds.registry_user ~ ':' ~ _creds.registry_token) | b64encode }}"
+        _logins: '{{ _registries_decrypted.stdout | from_json }}'
       loop: '{{ service_registries }}'
       no_log: true
-      when: _source_file.stat.exists
+      when: _registries_file.stat.exists
 
     - name: Write the registry login
       ansible.builtin.copy:
@@ -1526,13 +1547,15 @@ and change the first line of the `# Images, before anything of this service is w
         group: '{{ svc_user }}'
         mode: '0600'
       no_log: true
-      when: _source_file.stat.exists
+      when: _registries_file.stat.exists
 
     - name: What a pre-flight cannot write yet
       ansible.builtin.debug:
-        msg: '{{ service.name }}: the registry login will be written on the converge, once its credential file is on the host.'
-      when: not _source_file.stat.exists
+        msg: '{{ service.name }}: the registry login will be written on the converge, once the logins file is on the host.'
+      when: not _registries_file.stat.exists
 ```
+
+`registries` here is the host variable from `host.yml` (loaded by `include_vars` in the playbook), which is why the role's own fact is named `service_registries`.
 
 **If the first integration run fails at the pull with an unauthorized error**, do not debug podman's lookup: the fallback is to name the file explicitly. Add `Environment=REGISTRY_AUTH_FILE=%h/.config/containers/auth.json` through a Quadlet drop-in the role renders for a service with `service_registries` (a `10-storagebaby-registry.conf` under `<unit>.d/`, beside the host-gateway drop-in and listed in `test_render.py` the same way), and export `REGISTRY_AUTH_FILE=/home/<user>/.config/containers/auth.json` in `podman-as` when that file exists. The expectation is that neither is needed: `runuser -u` resets `HOME` to the target user's, and containers/image falls back to `$HOME/.config/containers/auth.json` when the runtime directory holds none. Record which it was in the spec's Amendments.
 
@@ -1542,7 +1565,8 @@ and change the first line of the `# Images, before anything of this service is w
 
 ```yaml
 # The image is private: it lives in the throwaway registry prepare runs on the VM, behind
-# an htpasswd login. The host logs the service user in from the pointer's source.sops.yaml.
+# an htpasswd login. The test hosts offer that registry in their host.yml and hold the
+# login in their generated secrets/registries.sops.yaml; this line only names it.
 registries: ['127.0.0.1:5000']
 ```
 
@@ -1556,17 +1580,57 @@ Image=127.0.0.1:5000/ext-echo:latest
 AutoUpdate=registry
 ```
 
-- [ ] **Step 4: The registry on the VM**
+- [ ] **Step 4: The host offers the registry; the registry on the VM**
 
-`prepare.yml`, "Write and encrypt the pointer's credential file": the generated file gets three keys —
+`hosts/test-a/host.yml` and `hosts/test-ci/host.yml`, after `service_config`:
 
+```yaml
+# The registries this host can log into. The one entry is the throwaway htpasswd registry
+# `prepare.yml` runs on the VM for the `ext-echo` fixture; the login is generated into
+# secrets/registries.sops.yaml beside the other test secrets. A service names a registry
+# from this list, and only from this list -- `test_hosts.py` and the role both hold that.
+registries: ['127.0.0.1:5000']
 ```
-        {
-          printf 'git_token: "%s"\n' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-          printf 'registry_user: "test"\n'
-          printf 'registry_token: "%s"\n' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-        } > "$TMP"
+
+`prepare.yml`, in the secrets play after "Copy the host's sources file to the VM": the host's registry logins, one nested document from the host's own `registries` list, kept when ours, copied to the VM like the sources file:
+
+```yaml
+# The host's registry logins: `<registry>: { user, token }` for every registry this
+# host.yml offers. `test` as the user, because the htpasswd below is written for that
+# name; the token is a throwaway like every other.
+- name: Write and encrypt the host's registry logins
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if [ -f "$OUT" ] && grep -q '{{ storagebaby_age_pub }}' "$OUT"; then
+      echo keeping
+      exit 0
+    fi
+    rm -f "$TMP"
+    {% for registry in registries | default([]) %}
+    printf '%s:\n  user: "test"\n  token: "%s"\n' '{{ registry }}' "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$TMP"
+    {% endfor %}
+    sops --encrypt --age {{ storagebaby_age_pub }} --input-type yaml --output-type yaml "$TMP" > "$OUT"
+    rm -f "$TMP"
+  args:
+    executable: /bin/bash
+    chdir: /tmp
+  environment:
+    TMP: '/tmp/{{ inventory_hostname }}-registries.yaml'
+    OUT: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/registries.sops.yaml'
+  when: registries | default([]) | length > 0
+  delegate_to: localhost
+  register: _registries_secret
+  changed_when: _registries_secret.stdout != 'keeping'
+
+- name: Copy the host's registry logins to the VM
+  ansible.builtin.copy:
+    src: '{{ _hosts_root }}/{{ inventory_hostname }}/secrets/registries.sops.yaml'
+    dest: /tmp/registries.sops.yaml
+    mode: '0600'
+  when: registries | default([]) | length > 0
 ```
+
+(The secrets play loads no host.yml today; add an `include_vars` of `{{ _hosts_root }}/{{ inventory_hostname }}/host.yml` at its top so `registries` is defined there, or read it with `(lookup('file', ...) | from_yaml).registries | default([])` in both tasks.)
 
 In the "Partition" play's harness packages add `python-bcrypt` (`registry:2` accepts bcrypt htpasswd entries only). Then a new play before "Seed every pointed external repository":
 
@@ -1574,8 +1638,8 @@ In the "Partition" play's harness packages add `python-bcrypt` (`registry:2` acc
 # A private registry on the loopback, for the one fixture that pulls privately. Rootless
 # and under its own throwaway user, because a root container on the VM would fail
 # `test_no_root_containers` -- and because that is how everything else here runs. The
-# login is the pointer's `registry_user`/`registry_token`, read back on the VM like the git
-# token.
+# login is the host's entry for 127.0.0.1:5000 in registries.sops.yaml, read back on the
+# VM like the git tokens.
 - name: Run a throwaway private registry
   hosts: all
   gather_facts: false
@@ -1620,11 +1684,11 @@ In the "Partition" play's harness packages add `python-bcrypt` (`registry:2` acc
       loop:
         [/srv/test-registry, /srv/test-registry/auth, /srv/test-registry/data]
 
-    - name: The htpasswd entry, from the pointer's registry token
+    - name: The htpasswd entry, from the host's login for this registry
       ansible.builtin.shell: |
         set -euo pipefail
-        token=$(SOPS_AGE_KEY_FILE=/etc/storagebaby/age.key sops --decrypt --extract '["registry_token"]' /tmp/pointer-ext-echo.sops.yaml)
-        user=$(SOPS_AGE_KEY_FILE=/etc/storagebaby/age.key sops --decrypt --extract '["registry_user"]' /tmp/pointer-ext-echo.sops.yaml)
+        token=$(SOPS_AGE_KEY_FILE=/etc/storagebaby/age.key sops --decrypt --extract '["127.0.0.1:5000"]["token"]' /tmp/registries.sops.yaml)
+        user=$(SOPS_AGE_KEY_FILE=/etc/storagebaby/age.key sops --decrypt --extract '["127.0.0.1:5000"]["user"]' /tmp/registries.sops.yaml)
         python3 - "$user" "$token" > /srv/test-registry/auth/htpasswd << 'PY'
         import sys
         import bcrypt
@@ -1711,7 +1775,7 @@ In the "Partition" play's harness packages add `python-bcrypt` (`registry:2` acc
       no_log: true
 ```
 
-This play reads `/tmp/pointer-ext-echo.sops.yaml`, which the secrets play copied to the VM in Task 2, so it goes after that play and before the external seed play. The name `ext-echo` is hard-coded in the htpasswd task on purpose: one private-pulling fixture exists; a second one would get a second user line. The harness Quadlet carries no `HealthCmd`: it is not a service of the platform and no convention test reads it; "The registry runs" polls `/v2/` for the 401 that says it is up.
+This play reads `/tmp/registries.sops.yaml`, which the secrets play copied to the VM, so it goes after that play and before the external seed play. The registry `127.0.0.1:5000` is hard-coded in the htpasswd task on purpose: one throwaway registry exists; a second one would be a second play. The harness Quadlet carries no `HealthCmd`: it is not a service of the platform and no convention test reads it; "The registry runs" polls `/v2/` for the 401 that says it is up.
 
 - [ ] **Step 5: README of the role**
 
@@ -1720,14 +1784,19 @@ This play reads `/tmp/pointer-ext-echo.sops.yaml`, which the secrets play copied
 ```markdown
 ## Registries
 
-`registries: [ghcr.io]` in `service.yml` logs the service user into those registries before
-any image is pulled: the role writes `~svc-<name>/.config/containers/auth.json` (0600) from
-the `registry_user` and `registry_token` of the pointer's `source.sops.yaml`. Only an
-external service can declare it -- the credential is the _pointer's_, and an in-tree service
-has no pointer. The file is removed again when the key goes. Rootless podman reads that path
-when its runtime directory holds no `auth.json`, for `podman pull` and for the user's own
-`podman-auto-update.timer` alike; the integration suite's `ext-echo` fixture pulls from an
-htpasswd registry through it and runs `podman auto-update --dry-run` against it.
+`registries: [ghcr.io]` in `service.yml` names the registries the service's images are
+private on. The host offers registries in `host.yml` (`registries: [ghcr.io]`) and holds one
+login per offered registry in `hosts/<host>/secrets/registries.sops.yaml`
+(`ghcr.io: { user, token }`) -- the same split as `cert_zones` and the ACME credentials,
+`docs/ownership.md` § 4.2. A service naming a registry its host does not offer fails the
+converge with both names in the message, and `tests/static/test_hosts.py` catches it first.
+Before any image is pulled the role writes `~svc-<name>/.config/containers/auth.json`
+(0600, the service user's) with one entry per named registry, and removes the file again
+when the key goes. Rootless podman reads that path when its runtime directory holds no
+`auth.json`, for `podman pull` and for the user's own `podman-auto-update.timer` alike; the
+integration suite's `ext-echo` fixture pulls from an htpasswd registry through it and runs
+`podman auto-update --dry-run` against it. Any service may declare `registries`; the
+fixture is external only because that is where private images come from first.
 ```
 
 - [ ] **Step 6: Static, then integration**
@@ -1738,8 +1807,8 @@ Run (coordinated): `MOLECULE_HOST=test-ci mise run test-integration` — the thr
 - [ ] **Step 7: Commit**
 
 ```bash
-git add ansible/roles/service tests/fixtures tests/integration
-git commit -m "Log a pointer service's user into the registries it declares, from the pointer's credential
+git add ansible/roles/service tests/fixtures tests/integration tests/static/test_hosts.py hosts/test-a/host.yml hosts/test-ci/host.yml
+git commit -m "Log a service's user into the registries it names, from the logins its host holds
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1748,7 +1817,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ### Task 4: The deploy path of an external repository, measured
 
-Spec §6 verify cases: a push to the external repository, a push that renders nothing new, a revoked token, a removed pointer.
+Spec §6 verify cases: a push to the external repository, a push that renders nothing new, a revoked token, a registry the host does not offer, a removed pointer.
 
 **Files:**
 
@@ -1756,7 +1825,7 @@ Spec §6 verify cases: a push to the external repository, a push that renders no
 
 **Interfaces:**
 
-- Consumes: `/srv/ext-src/<name>` (working copy), `/srv/git/<name>.git` (remote), `/etc/test-git-http/credentials`, `STATE`, `NOOP_LINE`, `DEPLOY`, `JOURNAL`, `unit_marks`, `assert_the_role_did_not_restart`, `other_placed_service` from Task 1/2.
+- Consumes: `/srv/ext-src/<name>` (working copy), `/srv/git/<name>.git` (remote), `/etc/test-git-http/credentials`, `STATE`, `NOOP_LINE`, `DEPLOY`, `JOURNAL`, `CHECK`, `PULLED`, `unit_marks`, `assert_the_role_did_not_restart`, `other_placed_service`, `single_container_service` from Task 1/2 and the existing file.
 
 - [ ] **Step 1: The cases**
 
@@ -1875,6 +1944,31 @@ def test_a_revoked_token_fails_the_tick_and_leaves_the_service_up(host):
         assert host.run("mv -f /etc/test-git-http/credentials.harness-backup /etc/test-git-http/credentials").rc == 0
     r = host.run(DEPLOY)
     assert r.rc == 0, host.run(JOURNAL).stdout
+
+
+@pytest.mark.order(-1)
+def test_a_registry_the_host_does_not_offer_is_refused(host):
+    """A service naming a registry outside the host's `registries` list fails the converge, by name.
+
+    Made in the pulled checkout and read back with `--check`, like the image-tag case in
+    `test_the_whole_playbook_runs_clean_in_check_mode`: nothing is pushed, nothing converges,
+    and `git checkout` takes it back. The assert in `registries.yml` runs under check mode
+    (asserts always do), and it runs before any copy or decrypt, so this is the message an
+    operator would read on the real host.
+    """
+    found = single_container_service(host)
+    if not found:
+        pytest.skip("no single-container service is placed on this host")
+    name, _, _, _, template = found
+    spec = str(Path(template).parent.parent.relative_to("/repo") / "service.yml")
+    assert host.run(f"cd {PULLED} && printf 'registries: [nowhere.example]\\n' >> {spec}").rc == 0
+    try:
+        r = host.run(CHECK)
+        assert r.rc != 0, f"--check accepted a registry the host does not offer\n{r.stdout[-4000:]}"
+        assert "nowhere.example" in r.stdout and name in r.stdout, r.stdout[-4000:]
+    finally:
+        assert host.run(f"cd {PULLED} && git checkout -- .").rc == 0
+    assert "nowhere.example" not in host.file(f"{PULLED}/{spec}").content_string, f"{spec} was not put back"
 ```
 
 And at the very end of the file:
@@ -1965,7 +2059,8 @@ this repository holds only the pointer:
       repo: https://github.com/<you>/<repository>
       ref: main
       path: deploy/storagebaby
-    hosts/StorageBaby/services/<name>/source.sops.yaml     # git_token; registry_user + registry_token for a private image
+    hosts/StorageBaby/secrets/sources.sops.yaml          # <name>: { token }   -- the host's git token for that repository
+    hosts/StorageBaby/secrets/registries.sops.yaml       # ghcr.io: { user, token }, for every registry host.yml offers
 
 Placement is still the folder. The deploy tick (`/usr/local/sbin/storagebaby-deploy`)
 fetches every pointed repository into `/var/lib/storagebaby/sources/<name>` beside the
@@ -1980,15 +2075,18 @@ host's age key** (the `&storagebaby` recipient in `.sops.yaml` here), so the ext
 repository needs a `.sops.yaml` of its own listing both. `docs/external-service.md` is the
 page to read from that repository's side.
 
-Access: one fine-grained GitHub token per repository (Contents: read-only, only that
-repository), pasted into `source.sops.yaml` as `git_token` with `mise run sops`. The host
-presents it over HTTPS through `GIT_ASKPASS`; it is never written to disk in the clear. A
-public repository needs no `source.sops.yaml`. A private image needs `registries: [ghcr.io]`
-in the external `service.yml` and `registry_user` + `registry_token` in `source.sops.yaml`;
-the role writes the service user's `auth.json` from it before the pull. Check when you
-create it whether a fine-grained token can read packages on GitHub as it is then; if not,
-`registry_token` is a classic token with `read:packages`, which is account-wide — the only
-place where the per-repository isolation does not hold.
+Credentials are the host's, like storage classes and certifiable domains
+(`docs/ownership.md`). One fine-grained GitHub token per repository (Contents: read-only,
+only that repository) goes into `hosts/<host>/secrets/sources.sops.yaml` under the pointer's
+name, with `mise run sops`. The host presents it over HTTPS through `GIT_ASKPASS`; it is
+never written to disk in the clear. A public repository needs no entry. A private image
+needs `registries: [ghcr.io]` in the external `service.yml`, the same registry in the host's
+`registries` list in `host.yml`, and a login for it in
+`hosts/<host>/secrets/registries.sops.yaml`; the role writes the service user's `auth.json`
+from that before the pull, and refuses a service that names a registry the host does not
+offer. Check when you create the registry token whether a fine-grained token can read
+packages on GitHub as it is then; if not, it is a classic token with `read:packages`, which
+is account-wide — the one place where the per-repository isolation does not hold.
 
 Unplacing is deleting the pointer folder: the next tick removes the fetched checkout. The
 service's units stay, as for any unplaced service.
@@ -2032,10 +2130,11 @@ with its own key; the operator edits with theirs.
 ## 3. The image
 
 Public image: nothing to do. Private image on ghcr.io: add `registries: [ghcr.io]` to
-`service.yml`; the token that reads it goes into the pointer's `source.sops.yaml` on the
-host side (`registry_user`, `registry_token`). A floating tag with `AutoUpdate=registry`
-is picked up by the service user's `podman-auto-update.timer`; a pinned tag changes when
-you push a commit that changes it.
+`service.yml`. The host has to offer that registry (`registries` in its `host.yml`) and hold
+a login for it (`hosts/<host>/secrets/registries.sops.yaml`); a service naming a registry
+the host does not offer is refused at converge time. A floating tag with
+`AutoUpdate=registry` is picked up by the service user's `podman-auto-update.timer`; a
+pinned tag changes when you push a commit that changes it.
 
 ## 4. The pointer (StorageBaby repository)
 
@@ -2045,9 +2144,9 @@ you push a commit that changes it.
       path: deploy/storagebaby
 
 For a private repository: a fine-grained personal access token (resource owner you, only
-this repository, Contents: read-only), stored with
-`mise run sops hosts/StorageBaby/services/<name>/source.sops.yaml` as `git_token`. Commit,
-let CI promote `stable`; the next tick fetches and converges.
+this repository, Contents: read-only), stored under `<name>: { token }` in
+`hosts/StorageBaby/secrets/sources.sops.yaml` (`mise run sops` on that file). Commit, let
+CI promote `stable`; the next tick fetches and converges.
 
 ## 5. Looking at it
 
@@ -2061,13 +2160,14 @@ fails the unit and names the repository; the service keeps running on what it ha
 `CLAUDE.md`, "Managing services" list: after the `hosts/shared/services/<name>/` bullet add
 
 ```markdown
-- `hosts/<host>/services/<name>/source.yml` — a pointer: the service's definition lives in its own repository (`repo`, `ref`, `path`, all required). The deploy script fetches it into `/var/lib/storagebaby/sources/<name>` and the playbook resolves the pointer to `<path>/service.yml` there; `source.sops.yaml` beside the pointer carries `git_token` (and `registry_user`/`registry_token` for a private image). This repository holds nothing else of such a service. `docs/external-service.md` is the other side; `tests/fixtures/sources/ext-echo` the model repository.
+- `hosts/<host>/services/<name>/source.yml` — a pointer: the service's definition lives in its own repository (`repo`, `ref`, `path`, all required). The deploy script fetches it into `/var/lib/storagebaby/sources/<name>` and the playbook resolves the pointer to `<path>/service.yml` there. The folder holds nothing else; the git token is the host's, `<name>: { token }` in `hosts/<host>/secrets/sources.sops.yaml`. `docs/external-service.md` is the other side; `tests/fixtures/sources/ext-echo` the model repository.
+- `hosts/<host>/secrets/registries.sops.yaml` — the host's registry logins, `<registry>: { user, token }`, one per registry its `host.yml` offers under `registries`. A service names a registry it needs; the host offers it or the converge refuses.
 ```
 
 In the `service.yml` key list add
 
 ```markdown
-- **`registries`** — `[ghcr.io]`: registries the service user is logged into before any pull, from the pointer's `source.sops.yaml`. Pointer services only; `test_sources.py` refuses it elsewhere.
+- **`registries`** — `[ghcr.io]`: the registries the service's images are private on. The service user is logged into each before any pull, from the host's `registries.sops.yaml`; a registry the host's `registries` list does not offer is refused, statically by `test_hosts.py` and on the host by the role.
 ```
 
 In the fixture sentence ("The exceptions are the **test-only fixtures** — `tcp-echo`, ..., and `build-echo`, ...") add `ext-echo`, a pointer under both test hosts whose repository is `tests/fixtures/sources/ext-echo`, served to the VM by a basic-auth git server and pulling from a private registry, both run by `prepare.yml`.
@@ -2080,7 +2180,7 @@ Apply the edits listed under **Files** for `docs/architecture.md` and `docs/owne
 
 - [ ] **Step 5: Spec status and amendments**
 
-Set the spec's `Status:` line to `implemented 2026-10-0X` and add `## 11. Amendments` listing every deviation Tasks 1–4 made (the `json_query` fallback if taken, the `dict_kv` shape chosen, anything the VM taught). If nothing deviated, write "None."
+Set the spec's `Status:` line to `implemented 2026-10-XX` and add `## 11. Amendments` listing every deviation Tasks 1–4 made (the `sources_root` group var in `molecule.yml` rather than `converge.yml`, the `REGISTRY_AUTH_FILE` fallback if it was needed, anything the VM taught). If nothing else deviated, say so.
 
 - [ ] **Step 6: Format check and commit**
 

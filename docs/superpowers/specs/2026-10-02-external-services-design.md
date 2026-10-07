@@ -28,6 +28,12 @@ Decisions already made (JLK, 2026-10-01 and 2026-10-02):
 - One service per external repository. A repository that needs several is a later change.
 - The external repository uses the existing contract verbatim, in a subfolder.
 - Private images are in scope, with their test.
+- (2026-10-07, after `docs/ownership.md` landed) **The host owns both credentials**, the
+  way it owns storage classes and certifiable domains: the git tokens and the registry
+  logins live in the host's own secrets directory, `host.yml` declares which registries
+  the host offers, and a service only declares which registries it needs. A service asking
+  for a registry its host does not offer is refused, loudly. The pointer folder holds the
+  pointer and nothing else.
 
 Non-goals: tags or commit SHAs as refs (branches only), several services from one
 repository, a webhook or push trigger, a removal flow beyond dropping the fetched
@@ -40,7 +46,13 @@ of this change.
 ```
 hosts/<host>/services/<name>/
   source.yml          repo, ref, path -- the pointer; nothing else of the service lives here
-  source.sops.yaml    git_token, and for a private image registry_user + registry_token
+
+hosts/<host>/host.yml
+  registries: [ghcr.io]          the registries this host can log into (optional, default none)
+
+hosts/<host>/secrets/
+  sources.sops.yaml              <name>: { token }        one git token per pointed service
+  registries.sops.yaml           <registry>: { user, token }   one login per offered registry
 
 <the external repository>/<path>/
   service.yml         the contract, unchanged
@@ -64,11 +76,31 @@ ref: main # the branch the host tracks
 path: deploy/storagebaby # folder in that repository holding the contract
 ```
 
-`source.sops.yaml` is a flat sops file like every other: `git_token` for a private
-repository, `registry_user` and `registry_token` when the service declares `registries`
-(section 5). A public repository with public images needs no `source.sops.yaml` at all.
-The file sits under `hosts/<host>/` and is therefore already covered by the `.sops.yaml`
-path rules and by the recipients test; nothing in `.sops.yaml` changes.
+The credentials are the host's (`docs/ownership.md` § 2: the administrator owns what a
+host offers; § 4.2 is the same split for certificates). Two files under
+`hosts/<host>/secrets/`, both nested sops documents -- sops encrypts the leaf values and
+keeps the structure, and the role already decrypts to JSON:
+
+```yaml
+# sources.sops.yaml -- keyed by the pointer folder's name; one repository per service, so
+# one token per service, and a leaked token still opens one repository only.
+yuzukam:
+  token: github_pat_...
+
+# registries.sops.yaml -- keyed by the registry host, exactly as a service names it.
+ghcr.io:
+  user: janlucaklees
+  token: ghp_...
+```
+
+`host.yml` declares the offer: `registries: [ghcr.io]`, optional, default none. Every
+registry it lists has an entry in `registries.sops.yaml` (key names are plaintext in a
+sops file, so a static test holds that), and a service may only name a registry its host
+offers. A public repository needs no entry in `sources.sops.yaml`; a host with no private
+images needs neither `registries` nor the file. Both files sit under `hosts/<host>/` and
+are covered by the existing `.sops.yaml` path rules and recipients test; nothing in
+`.sops.yaml` changes. A pointer under `hosts/shared/services/` reads its token from each
+host's own `sources.sops.yaml`.
 
 The external repository's `secrets.sops.yaml` is decrypted by the host with its own age
 key, so the external repository's `.sops.yaml` lists the operator key and the placing
@@ -76,10 +108,11 @@ host's key. Both are public keys; the host key is the `&storagebaby` anchor in t
 repository's `.sops.yaml`. A test host overrides it the way it overrides every service's
 secrets today, `hosts/<host>/secrets/<name>.sops.yaml`, generated in prepare.
 
-One new optional `service.yml` key, `registries`: a list of registry hosts the service
-user logs into with `registry_user`/`registry_token` from the pointer's `source.sops.yaml`
-before any image is pulled. It is accepted only on a pointer service -- an in-tree service
-has no `source.sops.yaml` to read the credential from, and nothing in tree needs one.
+One new optional `service.yml` key, `registries`: the registry hosts the service's images
+are private on. The role logs the service user into each of them from the host's
+`registries.sops.yaml` before any image is pulled. Any service may declare it, external
+or in-tree; what it may not do is name a registry the host does not offer -- that fails
+the converge with a message, the way a route under a zone outside `cert_zones` is refused.
 
 ## 3. The deploy script
 
@@ -97,11 +130,12 @@ generalised, and the script is small enough to own them outright. Each tick:
    `/var/lib/storagebaby/sources/<name>` and check out `origin/<ref>`, detached. The
    checkout is always a hard reset to the remote branch: the host never has local changes
    there, and a force-push upstream must not wedge the tick.
-3. Authenticate over HTTPS with `git_token`, read with `sops --decrypt --extract` and the
-   host's age key. The token reaches git through `GIT_ASKPASS` with
-   `credential.helper` disabled, so it is never written into a remote URL or `.git/config`
-   and never lands on disk in the clear. A public repository has no token and clones
-   anonymously.
+3. Authenticate over HTTPS with the pointer's token from
+   `hosts/<hostname>/secrets/sources.sops.yaml`, decrypted once per tick with the host's
+   age key. The token reaches git through `GIT_ASKPASS` with `credential.helper` disabled,
+   so it is never written into a remote URL or `.git/config` and never lands on disk in
+   the clear. A pointer with no entry clones anonymously, which is what a public
+   repository needs.
 4. Delete `/var/lib/storagebaby/sources/<name>` for every `<name>` that no longer has a
    pointer, so the sources directory mirrors the placement.
 5. Compare the HEAD of the repository and of every source with
@@ -172,16 +206,19 @@ private repository on storagebaby renders nothing in the static suite while the 
 which is present, renders like any service.
 
 The `registries` key is realised in the role's `host.yml`, between the helper install and
-the `Images` include: it writes `~/.config/containers/auth.json` for the service user,
-0600, from the pointer's `registry_user`/`registry_token`, and removes it when the key
-goes. The file is a _pull prerequisite_, exactly like `podman-as` -- it is the one thing
-beside the helpers that may be written before the pull, and the ordering comment in
-`host.yml` says so. The service user's `podman pull` from the role and its own
-`podman-auto-update.timer` both read that path. That they do is what the private-registry
-fixture proves (section 6), not something the spec assumes. Reading the credential reuses
-the existing decrypt tasks: `source.sops.yaml` is copied to
-`/etc/storagebaby/<name>.source.sops.yaml` and decrypted on the host like the service's
-own file.
+the `Images` include. First the refusal: every registry the service names has to be in
+the host's `registries` list, or the converge fails naming the service, the registry and
+the host. Then the login: the role copies the host's `registries.sops.yaml` to
+`/etc/storagebaby/set-registries.secrets.sops.yaml` (the path the host-secret-set tasks
+already use), decrypts it on the host, and writes `~/.config/containers/auth.json` for
+the service user, 0600, with one entry per registry the service named; a service that
+names none gets the file removed. The file is a _pull prerequisite_, exactly like
+`podman-as` -- it is the one thing beside the helpers that may be written before the
+pull, and the ordering comment in `host.yml` says so. The service user's `podman pull`
+from the role and its own `podman-auto-update.timer` both read that path. That they do is
+what the private-registry fixture proves (section 6), not something the spec assumes.
+The role never learns which pointer a service came from: a service is a folder, wherever
+the folder is.
 
 Everything else in the role is untouched: users, volumes, binds, secrets, quadlets,
 drop-ins, routes, timers, hooks, backup sidecar, restarts. An external service gets the
@@ -191,20 +228,22 @@ full contract.
 
 **Repository.** A fine-grained personal access token of JLK's account per external
 repository: resource owner JLK, _only select repositories_ with the one repository,
-permission _Contents: read-only_ (metadata read comes with it). It goes into
-`hosts/<host>/services/<name>/source.sops.yaml` as `git_token` through `mise run sops`.
+permission _Contents: read-only_ (metadata read comes with it). It goes into the host's
+`hosts/<host>/secrets/sources.sops.yaml` under the pointer's name, through `mise run sops`.
 Rotation is a sops edit and a commit; the token's expiry is the operator's choice when
 creating it, and an expired token fails the deploy tick visibly (section 3) rather than
 silently freezing the service.
 
-**Images.** For a private package on ghcr.io the service user needs a registry login.
-`registry_user` is the GitHub account name and `registry_token` a token with read access
-to the package. Whether a fine-grained token can read packages is verified during
-implementation, against GitHub as it is then; if it cannot, `registry_token` is a classic
-token with `read:packages`, which is account-wide, and the spec's shape does not change --
-only which kind of token the operator pastes. A package pushed by the repository's own
-Actions inherits the repository's visibility and permissions, so a repository the account
-owns needs no extra package grant.
+**Images.** For a private package on ghcr.io the host offers `ghcr.io` in `host.yml` and
+holds the login in `hosts/<host>/secrets/registries.sops.yaml`: `user` is the GitHub
+account name and `token` a token with read access to the packages the host's services
+pull. One login per registry per host, not per service -- the same reasoning as
+`docs/ownership.md` § 4.2 gives for ACME credentials. Whether a fine-grained token can
+read packages is verified during implementation, against GitHub as it is then; if it
+cannot, `token` is a classic token with `read:packages`, and the spec's shape does not
+change -- only which kind of token the operator pastes. A package pushed by the
+repository's own Actions inherits the repository's visibility and permissions, so a
+repository the account owns needs no extra package grant.
 
 Why not the alternatives: a machine user with the host's SSH key would spread one
 credential over every repository, which is the blast radius JLK ruled out; per-repository
@@ -217,17 +256,22 @@ change through this repository's CI, which is the gate JLK ruled out.
 **Static** (`tests/static/`):
 
 - `test_sources.py`: every `source.yml` has exactly `repo`, `ref`, `path`; `repo` is
-  `https://` or an absolute local path (the fixture's); no `service.yml` beside it; the
-  folder name is a valid service name; a `source.sops.yaml` beside it holds only known
-  keys (key names are plaintext in sops files, as `test_secrets.py` already relies on);
-  `registries` appears only in a pointer service's spec.
+  `https://`, or `http://127.0.0.1` for the test hosts' throwaway server; no `service.yml`
+  beside it; the folder name is a valid service name; the folder holds nothing but the
+  pointer and an optional README.
+- `test_hosts.py`: `registries` is an optional list of registry hosts; on a real host every
+  listed registry has an entry in `secrets/registries.sops.yaml` (key names are plaintext
+  in a sops file, as `test_secrets.py` already relies on), and every placed service's
+  `registries` is a subset of the host's -- the static half of the refusal.
+- `test_contract.py`: `registries` is a sorted list of registry hosts, on any service.
 - `conftest.placements()` resolves a pointer through `tests/fixtures/sources/<name>/<path>`
   when that exists, so the fixture goes through `test_contract.py`,
   `test_quadlet_conventions.py`, `test_ports.py` and `test_render.py` like any in-tree
   service. A pointer with no local source yields no placement and is covered by
   `test_sources.py` alone.
 - `test_bootstrap.py`: the deploy script heredoc in `bootstrap.sh` equals the role's file.
-- The existing recipients test covers `source.sops.yaml` with no change.
+- The existing recipients test covers the two host files with no change, and already
+  excludes the test hosts' generated ones.
 
 **Fixture.** `tests/fixtures/sources/ext-echo/deploy/storagebaby/` is a complete external
 repository tree for a tiny HTTP echo service with one secret, one config file and a route,
@@ -235,9 +279,10 @@ pulling its image from a private registry. It is real-folder placed on both test
 (`hosts/test-a/services/ext-echo/source.yml` and `hosts/test-ci/services/ext-echo/source.yml`,
 held identical by `test_sources.py` the way `tcp-echo`'s copies are), with
 `repo: http://127.0.0.1:8418/ext-echo.git` (the throwaway git server below), `ref: main`,
-`path: deploy/storagebaby`. The generated `source.sops.yaml` beside each pointer is
-gitignored and excluded from that comparison and from the recipients test, by the same
-rule that already excludes `hosts/test-*/secrets/`.
+`path: deploy/storagebaby`. Both test hosts offer `registries: ['127.0.0.1:5000']` in
+their `host.yml`; their `sources.sops.yaml` and `registries.sops.yaml` are generated by
+prepare into `hosts/test-*/secrets/`, which is already gitignored and excluded from the
+recipients test.
 
 **Integration**, in `prepare.yml`:
 
@@ -248,17 +293,18 @@ rule that already excludes `hosts/test-*/secrets/`.
   `service.yml` files under `hosts/` and so writes no override for `ext-echo`, which is
   what makes the Molecule converge read the file from the fixture tree and the deploy
   test read it from the pushed remote.
-- Generate the pointer's `source.sops.yaml` into `hosts/<host>/services/ext-echo/`
-  (gitignored by the same rule as `hosts/test-*/secrets/`) with a `git_token`,
-  `registry_user` and `registry_token` of prepare's choosing.
+- Generate the host's `sources.sops.yaml` (one token per pointer) and
+  `registries.sops.yaml` (user `test` and a token per offered registry) into
+  `hosts/<host>/secrets/`, with the same keep-if-ours rule, and read both back _on the VM_
+  with its key to fill the git server's credentials file and the registry's htpasswd.
 - Run a throwaway git HTTP server on the VM (`files/test-git-http.py`, a sibling of the
   SMTP sink: python's `http.server` with HTTP basic auth serving `/srv/git/` over git's
   dumb protocol, `update-server-info` kept current by the bare repository's `post-update`
   hook). Seed `/srv/git/ext-echo.git` from the fixture tree with the secrets force-added,
   branch `main`. The deploy script's `GIT_ASKPASS` path is then exercised for real: a
   wrong token is a 401 and a failed tick.
-- Run a throwaway registry on the VM (`registry:2` with an htpasswd of the same
-  `registry_user`/`registry_token`, `127.0.0.1:5000`, declared insecure in
+- Run a throwaway registry on the VM (`registry:2` with an htpasswd of the host's login
+  for `127.0.0.1:5000`, declared insecure in
   `/etc/containers/registries.conf.d/` by prepare and by nothing in a role), and push the
   echo image into it. The fixture's unit names `127.0.0.1:5000/ext-echo:latest` and its
   spec declares `registries: ["127.0.0.1:5000"]`.
@@ -278,9 +324,11 @@ cases, plus `test_service.py` where the generic claims already loop over placeme
   and the state file records the new SHA;
 - a commit that only touches the external repository's README: a tick runs the playbook
   and restarts nothing;
-- a pointer with a wrong `git_token` (edited on the VM's checkout of this repository for
-  the test, then restored): the tick fails, the journal names `ext-echo` and the 401, the
-  service keeps running, the state file is unchanged;
+- a revoked token (the git server's credentials file edited on the VM, then restored):
+  the tick fails, the journal names `ext-echo` and the 401, the service keeps running, the
+  state file is unchanged;
+- a service naming a registry the host does not offer: the converge refuses it, naming
+  both (asserted on a check-mode run against an edited checkout, so nothing is torn down);
 - removing the pointer folder from the remote and ticking removes
   `/var/lib/storagebaby/sources/ext-echo`.
 
@@ -330,8 +378,10 @@ cases, plus `test_service.py` where the generic claims already loop over placeme
    push.
 2. On GitHub: a fine-grained token for that one repository, Contents read-only; for a
    private image, the package token section 5 settles on.
-3. Here: `hosts/StorageBaby/services/<name>/source.yml`, `mise run sops
-hosts/StorageBaby/services/<name>/source.sops.yaml`, commit, let CI promote `stable`.
+3. Here: `hosts/StorageBaby/services/<name>/source.yml`; the token under `<name>` in
+   `hosts/StorageBaby/secrets/sources.sops.yaml` (`mise run sops` on it); for a private
+   image `registries: [ghcr.io]` in `hosts/StorageBaby/host.yml` and the login in
+   `hosts/StorageBaby/secrets/registries.sops.yaml`; commit, let CI promote `stable`.
 4. Watch one tick: `journalctl -u storagebaby-deploy.service -n 50`,
    `storagebaby-svc ps <name>`.
 
