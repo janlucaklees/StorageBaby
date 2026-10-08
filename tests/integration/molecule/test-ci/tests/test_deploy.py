@@ -7,8 +7,12 @@ and runs the playbook when anything differs. `systemctl start` blocks until the 
 convergence is done -- a minute or two on the first run, which clones the repo first.
 `timeout` keeps a wedged pull from hanging the verifier.
 
-Every case here runs last (`order(-1)`, which keeps their relative order): all but the
-first two push to the seeded remote and restart a service or remount the pool, which every
+Every case here runs last (`order(-1)`, which keeps their relative order): the first two
+read the deploy tick without changing anything, the five read-only external cases after
+them (moved here from test_external.py) read the fetched pointer path the same way, and
+every case from `test_the_whole_playbook_runs_clean_in_check_mode` on mutates the remote
+or the host -- a push to the seeded repository or a pointer's own, a revoked credential, a
+drifted file, a missing device -- restarting a service or remounting the pool, which every
 other test would otherwise have to account for.
 """
 
@@ -44,6 +48,24 @@ PULLED = "/var/lib/storagebaby/repo"
 # `/srv/git/<name>.git`, the bare remote `storagebaby-deploy` fetches from.
 EXT_SRC = "/srv/ext-src"
 JOURNAL = "journalctl -u storagebaby-deploy.service --no-pager | tail -80"
+
+
+def run_tick(host):
+    """Start the deploy unit and return (result, the journal of exactly that run).
+
+    A cursor, not `--since @<epoch>`: the epoch has second resolution, and a tick that
+    starts in the same second the previous one ended returns that one's tail too -- which
+    is how a correct no-op tick once failed on a `PLAY RECAP` that was not its own.
+    """
+    cursor = host.check_output(
+        "journalctl -u storagebaby-deploy.service -n 1 -q --show-cursor | sed -n 's/^-- cursor: //p'"
+    )
+    r = host.run(DEPLOY)
+    after = f"--after-cursor='{cursor}'" if cursor else ""
+    journal = host.run(f"journalctl -u storagebaby-deploy.service {after} --no-pager").stdout
+    return r, journal
+
+
 # `-u test:test`: the dashboard sits behind the basicAuth middleware `route.basic_auth`
 # renders, and the pair is the one `prepare.yml` writes into `dashboard_htpasswd` on a test
 # host. Without it the probe below gets a 401, which is Traefik answering correctly and the
@@ -180,10 +202,8 @@ def test_a_tick_with_nothing_changed_does_not_run_the_playbook(host):
     assert state.exists, "the first deploy wrote no state file"
     repo_sha = host.check_output("git -C /var/lib/storagebaby/repo rev-parse HEAD")
     assert f"repo {repo_sha}" in state.content_string.splitlines(), state.content_string
-    marker = host.check_output("date +%s")
-    r = host.run(DEPLOY)
+    r, journal = run_tick(host)
     assert r.rc == 0, host.run(JOURNAL).stdout
-    journal = host.run(f"journalctl -u storagebaby-deploy.service --since @{marker} --no-pager").stdout
     assert NOOP_LINE in journal, journal
     assert "PLAY RECAP" not in journal, f"the playbook ran on an unchanged state:\n{journal}"
 
@@ -196,8 +216,8 @@ def test_a_tick_with_nothing_changed_does_not_run_the_playbook(host):
 # in test_external.py always ran after every `order(-1)` case in this file -- including the
 # one that deletes the pointer's fetched checkout and the one that remounts the pool.
 # Declared here, directly after the no-op tick and before the check-mode run, they run on
-# a host that has deployed once and nothing more: the ordering every other case below this
-# point needs the checkout to have survived.
+# a host that has deployed once and nothing more -- which is what they need: a checkout no
+# later case has pushed over, drifted, or deleted yet.
 
 
 @pytest.mark.order(-1)
@@ -762,10 +782,8 @@ def test_a_push_that_renders_nothing_new_restarts_nothing(host):
     )
     assert r.rc == 0, r.stderr
     pushed = host.check_output(f"git -C /srv/git/{name}.git rev-parse {source['ref']}")
-    marker = host.check_output("date +%s")
-    r = host.run(DEPLOY)
+    r, journal = run_tick(host)
     assert r.rc == 0, host.run(JOURNAL).stdout
-    journal = host.run(f"journalctl -u storagebaby-deploy.service --since @{marker} --no-pager").stdout
     assert "PLAY RECAP" in journal, f"the playbook did not run for a moved checkout:\n{journal}"
     assert_the_role_did_not_restart(host, user, unit, before, "a README commit restarted the service")
     assert state_lines(host)[f"source:{name}"] == pushed
@@ -790,9 +808,7 @@ def test_a_revoked_token_fails_the_tick_and_leaves_the_service_up(host):
         assert host.run("printf 'revoked\\n' > /etc/test-git-http/credentials").rc == 0
         # No commit is needed to provoke the fetch: the script fetches every pointer on
         # every tick, and the refusal happens there, before the state is even compared.
-        marker = host.check_output("date +%s")
-        r = host.run(DEPLOY)
-        journal = host.run(f"journalctl -u storagebaby-deploy.service --since @{marker} --no-pager").stdout
+        r, journal = run_tick(host)
         assert r.rc != 0, f"the tick survived a revoked token\n{journal}"
         assert name in journal and ("401" in journal or "Authentication failed" in journal), journal
         assert "PLAY RECAP" not in journal, f"the playbook ran after a failed fetch\n{journal}"
