@@ -147,6 +147,7 @@ if [ -f "$STATE_FILE" ] && [ "$(cat "$STATE_FILE")" = "$desired" ]; then
 fi
 
 cd "$REPO_DIR"
-# shellcheck disable=SC2086
-/usr/bin/ansible-playbook --inventory ansible/inventory/hosts.yml --limit "$HOST" $EXTRA_ARGS ansible/playbook.yml
-printf '%s\n' "$desired" > "$STATE_FILE"
+/usr/bin/ansible-playbook --inventory ansible/inventory/hosts.yml --limit "$HOST" ${EXTRA_ARGS:-} ansible/playbook.yml
+# A tick killed between the playbook's end and this line must not leave a truncated state
+# file: written to a temp file first, then renamed into place.
+printf '%s\n' "$desired" > "$STATE_FILE.tmp" && mv -f "$STATE_FILE.tmp" "$STATE_FILE"
