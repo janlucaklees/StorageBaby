@@ -128,6 +128,10 @@ cat > /usr/local/sbin/storagebaby-deploy << 'DEPLOY_SCRIPT'
 # *successful* converge saw -- which is also what makes a failed converge retry on the next
 # tick instead of waiting for the next commit, as `ansible-pull --only-if-changed` did.
 set -euo pipefail
+# The fetches run inside command substitutions; without this a failed `git fetch` is
+# swallowed and the tick reports "nothing changed" over a repository it never fetched
+# (measured on the test VM with a revoked token).
+shopt -s inherit_errexit
 
 # REPO_URL, BRANCH, EXTRA_ARGS, written by bootstrap.sh.
 . /etc/storagebaby/deploy.conf
@@ -163,16 +167,20 @@ export GIT_ASKPASS=$ASKPASS
 # sync_checkout <dir> <url> <ref>: clone or fetch, check out origin/<ref> detached, print
 # the resulting HEAD. Always a hard reset and a clean: a host never has local changes in
 # these checkouts, and a force-push upstream must not wedge the tick.
+#
+# Every step returns on failure explicitly, because this function runs inside `$(...)` --
+# and, at both call sites, on the left of `||` -- and errexit does not reach into either
+# place.
 sync_checkout() {
 	local dir=$1 url=$2 ref=$3
 	if [ ! -d "$dir/.git" ]; then
-		git clone --quiet --no-checkout "$url" "$dir"
+		git clone --quiet --no-checkout "$url" "$dir" || return 1
 	fi
-	git -C "$dir" remote set-url origin "$url"
-	git -C "$dir" fetch --quiet --prune origin "+refs/heads/$ref:refs/remotes/origin/$ref"
-	git -C "$dir" checkout --quiet --detach "origin/$ref"
-	git -C "$dir" reset --quiet --hard
-	git -C "$dir" clean --quiet -fdx
+	git -C "$dir" remote set-url origin "$url" || return 1
+	git -C "$dir" fetch --quiet --prune origin "+refs/heads/$ref:refs/remotes/origin/$ref" || return 1
+	git -C "$dir" checkout --quiet --detach "origin/$ref" || return 1
+	git -C "$dir" reset --quiet --hard || return 1
+	git -C "$dir" clean --quiet -fdx || return 1
 	git -C "$dir" rev-parse HEAD
 }
 
@@ -209,7 +217,10 @@ install -d -m 0755 /var/lib/storagebaby
 install -d -m 0700 "$SOURCES_DIR"
 
 echo "platform repository: $REPO_URL ($BRANCH)"
-repo_sha=$(sync_checkout "$REPO_DIR" "$REPO_URL" "$BRANCH")
+repo_sha=$(sync_checkout "$REPO_DIR" "$REPO_URL" "$BRANCH") || {
+	echo "the platform repository $REPO_URL ($BRANCH) failed to fetch; nothing was converged" >&2
+	exit 1
+}
 if [ ! -d "$REPO_DIR/hosts/$HOST" ]; then
 	echo "the repository has no hosts/$HOST folder; nothing to converge" >&2
 	exit 1
@@ -235,7 +246,10 @@ while read -r name url ref path; do
 	echo "external repository for $name: $url ($ref, $path)"
 	STORAGEBABY_GIT_TOKEN=$(git_token_of "$name")
 	export STORAGEBABY_GIT_TOKEN
-	sha=$(sync_checkout "$SOURCES_DIR/$name" "$url" "$ref")
+	sha=$(sync_checkout "$SOURCES_DIR/$name" "$url" "$ref") || {
+		echo "$name: fetching $url ($ref) failed; nothing was converged" >&2
+		exit 1
+	}
 	unset STORAGEBABY_GIT_TOKEN
 	if [ ! -f "$SOURCES_DIR/$name/$path/service.yml" ]; then
 		echo "$name: $url ($ref) has no $path/service.yml" >&2
