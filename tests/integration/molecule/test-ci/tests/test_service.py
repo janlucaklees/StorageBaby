@@ -47,7 +47,11 @@ def _specs() -> list[tuple[str, Path]]:
     """(owner, spec path) for every service spec; owner is 'shared' or a host name."""
     found = []
     for owner_dir in [HOSTS / "shared"] + sorted(p for p in HOSTS.iterdir() if p.is_dir() and p.name != "shared"):
-        for folder in sorted(p for p in (owner_dir / "services").iterdir() if p.is_dir()):
+        services_dir = owner_dir / "services"
+        if not services_dir.is_dir():
+            # A host added as host.yml alone, with no services placed on it yet.
+            continue
+        for folder in sorted(p for p in services_dir.iterdir() if p.is_dir()):
             spec = _resolve(folder)
             if spec is not None:
                 found.append((owner_dir.name, spec))

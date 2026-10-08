@@ -724,6 +724,8 @@ def test_a_push_to_the_external_repository_restarts_only_its_service(host):
     assert before.active_since != "0", f"{unit} has no ActiveEnterTimestamp"
     traefik_before = unit_marks(host, "svc-traefik", "traefik.service")
     other_before = unit_marks(host, f"svc-{other[0]}", other[1]) if other and other[0] != name else None
+    if other_before:
+        assert other_before.active_since != "0", f"{other[1]} has no ActiveEnterTimestamp: is that the right unit name?"
 
     template = f"{EXT_SRC}/{name}/{source['path']}/quadlet/{name}.container.j2"
     r = host.run(
@@ -952,7 +954,8 @@ def test_removing_the_pointer_removes_the_fetched_repository(host):
     is what puts the pointer back. The service's units are left as every unplaced service's
     are today -- `docs/ownership.md` § 3 names full removal as the target and § 7.6 records
     that it does not exist yet; when it lands, the last assertion below flips with it. The
-    route file goes with the converge like any stale route.
+    route file stays too: the role that would remove a stale one never runs for a service
+    that is unplaced.
     """
     found = first_pointer(host)
     if not found:

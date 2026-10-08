@@ -516,7 +516,9 @@ converge with both names in the message, and `tests/static/test_hosts.py` catche
 Before any image is pulled the role writes `~svc-<name>/.config/containers/auth.json`
 (0600, the service user's) with one entry per named registry, and removes the file again
 when the key goes. Rootless podman reads that path when its runtime directory holds no
-`auth.json`, for `podman pull` and for the user's own `podman-auto-update.timer` alike; the
+`auth.json` -- it checks `$XDG_RUNTIME_DIR/containers/auth.json` first, so a stray `podman
+login` run by hand as the service user would shadow the role's file -- for `podman pull`
+and for the user's own `podman-auto-update.timer` alike; the
 integration suite's `ext-echo` fixture pulls from an htpasswd registry through it and runs
 `podman auto-update --dry-run` against it. Any service may declare `registries`; the
 fixture is external only because that is where private images come from first.

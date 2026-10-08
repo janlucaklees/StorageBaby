@@ -151,8 +151,10 @@ left a failed deploy alone until the next commit. A fetch that fails (network, a
 token, a deleted branch) fails the unit loudly and leaves the state untouched, so nothing
 is torn down and the journal says which repository and why.
 
-`/var/lib/storagebaby/sources` is root-only (0700), like the repository checkout: it holds
-decryptable secrets files and config the role copies to the service as root.
+`/var/lib/storagebaby/sources` itself is root-only (0700): it holds decryptable secrets
+files and config the role copies to the service as root. A pointer's clone inside it is
+0755, like the platform checkout -- the 0700 belongs to the parent directory, not to the
+clones under it.
 
 The script is one file, `ansible/roles/host_base/files/storagebaby-deploy`, installed by
 `host_base` beside the deploy units. `bootstrap.sh` installs the same script from a
@@ -419,6 +421,12 @@ Recorded during Tasks 1–4, against the shape above.
    unverified rather than ruled out.
 5. **The pointer folder carries no credential file.** § 1's decisions list the
    2026-10-07 host-owns-credentials amendment already; it is restated here only to confirm
-   that Tasks 1–4 built exactly that — `source.yml` and nothing else under the pointer
-   folder, with `sources.sops.yaml` and `registries.sops.yaml` living under
-   `hosts/<host>/secrets/` as designed.
+   that Tasks 1–4 built exactly that — `source.yml` and nothing else but an optional README
+   under the pointer folder, with `sources.sops.yaml` and `registries.sops.yaml` living
+   under `hosts/<host>/secrets/` as designed.
+6. **A pointer under `hosts/shared/services/` is supported but untested by any fixture.**
+   The script resolves it and the playbook discovers it exactly like a host's own pointer
+   (§ 2, § 4); nothing in the test suite places one there, because `ext-echo`, the only
+   pointer fixture, is a real folder under each test host rather than shared. No fixture is
+   added for this; the first service actually placed under `hosts/shared/services/` as a
+   pointer is what exercises the path.

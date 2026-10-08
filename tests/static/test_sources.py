@@ -12,7 +12,7 @@ import re
 
 import pytest
 
-from conftest import FIXTURE_SOURCES, pointers
+from conftest import FIXTURE_SOURCES, HOSTS, host_names, pointers
 
 SOURCE_KEYS = {"repo", "ref", "path"}
 # What a pointer folder may hold: the pointer and a note. Nothing else belongs beside it --
@@ -61,3 +61,26 @@ def test_test_host_copies_of_a_pointer_are_identical():
             by_name.setdefault(name, set()).add((folder / "source.yml").read_bytes())
     for name, texts in by_name.items():
         assert len(texts) == 1, f"{name}: the test hosts' source.yml files differ"
+
+
+def test_no_shared_pointer_name_collides_with_a_host_folder():
+    """A name under `hosts/shared/services/` is never also a folder under a host's own.
+
+    Both merge into one namespace wherever they meet: the deploy script's own pointer list
+    is `hosts/shared/services/*/source.yml` plus `hosts/<host>/services/*/source.yml`, so a
+    shared pointer and a host's own folder of the same name -- pointer or plain service --
+    would fetch two repositories into one `/var/lib/storagebaby/sources/<name>` checkout,
+    the state file would hold one `source:<name>` line claiming to speak for both, and the
+    playbook would include the `service` role twice under one name. Checked per host and in
+    both directions, because that per-host merge is the only place the two namespaces ever
+    actually meet -- two different hosts' own folders never do.
+    """
+    shared_dir = HOSTS / "shared" / "services"
+    shared_names = {p.name for p in shared_dir.iterdir() if p.is_dir()} if shared_dir.is_dir() else set()
+    for host in host_names():
+        host_dir = HOSTS / host / "services"
+        if not host_dir.is_dir():
+            continue
+        own_names = {p.name for p in host_dir.iterdir() if p.is_dir()}
+        collisions = shared_names & own_names
+        assert not collisions, f"{host}: {sorted(collisions)} named under both hosts/shared/services and hosts/{host}/services"

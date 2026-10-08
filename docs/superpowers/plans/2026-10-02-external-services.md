@@ -53,7 +53,7 @@ Spec §3. No pointer exists yet; this task only changes _how_ a host decides to 
 
 **Interfaces:**
 
-- Produces: `/usr/local/sbin/storagebaby-deploy`, run by `storagebaby-deploy.service`. Reads `/etc/storagebaby/deploy.conf` (`REPO_URL`, `BRANCH`, `EXTRA_ARGS`), keeps `/var/lib/storagebaby/repo`, creates `/var/lib/storagebaby/sources/` (0700) and `/var/lib/storagebaby/deploy.state`. State file format: one line per watched checkout, `repo <sha>` first, then `source:<name> <sha>` sorted by name. Exit 0 and the log line `nothing changed since the last converge; not running the playbook` when the state matches.
+- Produces: `/usr/local/sbin/storagebaby-deploy`, run by `storagebaby-deploy.service`. Reads `/etc/storagebaby/deploy.conf` (`REPO_URL`, `BRANCH`, `EXTRA_ARGS`), keeps `/var/lib/storagebaby/repo`, creates `/var/lib/storagebaby/sources/` (0700) and `/var/lib/storagebaby/deploy.state`. State file format: one line per watched checkout, `repo <sha>` first, then `source:<name> <sha>` in the script's deterministic order (shared pointers, then the host's). Exit 0 and the log line `nothing changed since the last converge; not running the playbook` when the state matches.
 - Produces: the shell function `sync_checkout <dir> <url> <ref>` (prints HEAD) and the pointer loop that Task 2's fixture will exercise; the pointer format it reads is `source.yml` with `repo`, `ref`, `path`, and the token for pointer `<name>` is `<name>.token` in `hosts/<hostname>/secrets/sources.sops.yaml` (optional file, optional entry; absent means an anonymous clone).
 
 - [ ] **Step 1: Write the failing static test**

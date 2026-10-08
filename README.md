@@ -922,7 +922,7 @@ service's units stay, as for any unplaced service.
 - Secrets live in git, encrypted: `hosts/<host>/services/<svc>/secrets.sops.yaml` and
   `hosts/<host>/secrets/<set>.sops.yaml`. Deploy turns them into `podman secret`s.
 - `.sops.yaml` lists **public** keys only: yours (`&jlk`, the workstation key) and one
-  per host (`&StorageBaby`), each host in its own rule **and** the `hosts/shared/**`
+  per host (`&storagebaby`), each host in its own rule **and** the `hosts/shared/**`
   rule. No private key is ever in the repo.
 - No secret is shared between services. Kopia keeps a `client_<service>` per backup
   client in its own file, and each service keeps the same value as its own

@@ -10,6 +10,12 @@
 #
 # A service that declares none gets the file removed, so a `registries` line that goes away
 # takes the login with it.
+#
+# "Write the registry login" below uses `copy: content:`, not `copy: src:` -- the rendered
+# JSON passes through Ansible's connection plugin and lands in the target's remote tmp
+# (root, 0700) before the final write. That is the one place this role takes a different
+# route from `secrets.yml`, where the plaintext never leaves the host; accepted here
+# because on a deploy tick the controller *is* the host.
 - name: Where the service user's registry login lives
   ansible.builtin.set_fact:
     registry_auth_file: '{{ svc_home }}/.config/containers/auth.json'

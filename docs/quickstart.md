@@ -126,12 +126,10 @@ From then on CI moves `stable` and the host follows it every five minutes.
 A service can live in its own repository instead of a folder here; the host fetches it on
 every deploy tick. Add the pointer:
 
-```yaml
-hosts/StorageBaby/services/<name>/source.yml
-  repo: https://github.com/<you>/<repository>
-  ref: main
-  path: deploy/storagebaby
-```
+    hosts/StorageBaby/services/<name>/source.yml
+      repo: https://github.com/<you>/<repository>
+      ref: main
+      path: deploy/storagebaby
 
 For a private repository, a fine-grained token (resource owner you, only this repository,
 Contents: read-only) under `<name>: { token }` in

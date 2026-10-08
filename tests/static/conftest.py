@@ -54,6 +54,8 @@ def external_source_dir(name: str, source: dict) -> Path | None:
 
 
 def _services_in(dir_: Path) -> list[tuple[str, Path, dict, Path | None]]:
+    if not dir_.is_dir():
+        return []
     out = []
     for folder in sorted(p for p in dir_.iterdir() if p.is_dir()):
         if (folder / "service.yml").exists():
