@@ -410,15 +410,15 @@ Recorded during Tasks 1–4, against the shape above.
    fetched external tree instead, so picking one there would edit or watch a file the host
    never reads and see a silent no-op rather than the restart or drift being asserted on.
    `ext-echo` is covered by its own cases instead (§ 6, "Verify").
-4. **Whether the `REGISTRY_AUTH_FILE` fallback is needed is still open.** The implementation
-   plan (`docs/superpowers/plans/2026-10-02-external-services.md`) named a fallback in case
+4. **The `REGISTRY_AUTH_FILE` fallback is not needed.** The implementation plan
+   (`docs/superpowers/plans/2026-10-02-external-services.md`) named a fallback in case
    `runuser -u`'s `HOME` reset and containers/image's default lookup turned out not to find
    the service user's `auth.json`: a Quadlet drop-in setting `REGISTRY_AUTH_FILE` and the
-   same export in `podman-as`. Neither is in the role or the templates — the static work
-   found no reason so far to believe the fallback is needed. That is not the same as having
-   run the pull against the throwaway private registry on real hardware; the integration run
-   that would settle it had not happened as of this task, so the fallback's necessity is
-   unverified rather than ruled out.
+   same export in `podman-as`. Neither is in the role or the templates. The `test-ci`
+   integration runs of 2026-10-08 settled it: the converge pulled
+   `127.0.0.1:5000/ext-echo:latest` as `svc-ext-echo` through the role-written
+   `~/.config/containers/auth.json`, and `podman auto-update --dry-run` as that user
+   reached the registry with the same file.
 5. **The pointer folder carries no credential file.** § 1's decisions list the
    2026-10-07 host-owns-credentials amendment already; it is restated here only to confirm
    that Tasks 1–4 built exactly that — `source.yml` and nothing else but an optional README
@@ -430,3 +430,16 @@ Recorded during Tasks 1–4, against the shape above.
    pointer fixture, is a real folder under each test host rather than shared. No fixture is
    added for this; the first service actually placed under `hosts/shared/services/` as a
    pointer is what exercises the path.
+7. **A failed fetch inside a command substitution was swallowed, and is not any more.** The
+   first `test-ci` run (2026-10-08) revoked the fixture's token and the tick still exited 0
+   with "nothing changed": bash does not carry `errexit` into `$(...)` unless
+   `shopt -s inherit_errexit` is set, so the failed `git fetch` inside
+   `sha=$(sync_checkout ...)` never stopped the function, and `rev-parse HEAD` returned the
+   old SHA. The script now sets `inherit_errexit`, every git step in `sync_checkout` returns
+   on its own failure, and both call sites exit 1 naming the repository. The second run
+   measured the refusal: the tick fails, the journal names `ext-echo` and
+   `Authentication failed`, the state file is untouched, the service keeps running.
+8. **Verified on `test-ci` only.** Both integration runs used `MOLECULE_HOST=test-ci`
+   (prepare, converge, idempotence at zero changes, 172 verifier cases). The `test-a`
+   placement, which runs every service, has not been run on this branch because the test VM
+   was shared with other work; it is the whole-branch run the plan's last section asks for.
