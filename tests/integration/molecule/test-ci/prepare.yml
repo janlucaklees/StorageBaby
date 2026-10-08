@@ -773,6 +773,22 @@
         group: root
         mode: '0644'
 
+    # Neither of these exists yet at prepare time: `host_base` creates
+    # `/etc/containers/systemd/users` at converge, and the `service` role creates the
+    # per-uid folder under it the first time a service is placed on that user. Prepare runs
+    # before either role has, so the throwaway registry's own Quadlet has to make both
+    # itself or the copy below has nowhere to land.
+    - name: The directories the roles would create later
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /etc/containers/systemd/users
+        - /etc/containers/systemd/users/{{ getent_passwd[_reg_user][1] }}
+
     - name: The registry's Quadlet, in its user's unit directory
       ansible.builtin.copy:
         dest: '/etc/containers/systemd/users/{{ getent_passwd[_reg_user][1] }}/test-registry.container'
