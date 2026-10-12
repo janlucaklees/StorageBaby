@@ -3,7 +3,14 @@ import subprocess
 from conftest import REPO
 
 # The scenario's own playbooks, by the names Molecule gives its sequence steps.
-MOLECULE_PLAYBOOKS = {"create.yml", "prepare.yml", "converge.yml", "destroy.yml", "verify.yml"}
+MOLECULE_PLAYBOOKS = {
+    "create.yml",
+    "prepare.yml",
+    "converge.yml",
+    "destroy.yml",
+    "verify.yml",
+    "base-image.yml",
+}
 
 
 def test_ansible_lint_is_clean():

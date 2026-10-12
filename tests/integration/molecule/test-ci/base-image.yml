@@ -1,0 +1,14 @@
+# Rebuild the prepared base image on its own: `mise run test-base-image`. create.yml
+# runs the same tasks before every scenario and rebuilds once a week; this is for the
+# day a kernel lands mid-week, or to try the stage without a whole Molecule run.
+- name: Prepare the base image the test VMs boot from
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - vars/images.yml
+  vars:
+    prepared_image_force: true
+  tasks:
+    - name: The base images
+      ansible.builtin.import_tasks: tasks/base-image-stage.yml

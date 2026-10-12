@@ -1035,6 +1035,7 @@ these with their arguments:
     mise run molecule-login         # SSH into the running test VM
     mise run molecule-exec 'podman ps -a'   # one command on it, no TTY needed
     mise run test-clean             # destroy the VM and drop the Molecule cache
+    mise run test-base-image        # rebuild the pre-upgraded image the test VMs boot from
     mise run sops hosts/shared/services/traefik/secrets.sops.yaml
     mise run updatekeys             # re-encrypt every secret file for the recipients in .sops.yaml
     mise run install-hooks          # once per clone: lefthook's formatting hook
@@ -1044,6 +1045,18 @@ environment assignment in front of the command — `MOLECULE_HOST=test-ci mise r
 test-integration`, not `make test-integration MOLECULE_HOST=test-ci`.
 `MOLECULE_HOST`, `MOLECULE_VM_MEMORY_MIB` and `MOLECULE_VM_VCPUS` can also be set
 in `.env` (see `.env.example`); their defaults live in the Molecule scenario.
+
+The test VMs boot from two cached files under `/var/lib/libvirt/images/storagebaby/`:
+the stock Arch cloud image (`arch-cloudimg.qcow2`, downloaded once and never
+revalidated) and the same image after one full `pacman -Syu`
+(`arch-cloudimg-prepared.qcow2`), which every VM overlays. `create` rebuilds the
+prepared one when it is older than a week, with a throwaway VM that upgrades, cleans
+cloud-init and the machine-id, and powers off
+(`tests/integration/molecule/test-ci/tasks/base-image-stage.yml`). The point is that
+bootstrap's own upgrade in `prepare` then finds the kernel current and the
+compare-and-reboot task after it skips — that reboot hung a CI job for 86 minutes on
+2026-10-07. CI caches both files per ISO week. `mise run test-clean` leaves them alone,
+like the stock image before them.
 
 mise, Docker and lefthook are all the workstation needs for everything but the
 integration tests and the secrets: mise comes from the distribution (pacman:
