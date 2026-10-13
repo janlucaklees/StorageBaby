@@ -24,6 +24,21 @@ certificate zone, another service's port), because that is someone else's decisi
 the conventions are actually written down, with the measurement that produced each one in the
 comment above it. Read it before inventing anything.
 
+## A service has two shapes
+
+Decide this before anything else, because it changes where the folder goes:
+
+- **In this repository** — `hosts/<host>/services/<name>/`, holding the whole contract.
+  Everything below assumes this shape.
+- **In the service's own repository** — this repo holds only a pointer,
+  `hosts/<host>/services/<name>/source.yml` (`repo`, `ref`, `path`), and the contract lives
+  at `<path>/` over there. `docs/external-service.md` is that side; `tests/fixtures/sources/ext-echo`
+  is a worked model. The contract itself is identical — the only difference is which
+  repository carries it, and that the host holds the git token.
+
+The second shape is the right one when the service is something you also develop: its
+deployment travels with its code. The first is right for anything you merely run.
+
 ## Read first, in this order
 
 1. `ansible/roles/service/README.md` — what a template may use, and every `service.yml` key.
@@ -51,8 +66,20 @@ comment above it. Read it before inventing anything.
 1. **Pick the space.** `<app>.klees.io` is public; `<app>.home.klees.io` is VPN-only. A full
    hostname goes in `service.yml` as it stands; a bare label is completed by the host's
    `domain`. The dot is what tells them apart. The zone must be in the host's `cert_zones`.
-2. **Pick a free port.** `rg '^port:' hosts/*/services/*/service.yml`. Route ports, TCP
-   entrypoints and TCP targets are one namespace per host.
+2. **Pick a free port**, and check **both** places services live:
+
+   ```sh
+   rg '^port:' hosts/*/services/*/service.yml               # services that live in this repo
+   rg --files-with-matches '' hosts/*/services/*/source.yml # services that do not
+   ```
+
+   Route ports, TCP entrypoints and TCP targets are one namespace per host. The second
+   list is the dangerous one: a pointer to a **private** repository has no local tree, so
+   `placements()` yields nothing for it and `test_ports.py` cannot see its port at all —
+   `tests/static/conftest.py` says so in `external_source_dir`, and "checked on the host at
+   converge time" means a collision surfaces on the NAS, not here. Open each pointer's
+   repository (or its design doc) and read the port yourself.
+
 3. **Verify the image tag exists** before pinning it — a GitHub release tag is not always a
    published image tag, and the two have been seen to use different numbering entirely.
    `docker manifest inspect` fails anonymously against ghcr, so ask the registry directly.

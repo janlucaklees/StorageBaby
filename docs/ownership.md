@@ -41,6 +41,14 @@ the test reads it. The consumer being a verifier rather than Traefik does not ma
 fact any less a property of the service: `scheme: https` is the same kind of statement,
 and nobody would put kopia's name in a Traefik template.
 
+A service that lives in its **own repository** is the rule taken to its conclusion: this
+repository holds a pointer and nothing else, so the contract and the platform are not
+merely separable, they are not even in the same place. Everything that makes the service
+work travels with the service. That is also where the rule costs something, and it is
+worth knowing which: a port such a service claims is invisible to the static tests, which
+have no local tree to read it from, so the collision it would cause surfaces on the host
+at converge time instead of in CI.
+
 The test also catches the inverse. A service may **not** ship a fact that belongs to the
 host — a storage path, a certificate zone, another service's port — because those are
 not facts about itself, and a plugin that asserts them is claiming someone else's
