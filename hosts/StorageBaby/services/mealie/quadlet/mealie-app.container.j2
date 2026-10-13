@@ -1,0 +1,43 @@
+[Unit]
+Description=Mealie
+After=mealie-database.service
+Wants=mealie-database.service
+
+[Container]
+Image=ghcr.io/mealie-recipes/mealie:v3.28.0
+ContainerName=mealie-app
+Pod=mealie.pod
+Environment=TZ={{ tz }}
+{# Mealie builds absolute links from this -- notification mails, share links, and the
+   recipe URLs the MCP adapter reads back -- so it has to be the public name and not the
+   loopback the container actually binds. #}
+Environment=BASE_URL=https://{{ routes[0].fqdn }}
+{# A public route, so nobody signs themselves up. Invitation tokens still work, which is
+   how a second household member gets an account. #}
+Environment=ALLOW_SIGNUP=false
+Environment=DB_ENGINE=postgres
+Environment=POSTGRES_SERVER=127.0.0.1
+Environment=POSTGRES_PORT=5432
+Environment=POSTGRES_DB={{ service.config.database_name }}
+Environment=POSTGRES_USER={{ service.config.database_user }}
+{# The `_FILE` form, supported since 2.4.2 for the variables Mealie's backend-config page
+   marks with a dagger. The file form over `type=env` wherever an image offers it: the
+   value then never appears in the container's environment at all. #}
+Environment=POSTGRES_PASSWORD_FILE=/run/secrets/database_password
+Secret=database_password
+Volume={{ volumes.data }}:/app/data
+{# The image has curl and its own healthcheck.sh; this asks the same question explicitly,
+   because Quadlet does not inherit the image's HEALTHCHECK and the convention test wants
+   the line in the unit. `/api/app/about` answers before login and without a token. #}
+HealthCmd=curl -fs -S --max-time 2 http://127.0.0.1:9000/api/app/about || exit 1
+HealthOnFailure=kill
+{# First start runs the schema migrations and seeds the food and unit tables, which takes
+   longer than the default grace period allows. #}
+HealthStartPeriod=120s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

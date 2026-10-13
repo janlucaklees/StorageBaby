@@ -27,6 +27,7 @@ secrets:
   - client_openarchiver
   - client_immich
   - client_nextcloud
+  - client_mealie
 # One `client_<service>` per service with a `backup` block: the server's copy of the
 # password that service holds as its own `kopia_password`. Deliberately redundant --
 # the two services do not share configuration. `config/start.sh` registers

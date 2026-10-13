@@ -1,0 +1,16 @@
+[Unit]
+Description=Dump the mealie database into the backups volume
+{# Ordered after the database and conditional on it: a `podman exec` into a container that
+   is not running fails, and without Requisite= the dump would still be attempted --
+   leaving yesterday's file in /backups for the sidecar to snapshot as if it were
+   tonight's. Requisite= does not start the database, it refuses to run without it. #}
+After=mealie-database.service
+Requisite=mealie-database.service
+
+[Service]
+Type=oneshot
+{# Plain SQL and uncompressed, and the reasoning is paperless's: the sidecar snapshots this
+   file into a deduplicating repository, and a compressed dump differs in every byte from
+   one night to the next. `ansible/roles/service/README.md`, "The dump form". Restore with
+   `psql --single-transaction --set ON_ERROR_STOP=on`, not `pg_restore`. #}
+ExecStart=/usr/bin/podman exec mealie-database sh -c 'pg_dump --clean --if-exists --no-owner --username={{ service.config.database_user }} --dbname={{ service.config.database_name }} > /backups/{{ service.config.database_name }}.sql.tmp && mv /backups/{{ service.config.database_name }}.sql.tmp /backups/{{ service.config.database_name }}.sql'

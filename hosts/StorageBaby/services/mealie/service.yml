@@ -1,0 +1,26 @@
+name: mealie
+port: 9000
+# Public: a shopping list is read in a supermarket, which is the one place a VPN is not
+# already on. `klees.io` written out in full, so the host's own `domain` completes nothing.
+domain: mealie.klees.io
+volumes:
+  # 911, not 1000: the image's own `useradd -u 911 -U -d /app -s /bin/bash abc`, and
+  # `PUID`/`PGID` both default to 911, which this service leaves alone. Verify once on the
+  # running container -- `podman exec mealie-app id -u` -- rather than trusting this
+  # comment; `docs/quickstart.md` § 5 has the host-uid arithmetic.
+  data: { class: pool, owner: 911 }
+  database: { class: fast, owner: 70 }
+  # No `owner`: written by the dump timer's `podman exec` with no `-u`, i.e. container
+  # root, which is the service user -- what the role creates it as. `pool` and not `fast`:
+  # a write-once nightly file has no business on a 120G SSD.
+  backups: { class: pool }
+config:
+  database_name: mealie
+  database_user: mealie
+secrets: [database_password, kopia_password]
+backup:
+  # `database` is absent on purpose: a postgres data directory is never snapshotted, the
+  # dump in `backups` is what a restore reads.
+  paths: [data, backups]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }
