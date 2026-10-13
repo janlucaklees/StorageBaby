@@ -1,6 +1,6 @@
 # Renaissance as the first external service, and the test harness that lets it land
 
-Status: approved in chat 2026-10-12, implementation in progress
+Status: implemented 2026-10-13
 Date: 2026-10-12
 Builds on: `2026-10-02-external-services-design.md` (the mechanism this is the first real use of), `HANDOVER.md` on branch `external-services` (the checklist this follows)
 

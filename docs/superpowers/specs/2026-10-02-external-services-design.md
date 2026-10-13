@@ -446,10 +446,11 @@ Recorded during Tasks 1–4, against the shape above.
 9. **The first real deployment (2026-10-13): Renaissance, from `janlucaklees/renaissance`.**
    Recorded in `2026-10-12-renaissance-first-external-service-design.md`; what it settled
    of the two open questions above and of § 4's step 10 of the handover:
-   - **A fine-grained token does not read ghcr packages; a classic `read:packages` token
-     does.** The fine-grained token JLK created for the repository (Contents: read-only,
-     that one repository) fetches `stable` over HTTPS exactly as the deploy script does
-     it, and the images were pulled with a separate classic token; the host holds both in
+   - **What the two tokens turned out to be.** The repository is read with a fine-grained
+     token (Contents: read-only, that one repository), which fetches `stable` over HTTPS
+     exactly as the deploy script does it. The images are pulled with a classic
+     `read:packages` token; whether a fine-grained token could read ghcr packages was not
+     tried, so the question § 5 and § 8 leave open stays open. The host holds both in
      `sources.sops.yaml` and `registries.sops.yaml`. A first attempt at the repository
      token failed with `Write access to repository not granted` on `ls-remote`: the token
      had been created without the repository in its selection, which GitHub reports as a
