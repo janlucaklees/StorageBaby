@@ -1,7 +1,11 @@
 mounts/
 .env
 .stfolder
-.claude
+# Everything Claude Code keeps here is local state -- worktrees, locks, caches -- except
+# the skills, which are part of the repository: a project-local skill that is not tracked
+# is invisible to a fresh clone and to every other session.
+.claude/*
+!.claude/skills/
 *.dump
 *.sql
 *.secret
