@@ -1,0 +1,21 @@
+[Unit]
+Description=Mailflow broker
+
+[Container]
+Image=docker.io/library/redis:alpine
+ContainerName=mailflow-broker
+Pod=mailflow.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+{# No volume, unlike upstream's compose file: this holds sessions and cache only. See the
+   comment in service.yml -- paperless, nextcloud and openarchiver all run their
+   redis/valkey the same way, and the cost of a restart is that everyone signs in again. #}
+HealthCmd=redis-cli --raw incr ping
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

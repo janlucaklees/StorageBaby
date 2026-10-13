@@ -1,0 +1,29 @@
+name: mailflow
+port: 3003
+domain: mailflow.klees.io
+volumes:
+  database: { class: fast, owner: 70 }
+  # No `owner`: written by the dump timer's `podman exec` with no `-u`, i.e. container root,
+  # which is the service user. `pool` because a write-once nightly file has no business on
+  # the SSD.
+  backups: { class: pool }
+# Deliberately no volume for redis, unlike upstream's compose file. It holds sessions and
+# cache, nothing a restore wants, and every other service on this platform that runs
+# redis or valkey -- paperless, nextcloud, openarchiver -- gives it none either. The cost
+# of a restart is that everyone signs in again.
+config:
+  database_name: mailflow
+  database_user: mailflow
+  # Traefik and mailflow's own nginx, so the backend reads the client address two hops back
+  # in X-Forwarded-For. Upstream allows 2 only "if clients cannot reach MailFlow's ports
+  # except through it", because otherwise a direct client picks the address it is
+  # rate-limited and logged under. That holds here by construction: the pod publishes on
+  # 127.0.0.1 alone, and a static test refuses any other bind.
+  trust_proxy_hops: 2
+secrets: [database_password, session_secret, encryption_key, kopia_password]
+backup:
+  # Only the dump. Every byte of mailflow's state is in Postgres: there is no upload tree,
+  # no index and no cache worth carrying.
+  paths: [backups]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }

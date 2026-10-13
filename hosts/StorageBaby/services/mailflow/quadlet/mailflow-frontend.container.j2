@@ -1,0 +1,34 @@
+[Unit]
+Description=Mailflow frontend
+After=mailflow-backend.service
+Wants=mailflow-backend.service
+
+[Container]
+Image=ghcr.io/maathimself/mailflow-frontend:3.8.3
+ContainerName=mailflow-frontend
+Pod=mailflow.pod
+Environment=TZ={{ tz }}
+{# The image's nginx.conf ships `proxy_pass http://mailflow_api` with the Docker Compose
+   service name baked in, and `17-set-backend.sh` rewrites that one marked line from these
+   two variables. Upstream added them for this exact case -- its comment names "Podman
+   pods" -- which is why this service needs no `AddHost=backend:127.0.0.1` alias of the
+   kind immich uses. #}
+Environment=BACKEND_HOST=127.0.0.1
+Environment=BACKEND_PORT=3000
+{# `18-set-tls.sh` comments out the whole HTTPS server block, so nginx stops serving 443
+   and generates no self-signed certificate. The port-80 block that remains is, in the
+   image's own words, "intended for deployments behind a reverse proxy that terminates TLS
+   upstream" -- so this route is plain HTTP, unlike kopia and collabora, which keep their
+   own TLS because their protocols leave them no choice. #}
+Environment=NGINX_TLS=off
+{# busybox wget, not curl: this image is nginx on alpine plus openssl, and curl is not in
+   it -- upstream's own compose healthcheck calls curl and cannot be working. #}
+HealthCmd=wget -q --spider http://127.0.0.1/ || exit 1
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

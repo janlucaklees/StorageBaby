@@ -1,0 +1,42 @@
+[Unit]
+Description=Mailflow backend
+After=mailflow-database.service mailflow-broker.service
+Wants=mailflow-database.service mailflow-broker.service
+
+[Container]
+Image=ghcr.io/maathimself/mailflow-backend:3.8.3
+ContainerName=mailflow-backend
+Pod=mailflow.pod
+Environment=TZ={{ tz }}
+Environment=NODE_ENV=production
+{# The name the browser uses. It goes into invite mails and into the CORS allowlist, so it
+   has to be the public route and not the loopback the process binds. #}
+Environment=APP_URL=https://{{ routes[0].fqdn }}
+Environment=DB_HOST=127.0.0.1
+Environment=DB_PORT=5432
+Environment=DB_NAME={{ service.config.database_name }}
+Environment=DB_USER={{ service.config.database_user }}
+Environment=REDIS_URL=redis://127.0.0.1:6379
+{# Two proxies in front of the backend: Traefik, then the pod's own nginx. See the comment
+   on `trust_proxy_hops` in service.yml for why this value is safe here and would not be on
+   a host that published these ports anywhere but loopback. #}
+Environment=TRUST_PROXY_HOPS={{ service.config.trust_proxy_hops }}
+{# `type=env` for all three: this image documents no `_FILE` variant for any of them.
+   `encryption_key` is the one secret here that cannot be rotated -- it encrypts the stored
+   IMAP and SMTP credentials at rest, and a new value makes every saved account unreadable.
+   The README says so again, because it is the thing that will matter during the migration. #}
+Secret=database_password,type=env,target=DB_PASSWORD
+Secret=session_secret,type=env,target=SESSION_SECRET
+Secret=encryption_key,type=env,target=ENCRYPTION_KEY
+{# busybox wget again: node:22-alpine has no curl either, and `/api/health` is the endpoint
+   upstream's own compose healthcheck names. #}
+HealthCmd=wget -q --spider http://127.0.0.1:3000/api/health || exit 1
+HealthOnFailure=kill
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
