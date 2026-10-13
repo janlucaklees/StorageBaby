@@ -1,0 +1,23 @@
+{
+	"mcpServers": {
+		"mealie": {
+			"command": "mealie-mcp",
+			"args": [],
+			"env": {
+				"MEALIE_URL": "https://mealie.klees.io",
+				"MEALIE_API_TOKEN": "${MEALIE_API_TOKEN}"
+			}
+		},
+		"nextcloud": {
+			"type": "http",
+			"url": "http://127.0.0.1:8000/mcp"
+		},
+		"paperless": {
+			"type": "http",
+			"url": "http://127.0.0.1:3001/mcp",
+			"headers": {
+				"Authorization": "Bearer ${PAPERLESS_TOKEN}"
+			}
+		}
+	}
+}

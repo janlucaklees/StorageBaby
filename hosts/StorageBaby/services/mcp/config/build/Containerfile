@@ -1,0 +1,20 @@
+# The hub image plus the stdio adapters it is configured to run.
+#
+# Fully qualified on purpose: a rootless build has no containers-registries.conf, so a
+# short name resolves to nothing and the build dies before STEP 1.
+#
+# Why a build at all: mcp-hub bundles none of the servers its documentation catalogues --
+# its own `dependencies` are the MCP SDK, express and the OAuth provider. Upstream's
+# documented entry is `npx -y @ni-c/mealie-mcp`, which fetches from the npm registry the
+# first time the hub starts that server on demand, at whatever hour that happens to be.
+# Installing it here instead pins the version in git, bakes it into an image, and moves a
+# registry outage from an unattended 03:00 start to a converge the deploy timer retries
+# and the journal records.
+FROM ghcr.io/ni-c/mcp-hub:0.11.6
+
+# The base image ends on `USER node`, and a global install writes to
+# /usr/local/lib/node_modules, which uid 1000 cannot. Root for the install, back to the
+# image's own user afterwards -- the hub and every stdio child it spawns run as `node`.
+USER root
+RUN npm install -g @ni-c/mealie-mcp@0.6.0
+USER node

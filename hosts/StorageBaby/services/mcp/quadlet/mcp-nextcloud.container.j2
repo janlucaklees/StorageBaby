@@ -1,0 +1,34 @@
+[Unit]
+Description=Nextcloud MCP adapter
+
+[Container]
+Image=ghcr.io/cbcoutinho/nextcloud-mcp-server:0.198.5
+ContainerName=mcp-nextcloud
+Pod=mcp.pod
+Environment=TZ={{ tz }}
+{# Nextcloud is reached by its own public route name, through Traefik -- the role renders
+   the host-gateway drop-in that makes that resolve from inside a pod. Not 127.0.0.1: a
+   rootless container of another service user is not reachable on this one's loopback. #}
+Environment=NEXTCLOUD_HOST={{ service.config.nextcloud_host }}
+Environment=NEXTCLOUD_USERNAME={{ service.config.nextcloud_user }}
+{# An app password from Settings > Security > Devices & sessions, on a dedicated account.
+   `type=env` because this image documents no `_FILE` variant. #}
+Secret=nextcloud_password,type=env,target=NEXTCLOUD_PASSWORD
+{# The image's entrypoint already is `nextcloud-mcp-server run --host 0.0.0.0`, whose
+   default transport is streamable-http on 8000. Inside this pod that port is the hub's
+   upstream and is published nowhere: single-user mode authenticates to Nextcloud with the
+   app password above and asks its *clients* for nothing at all, so the only thing that may
+   reach it is the hub beside it. #}
+{# Liveness only: the MCP endpoint answers a bare GET with an error by design, so this
+   asks the one question that has a meaningful answer -- is something listening. python is
+   the venv the entrypoint itself runs from, so it is certain to be there. #}
+HealthCmd=/opt/venv/bin/python -c "import socket; socket.create_connection(('127.0.0.1', 8000), 2).close()"
+HealthOnFailure=kill
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

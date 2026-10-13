@@ -1,0 +1,10 @@
+[Pod]
+PodName=mcp
+{# Literal, not `{{ service.port }}`: the static check reads this line out of the raw
+   template to compare the published ports against the declared routes, and a templated
+   line would make it compare the contract with itself.
+
+   One port for three servers. The two HTTP adapters listen on 8000 and 3001 inside this
+   pod and are deliberately not published: the nextcloud adapter has no client
+   authentication of its own, and the hub's OAuth is what stands in front of both. #}
+PublishPort=127.0.0.1:3002:3002

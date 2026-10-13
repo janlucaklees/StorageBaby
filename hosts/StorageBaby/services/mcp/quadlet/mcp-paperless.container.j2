@@ -1,0 +1,32 @@
+[Unit]
+Description=Paperless MCP adapter
+
+[Container]
+Image=ghcr.io/orellbuehler/paperless-mcp:1.4.0
+ContainerName=mcp-paperless
+Pod=mcp.pod
+Environment=TZ={{ tz }}
+{# By its own route name through Traefik, for the same reason as the nextcloud adapter. #}
+Environment=PAPERLESS_URL={{ service.config.paperless_url }}
+{# The image already defaults to MCP_TRANSPORT=http and PORT=3001, so neither is repeated
+   here. This token is the server-side one; the hub additionally sends the same token as a
+   per-client `Authorization: Bearer`, which is what this adapter authenticates each
+   request with -- see config/hub/mcp.json. #}
+Secret=paperless_token,type=env,target=PAPERLESS_TOKEN
+{# PAPERLESS_MCP_DATA=/data is where the optional embedding index would live. Semantic
+   search is off (it wants an embedding provider), so there is nothing here worth keeping
+   across a restart -- a tmpfs rather than a volume the platform would then have to back
+   up and nobody would ever restore. #}
+Tmpfs=/data
+{# Liveness only, and in node because that is what this image is: a TCP connect to the
+   port the server listens on. A GET to /mcp is an error by design. #}
+HealthCmd=node -e "require('net').connect(3001,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"
+HealthOnFailure=kill
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

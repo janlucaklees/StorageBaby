@@ -1,0 +1,60 @@
+[Unit]
+Description=MCP hub
+{# Ordered after the two HTTP adapters so the hub's first probe of them succeeds. It would
+   recover anyway -- it pings every child every 60 s and reconnects with backoff -- but a
+   converge that reports every server healthy on the first try is worth the two lines. #}
+After=mcp-nextcloud.service mcp-paperless.service
+Wants=mcp-nextcloud.service mcp-paperless.service
+
+[Container]
+{# The unit reference and not `localhost/mcp-hub:latest`: Quadlet turns this into a
+   `Requires=`/`After=` on `mcp-hub-build.service`, so the image is built before anything
+   runs it and a changed Containerfile restarts this container. Naming the tag directly
+   would start whatever image happened to exist, and the role's pre-pull would try to
+   fetch it -- `localhost/` is rejected there for exactly that spelling. #}
+Image=mcp-hub.build
+ContainerName=mcp-hub
+Pod=mcp.pod
+Environment=TZ={{ tz }}
+{# The image defaults to PORT=80 and drops to the node base image's uid 1000. A rootless
+   container's network namespace keeps `net.ipv4.ip_unprivileged_port_start` at 1024, so a
+   process that is not container-root cannot bind 80 at all: the hub exited and the
+   container reported `unhealthy` while the two adapters beside it -- 8000 and 3001 -- were
+   fine. Measured on test-a. Anything above 1024 works; the route port is the obvious
+   choice, so the number means one thing from Traefik to the process. #}
+Environment=PORT=3002
+{# The public base URL as a client sees it, which is what the OAuth flow redirects to.
+   Traefik terminates the TLS; the hub itself serves plain HTTP inside the pod. #}
+Environment=EXTERNAL_URL=https://{{ routes[0].fqdn }}
+{# `TRUSTED_PROXIES` is deliberately unset, and the hub says so on every start:
+   "TRUSTED_PROXIES is not set -- login rate limiting falls back to a single global
+   counter". That is the whole consequence; the OAuth redirects come from EXTERNAL_URL
+   above, not from a forwarded header. On a private endpoint whose only clients are
+   OpenClaw and one operator, one global login counter is the right trade -- a wrong value
+   here would trust a header that any client can send. #}
+{# These three reach the container as environment variables rather than files because
+   `mcp.json` expands `${VAR}` from the hub's own environment, and that is the whole
+   mechanism by which a token gets into a child server's env or an upstream's headers
+   without being committed. `hub_password_hash` is the bcrypt hash of the OAuth login
+   password -- `PASSWORD_HASH` wins over `PASSWORD`, and the plaintext never exists here. #}
+Secret=hub_password_hash,type=env,target=PASSWORD_HASH
+Secret=mealie_api_token,type=env,target=MEALIE_API_TOKEN
+Secret=paperless_token,type=env,target=PAPERLESS_TOKEN
+Volume={{ volumes.data }}:/data
+{# The directory, not the file: the hub reloads `mcp.json` when it changes, and an editor
+   or an Ansible copy saves by rename -- a new inode, which a single-file bind mount cannot
+   follow. `config/build/` is kept out of this mount by living beside it rather than in it. #}
+Volume={{ config_dir }}/hub:/config:ro
+{# The image's own HEALTHCHECK, spelled out because Quadlet does not inherit it. Liveness
+   only, by upstream's design: `/livez` stays 200 while a single child server is degraded,
+   which is what `/health` reports and what should not kill this container. #}
+HealthCmd=node -e "fetch('http://127.0.0.1:3002/livez').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HealthOnFailure=kill
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

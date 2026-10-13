@@ -1,0 +1,39 @@
+name: mcp
+port: 3002
+# Private: `mcp` is the bare label the host's own `domain` completes, so this is
+# mcp.home.klees.io on storagebaby and mcp.test.local on a test host. The endpoint is
+# reached by OpenClaw on the same host and by a VPN client, never from the internet.
+domain: mcp
+# The hub registers `/:name` and `/:name/mcp` and nothing above them, so a request for `/`
+# is a legitimate 404 -- not a route that fails to arrive. `/livez` is its own liveness
+# endpoint, unauthenticated by design, and the one URL that answers without a token.
+route:
+  probe_path: /livez
+volumes:
+  # The hub's Ed25519 signing key, the OAuth clients that registered themselves, their
+  # refresh tokens and the on-demand tool cache. Small, written often, and losing it makes
+  # every connector re-authorise -- so `fast`, and backed up.
+  # 1000: the hub image drops to the node base image's unprivileged `node` user.
+  data: { class: fast, owner: 1000 }
+config:
+  # Copied verbatim into /etc/storagebaby/mcp/ -- `config/` is `ansible.builtin.copy`, not
+  # a template, so these values are duplicated in config/hub/mcp.json by hand. They agree
+  # because the three applications declare full `klees.io` names of their own, which are
+  # the same on every host this service is placed on.
+  mealie_url: https://mealie.klees.io
+  nextcloud_host: https://nextcloud.klees.io
+  # A dedicated Nextcloud account with an app password, not jlk's own login.
+  nextcloud_user: mcp
+  paperless_url: https://paperless.klees.io
+secrets:
+  [
+    hub_password_hash,
+    mealie_api_token,
+    nextcloud_password,
+    paperless_token,
+    kopia_password
+  ]
+backup:
+  paths: [data]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }

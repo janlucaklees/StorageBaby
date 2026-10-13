@@ -1,0 +1,10 @@
+[Unit]
+Description=Build the mcp-hub image with its stdio adapters
+
+[Build]
+ImageTag=localhost/mcp-hub:latest
+File={{ config_dir }}/build/Containerfile
+{# The build context is the Containerfile's own directory as the role deployed it, which
+   is why `config/build/` holds nothing else. Everything the image needs comes from the
+   registry and from npm; no file is copied in. #}
+SetWorkingDirectory=file
