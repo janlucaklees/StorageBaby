@@ -49,26 +49,41 @@ DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-
 # What a `routes:` entry may carry: the route itself, plus the two backend options a
 # single route can override for itself. Everything else about a route lives in the
 # service-wide `route:` block.
-ROUTE_KEYS = {"domain", "port", "scheme", "insecure_skip_verify", "basic_auth"}
+ROUTE_KEYS = {"domain", "port", "scheme", "insecure_skip_verify", "basic_auth", "probe_path"}
 # What the service-wide `route:` block may carry: traefik's own two options, plus the
 # two backend ones an entry may then override for itself. Unchecked, a misspelling
 # here is silent -- the template reads the keys it knows and ignores the rest.
-BLOCK_KEYS = {"internal", "wildcard_cert", "scheme", "insecure_skip_verify", "basic_auth"}
+BLOCK_KEYS = {"internal", "wildcard_cert", "scheme", "insecure_skip_verify", "basic_auth", "probe_path"}
 SCHEMES = {"http", "https"}
 
 
 def check_backend(p, opts: dict) -> None:
-    """`scheme` and `insecure_skip_verify`, wherever the two may be declared.
+    """The backend options a route resolves to, wherever they were declared.
 
-    Skipping verification only means anything for a TLS backend, and declaring it for a
+    `scheme` and `insecure_skip_verify` are checked together rather than each alone:
+    skipping verification only means anything for a TLS backend, and declaring it for a
     plain one is a statement that does nothing -- almost always a service that meant to
-    say `scheme: https` as well. So the pair is checked together rather than each alone.
+    say `scheme: https` as well.
+
+    `probe_path` is the URL this service says proves its route arrives, and it is the
+    service's to declare for the same reason every other option here is: a folder ships
+    the facts about itself, and adding one never edits the platform. The default is `/`,
+    which is right for an application that serves a page there and wrong for one whose
+    root is not a route at all -- an MCP gateway registers `/:name` and nothing above it,
+    so `/` is a legitimate 404 and `/livez` is the answer.
     """
     scheme = opts.get("scheme", "http")
     assert scheme in SCHEMES, f"{p.name}: route scheme must be one of {sorted(SCHEMES)}, not {scheme!r}"
     skip = opts.get("insecure_skip_verify", False)
     assert isinstance(skip, bool), f"{p.name}: insecure_skip_verify must be a boolean"
     assert not (skip and scheme != "https"), f"{p.name}: insecure_skip_verify needs scheme: https"
+    probe = opts.get("probe_path", "/")
+    assert isinstance(probe, str) and probe.startswith("/"), (
+        f"{p.name}: probe_path must be an absolute path, not {probe!r}"
+    )
+    # The verifier appends it to `https://127.0.0.1`, so a value carrying its own scheme or
+    # host would silently probe somewhere else entirely -- or nowhere.
+    assert not re.search(r"\s|://", probe), f"{p.name}: probe_path is a path, not a URL: {probe!r}"
 
 
 def check_backup(p, spec: dict) -> None:

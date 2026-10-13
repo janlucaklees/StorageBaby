@@ -19,6 +19,33 @@ The platform may **refuse** a service's request — a declaration it considers u
 name already claimed, a cross-service connection that looks wrong — and it fails loudly
 when it does. What it never does is silently substitute a decision of its own.
 
+### 1.1 The plugin test
+
+The rule above says who decides. This is how to check an answer, and it is the sharper
+half:
+
+> A service folder is a **plugin**. The platform is the receiver: it offers everything a
+> plugin needs in order to run. The plugin ships every fact about itself. **Placing one
+> never requires touching the receiver.**
+
+So the question to ask of any proposed change is not "is this platform or service?" but
+**"would adding the next service have to edit this?"** If yes, the thing being added is
+in the wrong place, however reasonable it looks there.
+
+It applies past the role. `probe_path` exists because of it: the integration verifier
+asks every route "does a request for this hostname reach this service", and `/` is the
+wrong place to ask it of a backend whose root is legitimately a 404. The alternative was
+a list of exceptions inside the test — which would have meant editing the receiver for
+every plugin that did not serve a page at its root. So the service names the path, and
+the test reads it. The consumer being a verifier rather than Traefik does not make the
+fact any less a property of the service: `scheme: https` is the same kind of statement,
+and nobody would put kopia's name in a Traefik template.
+
+The test also catches the inverse. A service may **not** ship a fact that belongs to the
+host — a storage path, a certificate zone, another service's port — because those are
+not facts about itself, and a plugin that asserts them is claiming someone else's
+decision. § 4 is where that line is drawn.
+
 **And the rule is not a purity test.** The goal is a platform that is practical and
 quick to start with, not a Kubernetes replacement. Where a clean separation would cost
 more than it is worth, the coupling is accepted and written down rather than engineered

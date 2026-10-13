@@ -173,6 +173,27 @@ names a key in `hosts/shared/services/traefik/secrets.sops.yaml`, listed in trae
 service's own secrets. A `routes:` entry may override it like the other two. Today the
 only consumer is traefik's own dashboard.
 
+A fourth option is consumed by neither Traefik nor this role, and belongs here anyway:
+
+```yaml
+route:
+  probe_path: /livez # default `/`: the URL that proves this route arrives
+```
+
+The integration verifier asks one question of every route — does a request for this
+hostname reach this service — and `/` is the wrong place to ask it of a backend whose
+root is not a route at all. The MCP hub registers `/:name` and `/:name/mcp` and nothing
+above them, so its `/` is a legitimate 404, which is also exactly what Traefik answers
+when it matches no router. The two are indistinguishable from a status code, so the
+service names a path instead.
+
+It is a route option rather than a flag in the test for the reason the rest of this
+contract exists: **a service folder is a plugin, and a plugin ships the facts about
+itself.** Placing one never edits the platform. `scheme: https` is the same kind of
+statement — "this backend speaks TLS because gRPC leaves it no choice" — and the fact
+that Traefik consumes one and the verifier the other does not make either less a
+property of the service. A `routes:` entry may override it like the other three.
+
 `scheme: https` is not about secrecy on a loopback hop — it is the only way Traefik
 speaks **HTTP/2** to a backend, and therefore the only way it can carry gRPC. Kopia's
 repository clients speak gRPC and cannot opt out, so `kopia/service.yml` declares both

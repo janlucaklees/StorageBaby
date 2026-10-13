@@ -173,6 +173,22 @@ def routes_of(spec: dict) -> list[dict]:
     return [{"domain": spec["domain"], "port": spec["port"]}] if "domain" in spec else []
 
 
+def probe_path(spec: dict, route: dict) -> str:
+    """Where this service says a request proves its route arrives.
+
+    The entry over the `route:` block over `/`, which is the precedence every other
+    backend option resolves with -- `roles/service/templates/traefik-route.yml.j2` does
+    the same for `scheme`, `insecure_skip_verify` and `basic_auth`.
+
+    It belongs to the service and not to this file because a service folder is a plugin:
+    it ships the facts about itself, and placing one never edits the platform. `/` is the
+    right default for an application that serves a page there, and wrong for one whose
+    root is not a route at all -- an MCP gateway registers `/:name` and nothing above it,
+    so its `/` is a legitimate 404.
+    """
+    return route.get("probe_path") or spec.get("route", {}).get("probe_path") or "/"
+
+
 def route_fqdn(route: dict, host_domain: str) -> str:
     """The public name of one route.
 
@@ -377,16 +393,22 @@ def test_domain_answers_over_https(host, owner, spec_path):
     # case where checking one of them proves nothing about the other.
     for route in routes:
         fqdn = route_fqdn(route, hostvars["domain"])
-        r = host.run(f"curl -sk -o /dev/null -w '%{{http_code}}' -H 'Host: {fqdn}' https://127.0.0.1/")
+        # The path the *service* nominates, not `/`: see `probe_path` above. A service
+        # whose root is a legitimate 404 would otherwise be indistinguishable from one
+        # Traefik routes nowhere, and the only way to tell them apart without asking the
+        # service would be to teach this file about each one.
+        path = probe_path(spec, route)
+        r = host.run(f"curl -sk -o /dev/null -w '%{{http_code}}' -H 'Host: {fqdn}' https://127.0.0.1{path}")
         code = r.stdout.strip()
         # The rc is not optional: curl prints `000` and exits non-zero when it never got
         # a response at all, and a status test on its own would read that as a pass.
-        assert r.rc == 0, f"{fqdn}: curl failed with {code}: {r.stderr}"
+        assert r.rc == 0, f"{fqdn}{path}: curl failed with {code}: {r.stderr}"
         assert code.isdigit(), r.stdout
         # 404 is Traefik matching no router at all, 5xx a backend that cannot answer.
         # Anything in between -- a redirect, a login page, a 401 -- proves the route
-        # arrives.
-        assert 200 <= int(code) < 500 and code != "404", f"{fqdn} answered {code}"
+        # arrives. A 404 on a declared `probe_path` is the service naming a path it does
+        # not serve, which is its own bug and reads the same way here.
+        assert 200 <= int(code) < 500 and code != "404", f"{fqdn}{path} answered {code}"
 
 
 @service_case
