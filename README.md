@@ -1051,7 +1051,8 @@ the stock Arch cloud image (`arch-cloudimg.qcow2`, downloaded once and never
 revalidated) and the same image after one full `pacman -Syu`
 (`arch-cloudimg-prepared.qcow2`), which every VM overlays. `create` rebuilds the
 prepared one when it is older than a week, with a throwaway VM that upgrades, cleans
-cloud-init and the machine-id, and powers off
+cloud-init and the machine-id, and powers off — about two minutes, measured, so the one
+run a week that pays for it is slower by that much and nothing else
 (`tests/integration/molecule/test-ci/tasks/base-image-stage.yml`). The point is that
 bootstrap's own upgrade in `prepare` then finds the kernel current and the
 compare-and-reboot task after it skips — that reboot hung a CI job for 86 minutes on

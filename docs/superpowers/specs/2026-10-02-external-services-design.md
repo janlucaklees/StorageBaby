@@ -443,3 +443,39 @@ Recorded during Tasks 1–4, against the shape above.
    (prepare, converge, idempotence at zero changes, 172 verifier cases). The `test-a`
    placement, which runs every service, has not been run on this branch because the test VM
    was shared with other work; it is the whole-branch run the plan's last section asks for.
+9. **The first real deployment (2026-10-13): Renaissance, from `janlucaklees/renaissance`.**
+   Recorded in `2026-10-12-renaissance-first-external-service-design.md`; what it settled
+   of the two open questions above and of § 4's step 10 of the handover:
+   - **A fine-grained token does not read ghcr packages; a classic `read:packages` token
+     does.** The fine-grained token JLK created for the repository (Contents: read-only,
+     that one repository) fetches `stable` over HTTPS exactly as the deploy script does
+     it, and the images were pulled with a separate classic token; the host holds both in
+     `sources.sops.yaml` and `registries.sops.yaml`. A first attempt at the repository
+     token failed with `Write access to repository not granted` on `ls-remote`: the token
+     had been created without the repository in its selection, which GitHub reports as a
+     404 on the repository rather than as a permission error. Checking both tokens
+     against GitHub before encrypting them is worth the minute.
+   - **The first tick after the merge behaved as predicted.** The old ansible-pull tick
+     converged the merged `stable` (`changed=6`: the new script and unit, among others);
+     the next tick, the first run of the script, found no state file, converged with
+     `changed=0` across 627 tasks and wrote `/var/lib/storagebaby/deploy.state`. The
+     pointer commit, pushed afterwards, converged the new service on its own tick
+     (`changed=54`, `failed=0`); the tick after that was the no-op path.
+   - **The platform's route model needs a proxy inside a pod whose frontend calls its
+     API on the same origin.** Renaissance's browser client calls `/api/...` on its own
+     hostname, and the platform routes a hostname to one port with no path rule, so the
+     pod carries an nginx container that splits `/api/` from the rest. Any
+     frontend-plus-API application deployed this way will need the same container; a
+     `path_prefix` on a route would be the platform-side alternative, and is not built.
+   - **The integration suite's reboot is gone from the common path.** Not an
+     external-services change, but it was what kept this branch off `stable`: the test
+     VMs now boot from a weekly pre-upgraded base image
+     (`tests/integration/molecule/test-ci/tasks/base-image-stage.yml`), so bootstrap's
+     upgrade in prepare no longer replaces the kernel and the compare-and-reboot task
+     skips. The first CI run on `master` with it took 59 minutes for `integration`,
+     cold, including building the image on the runner; the images are cached per ISO
+     week after that.
+   - **CI skips `integration` for a push that changes only host config or docs.** The
+     pointer commit was the first to take that path: `changes` decided
+     `integration=false`, `static` ran, `promote` moved `stable` six minutes after the
+     push.
