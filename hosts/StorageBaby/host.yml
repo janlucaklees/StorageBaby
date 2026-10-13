@@ -6,6 +6,9 @@ acme_email: email@janlucaklees.de
 # A records are the operator's. A service takes a name under one of these by writing it
 # out in full in its own `service.yml`.
 cert_zones: [home.klees.io, klees.io]
+# The registries this host holds a login for (secrets/registries.sops.yaml). A service
+# names the ones it needs; one it names that is not here is refused at converge.
+registries: [ghcr.io]
 tz: Europe/Berlin
 storage_roots:
   pool: /pool/apps
