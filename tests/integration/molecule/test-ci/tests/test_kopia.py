@@ -30,11 +30,11 @@ is sops-encrypted and, on a test host, generated fresh per run.
 
 import pytest
 from conftest import run_as
-from test_service import SPECS, container_name, load_spec, placed, quadlets
+from test_service import SPECS, container_name, load_spec, placed, quadlets, service_name
 
-KOPIA_SPECS = [(owner, p) for owner, p in SPECS if p.parent.name == "kopia"]
+KOPIA_SPECS = [(owner, p) for owner, p in SPECS if service_name(p) == "kopia"]
 kopia_case = pytest.mark.parametrize(
-    "owner,spec_path", KOPIA_SPECS, ids=[f"{owner}/{p.parent.name}" for owner, p in KOPIA_SPECS]
+    "owner,spec_path", KOPIA_SPECS, ids=[f"{owner}/{service_name(p)}" for owner, p in KOPIA_SPECS]
 )
 
 # `-k`: the server serves its own self-signed certificate, because its repository

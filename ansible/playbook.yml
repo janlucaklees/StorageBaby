@@ -27,6 +27,16 @@
       ansible.builtin.include_vars:
         file: '{{ storagebaby_repo_root }}/hosts/{{ inventory_hostname }}/host.yml'
 
+    # Where fetched external repositories are, on the controller: discovery, every
+    # `lookup('template')` and every `copy src:` read from the controller, so this is a
+    # controller path -- /var/lib/storagebaby/sources on a host whose deploy script runs the
+    # playbook, /repo/tests/fixtures/sources for Molecule (molecule.yml group var), the
+    # fixture tree for the static render (-e). Resolved through `default` and not declared
+    # as a play var, because a play var would outrank the inventory.
+    - name: Where fetched external repositories live
+      ansible.builtin.set_fact:
+        sources_root: "{{ sources_root | default('/var/lib/storagebaby/sources') }}"
+
     # `find` runs on the controller, which is where the repo lives: the devtools
     # container for a Molecule run, the host itself for ansible-pull. The fileglob
     # lookup cannot do this -- it globs only the basename, never a wildcard in a
@@ -57,11 +67,102 @@
       become: false
       register: _host_specs
 
-    - name: Collect placed services (shared first, then this host's)
+    # External services: a folder holding `source.yml` instead of `service.yml` points at a
+    # repository the deploy script fetched into sources_root/<name>, and the contract is at
+    # `path` inside it. Resolved here, before anything reads a spec, so every loop below --
+    # route names, TCP ports, the role include -- sees a pointer service exactly like an
+    # in-tree one.
+    - name: Discover shared service pointers
+      ansible.builtin.find:
+        paths: '{{ storagebaby_repo_root }}/hosts/shared/services'
+        patterns: source.yml
+        recurse: true
+        depth: 2
+        follow: true
+      delegate_to: localhost
+      become: false
+      register: _shared_pointers
+
+    - name: Discover this host's service pointers
+      ansible.builtin.find:
+        paths: '{{ storagebaby_repo_root }}/hosts/{{ inventory_hostname }}/services'
+        patterns: source.yml
+        recurse: true
+        depth: 2
+        follow: true
+      delegate_to: localhost
+      become: false
+      register: _host_pointers
+
+    - name: Resolve every pointer to the spec it fetches
+      ansible.builtin.set_fact:
+        _pointers: >-
+          {{ (_pointers | default([])) + [{
+               'name': pointer | dirname | basename,
+               'pointer_dir': pointer | dirname,
+               'spec': sources_root ~ '/' ~ (pointer | dirname | basename) ~ '/' ~ _source.path ~ '/service.yml'
+             }] }}
+      vars:
+        _source: "{{ lookup('file', pointer) | from_yaml }}"
+      loop: "{{ (_shared_pointers.files | map(attribute='path') | sort) + (_host_pointers.files | map(attribute='path') | sort) }}"
+      loop_control:
+        loop_var: pointer
+        label: '{{ pointer | dirname | basename }}'
+
+    # A pointer whose repository is not fetched is a hard stop on a real converge -- the
+    # deploy script fetches before it runs the playbook, so this means the playbook was run
+    # by hand or the fetch failed. Under --check and in a render it is reported and skipped
+    # instead, the way a service user that does not exist yet is: the operator's pre-flight
+    # of a host that has never deployed has to reach the end of the play, and a static
+    # render has no host to fetch on.
+    - name: A pointer whose repository has not been fetched yet
+      ansible.builtin.fail:
+        msg: >-
+          {{ item.name }} points at an external repository and {{ item.spec | dirname }} does
+          not exist here. storagebaby-deploy.service fetches it before it runs this playbook;
+          start that unit instead, or read its journal for the fetch that failed.
+      loop: '{{ _pointers | default([]) }}'
+      loop_control:
+        label: '{{ item.name }}'
+      when:
+        - not (item.spec is file)
+        - not ansible_check_mode
+        - not (render_only | bool)
+
+    - name: What cannot be shown for a pointer that is not fetched yet
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.name }}: its repository is not fetched here ({{ item.spec | dirname }}), so
+          nothing of this service can be rendered or described. The deploy unit fetches it.
+      loop: '{{ _pointers | default([]) }}'
+      loop_control:
+        label: '{{ item.name }}'
+      when: not (item.spec is file)
+
+    - name: The pointers whose repository is here
+      ansible.builtin.set_fact:
+        _resolved_pointers: "{{ _pointers | default([]) | selectattr('spec', 'file') | list }}"
+
+    # The same rule `test_contract.py` holds for an in-tree folder, asserted here because a
+    # private repository's contract is never seen by the static suite.
+    - name: A fetched service.yml names the service its pointer folder names
+      ansible.builtin.assert:
+        that: (lookup('file', item.spec) | from_yaml).name == item.name
+        fail_msg: >-
+          {{ item.spec }} says name: {{ (lookup('file', item.spec) | from_yaml).name }}, but
+          the pointer folder is {{ item.name }}. The folder is the service's name on this host.
+        quiet: true
+      loop: '{{ _resolved_pointers }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Collect placed services (shared first, then this host's; pointers after in-tree specs)
       ansible.builtin.set_fact:
         placed_services: >-
           {{ (_shared_specs.files | map(attribute='path') | sort)
-             + (_host_specs.files | map(attribute='path') | sort) }}
+             + (_resolved_pointers | selectattr('pointer_dir', 'search', '/hosts/shared/') | map(attribute='spec') | sort)
+             + (_host_specs.files | map(attribute='path') | sort)
+             + (_resolved_pointers | rejectattr('pointer_dir', 'search', '/hosts/shared/') | map(attribute='spec') | sort) }}
 
     # Every route name placed on this host, collected here and not in the role: the
     # role runs once per service and can only see its own spec, while what each
@@ -138,6 +239,39 @@
     - name: The host's TCP entrypoint ports, in a stable order
       ansible.builtin.set_fact:
         placed_tcp_ports: '{{ _tcp_expanded | default([]) | unique | sort | list }}'
+
+    # Every loopback number the host's placement claims: route ports, TCP entrypoints and the
+    # targets that differ from their entrypoint, in one list -- the namespace
+    # tests/static/test_ports.py checks for every spec it can see. It cannot see a pointer to
+    # a private repository, so the host checks before it writes a single route file: two
+    # services on one loopback port is one of them silently unreachable.
+    # A `target` counts only when it is declared: paperless writes `target: 2121` for the
+    # port it forwards elsewhere and no `target` for the passive range, which is exactly
+    # the "target differs from port" distinction test_ports.py makes, without jmespath.
+    - name: Collect every port the placed services claim
+      ansible.builtin.set_fact:
+        _claimed_ports: >-
+          {{ (_claimed_ports | default([]))
+             + (_spec.routes | default([]) | map(attribute='port') | list)
+             + ([_spec.port] if (_spec.port is defined and _spec.routes is not defined) else [])
+             + (_spec.tcp_ports | default([]) | selectattr('target', 'defined') | map(attribute='target') | list) }}
+      vars:
+        _spec: "{{ lookup('file', placed_service) | from_yaml }}"
+      loop: '{{ placed_services }}'
+      loop_control:
+        loop_var: placed_service
+        label: '{{ placed_service | dirname | basename }}'
+
+    - name: No two placed services claim the same port
+      ansible.builtin.assert:
+        that: _duplicates | length == 0
+        fail_msg: >-
+          ports claimed twice on {{ inventory_hostname }}: {{ _duplicates | join(', ') }}.
+          Route ports, TCP entrypoints and TCP targets are one namespace per host.
+        quiet: true
+      vars:
+        _all: '{{ (_claimed_ports | default([])) + (_tcp_expanded | default([])) }}'
+        _duplicates: "{{ _all | community.general.counter | dict2items | selectattr('value', 'gt', 1) | map(attribute='key') | list }}"
 
     # The one fact this play needs, gathered only where it is needed. `gather_facts: false`
     # at the top is deliberate -- this play runs every five minutes from the deploy timer --

@@ -17,6 +17,19 @@
     group: root
     mode: '0755'
 
+# The deploy tick itself. One text, installed from here on every converge and from a
+# heredoc in bootstrap.sh for the first tick of a fresh host; `test_bootstrap.py` keeps the
+# two identical. It is a program and not the unit's ExecStart because it watches more than
+# one repository: the platform's, and every external repository a pointer under
+# hosts/<host>/services/ names.
+- name: Install the deploy script
+  ansible.builtin.copy:
+    src: storagebaby-deploy
+    dest: /usr/local/sbin/storagebaby-deploy
+    owner: root
+    group: root
+    mode: '0755'
+
 # Traefik is rootless, so every port it binds has to be above this line. 80 is the
 # baseline (the web entrypoint); a placed service that claims a lower TCP port -- FTP's
 # control port 21 is the case this exists for -- brings it down to that port and no

@@ -1,0 +1,130 @@
+# `registries`: the registry hosts this service's images are private on. The service names
+# them; the host offers them (`registries` in host.yml) and holds the login
+# (hosts/<host>/secrets/registries.sops.yaml, `<registry>: { user, token }`) -- the same
+# split as cert_zones and the ACME credentials, docs/ownership.md § 4.2. The service user
+# gets an auth.json at the path rootless podman reads when its runtime directory holds
+# none, ~/.config/containers/auth.json, with one entry per registry it named. Written
+# before the pull (host.yml orders it so), and read by the user's own
+# podman-auto-update.timer too; the integration suite's private-registry fixture is what
+# proves both.
+#
+# A service that declares none gets the file removed, so a `registries` line that goes away
+# takes the login with it.
+#
+# "Write the registry login" below uses `copy: content:`, not `copy: src:` -- the rendered
+# JSON passes through Ansible's connection plugin and lands in the target's remote tmp
+# (root, 0700) before the final write. That is the one place this role takes a different
+# route from `secrets.yml`, where the plaintext never leaves the host; accepted here
+# because on a deploy tick the controller *is* the host.
+- name: Where the service user's registry login lives
+  ansible.builtin.set_fact:
+    registry_auth_file: '{{ svc_home }}/.config/containers/auth.json'
+    service_registries: '{{ service.registries | default([]) }}'
+    # Reset per service: the role is included once per placed service in one play.
+    _auths: {}
+
+- name: No login for a service that declares no registries
+  ansible.builtin.file:
+    path: '{{ registry_auth_file }}'
+    state: absent
+  when: service_registries | length == 0
+
+- name: Registry login for a service that declares registries
+  when: service_registries | length > 0
+  block:
+    # The refusal. The host's list is the allowlist; a registry outside it is a service
+    # asking for something this host cannot provide, said out loud rather than discovered
+    # as "unauthorized" at the pull.
+    - name: The host offers every registry this service names
+      ansible.builtin.assert:
+        that: service_registries | difference(registries | default([])) | length == 0
+        fail_msg: >-
+          {{ service.name }} names registries {{ inventory_hostname }} does not offer:
+          {{ service_registries | difference(registries | default([])) | join(', ') }}.
+          Add them to `registries` in hosts/{{ inventory_hostname }}/host.yml with a login in
+          hosts/{{ inventory_hostname }}/secrets/registries.sops.yaml, or pull from one it offers.
+        quiet: true
+
+    # The same path and name shape the host-secret-set tasks use (`set-<name>`), because
+    # that is what this file is: a per-host set the operator maintains.
+    - name: Copy the host's registry logins to the host
+      ansible.builtin.copy:
+        src: '{{ storagebaby_repo_root }}/hosts/{{ inventory_hostname }}/secrets/registries.sops.yaml'
+        dest: /etc/storagebaby/set-registries.secrets.sops.yaml
+        owner: root
+        group: root
+        mode: '0600'
+
+    # A pre-flight of a host that is gaining its first `registries` finds no copy on the
+    # host yet (the copy above is skipped under --check); the decrypt is skipped with it
+    # and the login is only described. On a converged host the file is there.
+    - name: Look for the logins on the host
+      ansible.builtin.stat:
+        path: /etc/storagebaby/set-registries.secrets.sops.yaml
+      register: _registries_file
+
+    - name: Decrypt the registry logins on the host
+      ansible.builtin.command: sops --decrypt --output-type json /etc/storagebaby/set-registries.secrets.sops.yaml
+      environment:
+        SOPS_AGE_KEY_FILE: /etc/storagebaby/age.key
+      register: _registries_decrypted
+      check_mode: false
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: _registries_file.stat.exists
+
+    - name: The host could decrypt them
+      ansible.builtin.assert:
+        that: _registries_decrypted.rc == 0
+        fail_msg: 'sops failed to decrypt the registry logins on {{ inventory_hostname }}: {{ _registries_decrypted.stderr }}'
+        quiet: true
+      when: _registries_file.stat.exists
+
+    # Key names are not secret; the values never reach a message.
+    - name: Every registry this service names has a user and a token
+      ansible.builtin.assert:
+        that:
+          - item in _logins
+          - "'user' in _logins[item] and 'token' in _logins[item]"
+        fail_msg: 'registries.sops.yaml on {{ inventory_hostname }} has no user and token for {{ item }}, which {{ service.name }} names'
+        quiet: true
+      vars:
+        _logins: '{{ _registries_decrypted.stdout | from_json }}'
+      loop: '{{ service_registries }}'
+      when: _registries_file.stat.exists
+
+    - name: The service user's config directories
+      ansible.builtin.file:
+        path: '{{ svc_home }}/{{ item }}'
+        state: directory
+        owner: '{{ svc_user }}'
+        group: '{{ svc_user }}'
+        mode: '0700'
+      loop: [.config, .config/containers]
+
+    # The file podman reads: {"auths": {"<registry>": {"auth": "<base64 user:token>"}}}, one
+    # entry per registry the service named, each from that registry's own login.
+    - name: One login entry per named registry
+      ansible.builtin.set_fact:
+        _auths: "{{ _auths | combine({item: {'auth': (_logins[item].user ~ ':' ~ _logins[item].token) | b64encode}}) }}"
+      vars:
+        _logins: '{{ _registries_decrypted.stdout | from_json }}'
+      loop: '{{ service_registries }}'
+      no_log: true
+      when: _registries_file.stat.exists
+
+    - name: Write the registry login
+      ansible.builtin.copy:
+        content: "{{ {'auths': _auths} | to_nice_json }}\n"
+        dest: '{{ registry_auth_file }}'
+        owner: '{{ svc_user }}'
+        group: '{{ svc_user }}'
+        mode: '0600'
+      no_log: true
+      when: _registries_file.stat.exists
+
+    - name: What a pre-flight cannot write yet
+      ansible.builtin.debug:
+        msg: '{{ service.name }}: the registry login will be written on the converge, once the logins file is on the host.'
+      when: not _registries_file.stat.exists

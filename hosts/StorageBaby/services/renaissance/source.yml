@@ -1,0 +1,6 @@
+# Renaissance lives in its own repository; this folder only says where. The contract is
+# deploy/storagebaby/ there, and `stable` is the branch its CI promotes once the full
+# suite passed, so the host never fetches a contract that was not tested with its code.
+repo: https://github.com/janlucaklees/renaissance
+ref: stable
+path: deploy/storagebaby

@@ -37,11 +37,28 @@ def test_bootstrap_is_valid_bash():
     subprocess.run(["bash", "-n", str(REPO / "bootstrap.sh")], check=True)
 
 
-def test_bootstrap_embeds_the_same_units_host_base_installs():
+def test_bootstrap_embeds_the_same_units_and_deploy_script_host_base_installs():
+    """bootstrap.sh and host_base install one deploy unit, one timer and one script.
+
+    The script is embedded and not fetched: the first deploy runs before `host_base` has
+    ever converged, and bootstrap cannot clone the repository -- the operator registers the
+    deploy key only after bootstrap prints it. So the heredoc is the second copy of the
+    file, and this is what keeps it the same copy.
+    """
     script = (REPO / "bootstrap.sh").read_text()
-    for unit in ["storagebaby-deploy.service", "storagebaby-deploy.timer"]:
-        body = (UNIT_DIR / unit).read_text().strip()
-        assert body in script, f"{unit} in bootstrap.sh drifted from host_base/files/{unit}"
+    for name in ["storagebaby-deploy.service", "storagebaby-deploy.timer", "storagebaby-deploy"]:
+        body = (UNIT_DIR / name).read_text().strip()
+        assert body in script, f"{name} in bootstrap.sh drifted from host_base/files/{name}"
+
+
+def test_deploy_unit_runs_the_script_and_not_ansible_pull():
+    unit = (UNIT_DIR / "storagebaby-deploy.service").read_text()
+    assert "ExecStart=/usr/local/sbin/storagebaby-deploy\n" in unit, unit
+    assert "ansible-pull" not in unit, "the unit must run the script; ansible-pull watches one repository only"
+
+
+def test_deploy_script_is_valid_bash():
+    subprocess.run(["bash", "-n", str(UNIT_DIR / "storagebaby-deploy")], check=True)
 
 
 def test_bootstrap_sets_up_the_same_chaotic_aur_as_the_storage_role():

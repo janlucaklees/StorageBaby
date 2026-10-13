@@ -12,6 +12,9 @@ whose §2, §4 and §9 describe the pre-Phase-4 world and carry a pointer to
   of (disks, parity, the mergerfs pool, the snapraid array and its nightly run).
 - `hosts/<host>/services/<name>/` — a service placed on that host.
 - `hosts/shared/services/<name>/` — a service that runs on every host.
+- `hosts/<host>/services/<name>/source.yml` — a service whose definition lives in its own
+  repository: the pointer names the repository, the branch and the folder, and the host
+  fetches it on every deploy tick ("External services" below).
 - `ansible/` — the site playbook and roles that turn the above into a running host.
 - `tests/` — static checks and the Molecule integration scenario.
 
@@ -48,12 +51,16 @@ Traefik.
 
 Everything but traefik is placed on storagebaby; `test-a` places all eight folders by
 symlink, `test-ci` the smaller subset a GitHub runner can carry. Both test hosts also place
-two test-only fixtures, in no table here because they are not NAS services: `tcp-echo`,
-which echoes a payload back so the `tcp_ports` path can be measured end to end, and
+three test-only fixtures, in no table here because they are not NAS services: `tcp-echo`,
+which echoes a payload back so the `tcp_ports` path can be measured end to end,
 `build-echo`, which runs the image its own `.build` unit produces so the host-build path
-stays covered. They are the only placements that are a real folder per host rather than a
-symlink — there is nothing to link to, and neither belongs on the NAS — and a static test
-keeps each one's two copies byte-identical.
+stays covered, and `ext-echo`, a service that lives in its own repository
+(`tests/fixtures/sources/ext-echo`) and is placed by a pointer, fetched by the VM from a
+throwaway basic-auth git server and pulling its image from a throwaway private registry,
+so the external path and the private-image path both run for real. They are the only
+placements that are a real folder per host rather than a symlink — there is nothing to
+link to, and none belongs on the NAS — and a static test keeps each one's two copies
+byte-identical.
 
 Kopia is pinned on purpose — a kopia upgrade can carry a repository format upgrade,
 which is not a decision for a nightly timer. The pods pin on the same rule: whatever
@@ -415,7 +422,7 @@ Stop the timer **before** the placing commit reaches `stable`:
 doas systemctl stop storagebaby-deploy.timer
 ```
 
-The checkout the deploy unit converges from does not exist yet — `ansible-pull` clones it
+The checkout the deploy unit converges from does not exist yet — the deploy script clones it
 on its first run, and there must be no first unattended run before this one. Make it by
 hand, at the commit CI promoted, with the host's own deploy key:
 
@@ -476,15 +483,11 @@ doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
 doas systemctl start storagebaby-deploy.timer
 ```
 
-**If the converge aborts, re-run that same command.** Do not reach for the timer or the
-deploy unit to finish it: `ansible-pull` runs with `--only-if-changed`, which compares the
-checkout's sha before and after its own `git` step, and the checkout is already at
-`stable`'s tip — so a tick converges nothing and the host sits half-done looking idle,
-until the next push to `stable`. That is right after a successful run and wrong after a
-failed one, and the hand command is what closes the gap. Measured on the test VM:
-`systemctl start storagebaby-deploy.service` against an unchanged checkout logs
-`Repository has not changed, quitting` and exits 0 without running the playbook, so
-starting the unit by hand is not a retry either.
+**If the converge aborts, re-run that same command — or start the deploy unit.**
+`storagebaby-deploy` writes `/var/lib/storagebaby/deploy.state` only after a converge that
+ended `failed=0`, so a tick after a failed run finds the state stale and runs the playbook
+again. (`ansible-pull --only-if-changed`, which the unit used to run, compared the checkout
+before and after its own fetch and would have sat idle until the next push.)
 
 Nothing needs starting afterwards: the services this converge places are started by it.
 What comes back down is only whatever the old stacks were serving, and that is what step 10
@@ -870,12 +873,56 @@ Two service-specific notes:
   connection is already made. To force a fresh connect from `service.yml` and the
   secrets instead, delete `repository.config` before starting.
 
+## External services
+
+A repository of your own can carry its whole service definition and be deployed by this
+platform. The repository holds the contract in a folder — `service.yml`, `quadlet/`,
+`config/`, `secrets.sops.yaml`, a README — exactly as a folder under `hosts/` would. This
+repository holds the pointer, and the host holds the credentials to reach the repository
+and its images:
+
+    hosts/StorageBaby/services/<name>/source.yml
+      repo: https://github.com/<you>/<repository>
+      ref: main
+      path: deploy/storagebaby
+    hosts/StorageBaby/secrets/sources.sops.yaml          # <name>: { token }   -- the host's git token for that repository
+    hosts/StorageBaby/secrets/registries.sops.yaml       # ghcr.io: { user, token }, for every registry host.yml offers
+
+Placement is still the folder. The deploy tick (`/usr/local/sbin/storagebaby-deploy`)
+fetches every pointed repository into `/var/lib/storagebaby/sources/<name>` beside the
+platform checkout and converges when any of them moved; the playbook treats the fetched
+folder like a service folder. Nothing external passes through this repository's CI — the
+external repository tests itself, and the host asserts two things at converge time: the
+fetched `service.yml` names the service its folder names, and no two services on the host
+claim one loopback port.
+
+The external repository's `secrets.sops.yaml` is encrypted to your operator key **and the
+host's age key** (the `&storagebaby` recipient in `.sops.yaml` here), so the external
+repository needs a `.sops.yaml` of its own listing both. `docs/external-service.md` is the
+page to read from that repository's side.
+
+Credentials are the host's, like storage classes and certifiable domains
+(`docs/ownership.md`). One fine-grained GitHub token per repository (Contents: read-only,
+only that repository) goes into `hosts/<host>/secrets/sources.sops.yaml` under the pointer's
+name, with `mise run sops`. The host presents it over HTTPS through `GIT_ASKPASS`; it is
+never written to disk in the clear. A public repository needs no entry. A private image
+needs `registries: [ghcr.io]` in the external `service.yml`, the same registry in the host's
+`registries` list in `host.yml`, and a login for it in
+`hosts/<host>/secrets/registries.sops.yaml`; the role writes the service user's `auth.json`
+from that before the pull, and refuses a service that names a registry the host does not
+offer. Check when you create the registry token whether a fine-grained token can read
+packages on GitHub as it is then; if not, it is a classic token with `read:packages`, which
+is account-wide — the one place where the per-repository isolation does not hold.
+
+Unplacing is deleting the pointer folder: the next tick removes the fetched checkout. The
+service's units stay, as for any unplaced service.
+
 ## Secrets, in one minute
 
 - Secrets live in git, encrypted: `hosts/<host>/services/<svc>/secrets.sops.yaml` and
   `hosts/<host>/secrets/<set>.sops.yaml`. Deploy turns them into `podman secret`s.
 - `.sops.yaml` lists **public** keys only: yours (`&jlk`, the workstation key) and one
-  per host (`&StorageBaby`), each host in its own rule **and** the `hosts/shared/**`
+  per host (`&storagebaby`), each host in its own rule **and** the `hosts/shared/**`
   rule. No private key is ever in the repo.
 - No secret is shared between services. Kopia keeps a `client_<service>` per backup
   client in its own file, and each service keeps the same value as its own
@@ -988,6 +1035,7 @@ these with their arguments:
     mise run molecule-login         # SSH into the running test VM
     mise run molecule-exec 'podman ps -a'   # one command on it, no TTY needed
     mise run test-clean             # destroy the VM and drop the Molecule cache
+    mise run test-base-image        # rebuild the pre-upgraded image the test VMs boot from
     mise run sops hosts/shared/services/traefik/secrets.sops.yaml
     mise run updatekeys             # re-encrypt every secret file for the recipients in .sops.yaml
     mise run install-hooks          # once per clone: lefthook's formatting hook
@@ -997,6 +1045,19 @@ environment assignment in front of the command — `MOLECULE_HOST=test-ci mise r
 test-integration`, not `make test-integration MOLECULE_HOST=test-ci`.
 `MOLECULE_HOST`, `MOLECULE_VM_MEMORY_MIB` and `MOLECULE_VM_VCPUS` can also be set
 in `.env` (see `.env.example`); their defaults live in the Molecule scenario.
+
+The test VMs boot from two cached files under `/var/lib/libvirt/images/storagebaby/`:
+the stock Arch cloud image (`arch-cloudimg.qcow2`, downloaded once and never
+revalidated) and the same image after one full `pacman -Syu`
+(`arch-cloudimg-prepared.qcow2`), which every VM overlays. `create` rebuilds the
+prepared one when it is older than a week, with a throwaway VM that upgrades, cleans
+cloud-init and the machine-id, and powers off — about two minutes, measured, so the one
+run a week that pays for it is slower by that much and nothing else
+(`tests/integration/molecule/test-ci/tasks/base-image-stage.yml`). The point is that
+bootstrap's own upgrade in `prepare` then finds the kernel current and the
+compare-and-reboot task after it skips — that reboot hung a CI job for 86 minutes on
+2026-10-07. CI caches both files per ISO week. `mise run test-clean` leaves them alone,
+like the stock image before them.
 
 mise, Docker and lefthook are all the workstation needs for everything but the
 integration tests and the secrets: mise comes from the distribution (pacman:

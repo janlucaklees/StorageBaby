@@ -120,3 +120,19 @@ Restore from anywhere with the bucket credentials and `repository_password`:
 Switch the host to `stable`: re-run bootstrap without `--branch`, or edit `BRANCH` in
 `/etc/storagebaby/deploy.conf`; `doas systemctl enable --now storagebaby-deploy.timer`.
 From then on CI moves `stable` and the host follows it every five minutes.
+
+## 8. A repository of your own
+
+A service can live in its own repository instead of a folder here; the host fetches it on
+every deploy tick. Add the pointer:
+
+    hosts/StorageBaby/services/<name>/source.yml
+      repo: https://github.com/<you>/<repository>
+      ref: main
+      path: deploy/storagebaby
+
+For a private repository, a fine-grained token (resource owner you, only this repository,
+Contents: read-only) under `<name>: { token }` in
+`hosts/StorageBaby/secrets/sources.sops.yaml` (`mise run sops` on that file). Commit, let
+CI promote `stable`; the next tick fetches and converges. `docs/external-service.md` is
+the page to hand to the other repository.

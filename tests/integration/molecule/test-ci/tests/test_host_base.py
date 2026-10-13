@@ -103,6 +103,22 @@ def test_deploy_units_installed_but_timer_off_for_test_host(host):
     assert host.service("storagebaby-deploy.timer").is_enabled is False
 
 
+DEPLOY_SCRIPT = "/usr/local/sbin/storagebaby-deploy"
+
+
+def test_deploy_script_installed_and_named_by_the_unit(host):
+    """The tick is a program the role installs, and the unit runs that program.
+
+    `ansible-pull` could watch exactly one repository; the script also fetches every
+    external repository a pointer under hosts/<host>/services/ names, and converges when
+    any of them moved.
+    """
+    f = host.file(DEPLOY_SCRIPT)
+    assert f.exists and f.mode == 0o755 and f.user == "root"
+    unit = host.file("/etc/systemd/system/storagebaby-deploy.service").content_string
+    assert f"ExecStart={DEPLOY_SCRIPT}\n" in unit, unit
+
+
 def test_age_key_present(host):
     f = host.file("/etc/storagebaby/age.key")
     assert f.exists and f.mode == 0o600 and f.user == "root"
