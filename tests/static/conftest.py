@@ -27,18 +27,43 @@ def host_names() -> list[str]:
     return sorted(p.name for p in HOSTS.iterdir() if p.is_dir() and p.name != "shared")
 
 
+# The external repositories the static suite can see: one folder per pointer name holding
+# that repository's working tree, exactly as the host fetches it. On a host the same tree
+# is /var/lib/storagebaby/sources/<name>; for Molecule it is this folder under /repo.
+FIXTURE_SOURCES = REPO / "tests" / "fixtures" / "sources"
+
+
 @dataclass(frozen=True)
 class Placement:
     host: str
     name: str
     dir: Path
     spec: dict
+    # The pointer folder under hosts/ for an external service, None for an in-tree one.
+    pointer: Path | None = None
 
 
-def _services_in(dir_: Path) -> list[tuple[str, Path, dict]]:
+def external_source_dir(name: str, source: dict) -> Path | None:
+    """Where a pointer's contract folder is in the fixture tree, or None when absent.
+
+    A pointer to a private repository on a real host has no local tree and yields no
+    placement: everything about such a service is checked on the host at converge time.
+    """
+    folder = FIXTURE_SOURCES / name / source["path"]
+    return folder if (folder / "service.yml").exists() else None
+
+
+def _services_in(dir_: Path) -> list[tuple[str, Path, dict, Path | None]]:
+    if not dir_.is_dir():
+        return []
     out = []
-    for spec_path in sorted(dir_.glob("*/service.yml")):
-        out.append((spec_path.parent.name, spec_path.parent.resolve(), load_yaml(spec_path)))
+    for folder in sorted(p for p in dir_.iterdir() if p.is_dir()):
+        if (folder / "service.yml").exists():
+            out.append((folder.name, folder.resolve(), load_yaml(folder / "service.yml"), None))
+        elif (folder / "source.yml").exists():
+            resolved = external_source_dir(folder.name, load_yaml(folder / "source.yml"))
+            if resolved is not None:
+                out.append((folder.name, resolved, load_yaml(resolved / "service.yml"), folder))
     return out
 
 
@@ -46,9 +71,18 @@ def placements() -> list[Placement]:
     shared = _services_in(HOSTS / "shared" / "services")
     result = []
     for host in host_names():
-        for name, dir_, spec in shared + _services_in(HOSTS / host / "services"):
-            result.append(Placement(host, name, dir_, spec))
+        for name, dir_, spec, pointer in shared + _services_in(HOSTS / host / "services"):
+            result.append(Placement(host, name, dir_, spec, pointer))
     return result
+
+
+def pointers() -> list[tuple[str, str, Path, dict]]:
+    """(owner, name, pointer folder, source.yml) for every pointer; owner is a host or 'shared'."""
+    out = []
+    for owner_dir in [HOSTS / "shared"] + [HOSTS / h for h in host_names()]:
+        for pointer in sorted((owner_dir / "services").glob("*/source.yml")):
+            out.append((owner_dir.name, pointer.parent.name, pointer.parent, load_yaml(pointer)))
+    return out
 
 
 def routes_of(spec: dict) -> list[dict]:
@@ -152,6 +186,8 @@ def rendered(tmp_path_factory) -> Path:
                 "ansible_become=false",
                 "-e",
                 f"tcp_bind_address={RENDER_TCP_BIND_ADDRESS}",
+                "-e",
+                f"sources_root={FIXTURE_SOURCES}",
             ],
             check=True,
             cwd=str(REPO),

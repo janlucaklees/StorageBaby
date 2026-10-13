@@ -35,6 +35,8 @@ def test_recipients_match_sops_config(relpath):
 
 @pytest.mark.parametrize("p", placements(), ids=lambda p: f"{p.host}/{p.name}")
 def test_declared_secrets_exist_in_file(p):
+    if p.pointer is not None and not (p.dir / "secrets.sops.yaml").exists():
+        pytest.skip("external fixture: prepare generates its secrets file, encrypted to the VM")
     if not p.spec["secrets"]:
         return
     doc = load_yaml(p.dir / "secrets.sops.yaml")

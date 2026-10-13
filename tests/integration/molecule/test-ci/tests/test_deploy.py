@@ -1,12 +1,18 @@
-"""The production deploy path: `storagebaby-deploy.service` pulling the stable branch.
+"""The production deploy path: `storagebaby-deploy.service` fetching the stable branch.
 
-The unit is a oneshot that runs `ansible-pull` against the bare repo seeded in
-prepare, so `systemctl start` blocks until the whole convergence is done -- a minute
-or two on the first run, which clones the repo first. `timeout` keeps a wedged pull
-from hanging the verifier.
+The unit is a oneshot that runs `/usr/local/sbin/storagebaby-deploy` against the bare repo
+seeded in prepare: it fetches the checkout, compares it (and every pointed external
+repository) with the SHAs of the last successful converge in /var/lib/storagebaby/deploy.state,
+and runs the playbook when anything differs. `systemctl start` blocks until the whole
+convergence is done -- a minute or two on the first run, which clones the repo first.
+`timeout` keeps a wedged pull from hanging the verifier.
 
-Every case here runs last (`order(-1)`, which keeps their relative order): all but the
-first two push to the seeded remote and restart a service or remount the pool, which every
+Every case here runs last (`order(-1)`, which keeps their relative order): the first two
+read the deploy tick without changing anything, the five read-only external cases after
+them (moved here from test_external.py) read the fetched pointer path the same way, and
+every case from `test_the_whole_playbook_runs_clean_in_check_mode` on mutates the remote
+or the host -- a push to the seeded repository or a pointer's own, a revoked credential, a
+drifted file, a missing device -- restarting a service or remounting the pool, which every
 other test would otherwise have to account for.
 """
 
@@ -17,13 +23,17 @@ from typing import NamedTuple
 
 import pytest
 from conftest import run_as
+from test_external import AUTH_JSON, FIXTURE, SOURCES, pointer_case, pointer_cases
 from test_service import (
+    HOSTS,
     SPECS,
     container_name,
     hosts_file_map,
     load_spec,
+    placed,
     pod_unit,
     quadlets,
+    service_name,
     unit_stem,
 )
 from test_storage import storage
@@ -34,7 +44,28 @@ DEPLOY = "timeout 900 systemctl start storagebaby-deploy.service"
 SEEDED = "/srv/src"
 # The checkout `ansible-pull` clones into and re-uses; the deploy unit names it.
 PULLED = "/var/lib/storagebaby/repo"
+# The pointer's own working copy, pushed to by the cases below -- the counterpart of
+# `/srv/git/<name>.git`, the bare remote `storagebaby-deploy` fetches from.
+EXT_SRC = "/srv/ext-src"
 JOURNAL = "journalctl -u storagebaby-deploy.service --no-pager | tail -80"
+
+
+def run_tick(host):
+    """Start the deploy unit and return (result, the journal of exactly that run).
+
+    A cursor, not `--since @<epoch>`: the epoch has second resolution, and a tick that
+    starts in the same second the previous one ended returns that one's tail too -- which
+    is how a correct no-op tick once failed on a `PLAY RECAP` that was not its own.
+    """
+    cursor = host.check_output(
+        "journalctl -u storagebaby-deploy.service -n 1 -q --show-cursor | sed -n 's/^-- cursor: //p'"
+    )
+    r = host.run(DEPLOY)
+    after = f"--after-cursor='{cursor}'" if cursor else ""
+    journal = host.run(f"journalctl -u storagebaby-deploy.service {after} --no-pager").stdout
+    return r, journal
+
+
 # `-u test:test`: the dashboard sits behind the basicAuth middleware `route.basic_auth`
 # renders, and the pair is the one `prepare.yml` writes into `dashboard_htpasswd` on a test
 # host. Without it the probe below gets a 401, which is Traefik answering correctly and the
@@ -113,7 +144,10 @@ def other_placed_service(host) -> tuple[str, str] | None:
     """
     hostname = host.check_output("uname -n")
     for owner, spec_path in SPECS:
-        name = spec_path.parent.name
+        if not spec_path.is_relative_to(HOSTS):
+            # A pointer's spec lives in the fetched external tree, not under hosts/.
+            continue
+        name = service_name(spec_path)
         if name != "traefik" and owner in ("shared", hostname):
             return name, pod_unit(spec_path) or f"{name}.service"
     return None
@@ -140,14 +174,145 @@ def check_recap(result) -> list[str]:
 
 
 @pytest.mark.order(-1)
-def test_deploy_service_is_a_noop_when_nothing_changed(host):
-    # The checkout renders byte for byte what the converge already put on the host, so
-    # nothing is reported changed and no unit is restarted -- that is the whole claim.
+def test_first_deploy_converges_the_checkout_and_changes_nothing(host):
+    """The first tick finds no state file, clones the checkout and runs the playbook; the
+    checkout renders byte for byte what the converge already put on the host, so nothing
+    is reported changed and no unit is restarted.
+    """
     before = unit_marks(host, "svc-traefik", "traefik.service")
     r = host.run(DEPLOY)
     assert r.rc == 0, host.run(JOURNAL).stdout
     assert host.file("/var/lib/storagebaby/repo/ansible/playbook.yml").exists
     assert_the_role_did_not_restart(host, "svc-traefik", "traefik.service", before, "a deploy that changed nothing")
+
+
+STATE = "/var/lib/storagebaby/deploy.state"
+NOOP_LINE = "nothing changed since the last converge; not running the playbook"
+
+
+@pytest.mark.order(-1)
+def test_a_tick_with_nothing_changed_does_not_run_the_playbook(host):
+    """The second tick: the state file matches every watched checkout, so no playbook runs.
+
+    Checked on the journal line the script writes, not on timing: a playbook that runs and
+    changes nothing looks the same from the units' side, and this is the claim that the
+    tick is cheap when the world did not move.
+    """
+    state = host.file(STATE)
+    assert state.exists, "the first deploy wrote no state file"
+    repo_sha = host.check_output("git -C /var/lib/storagebaby/repo rev-parse HEAD")
+    assert f"repo {repo_sha}" in state.content_string.splitlines(), state.content_string
+    r, journal = run_tick(host)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+    assert NOOP_LINE in journal, journal
+    assert "PLAY RECAP" not in journal, f"the playbook ran on an unchanged state:\n{journal}"
+
+
+# --- the external-service path, as fetched by the first deploy above ----------------
+#
+# Moved here from test_external.py, which is where they used to carry their own
+# `order(-1)`: pytest-order piles every `order(-1)` item at the end and breaks ties among
+# them by collection position, and collection is alphabetical by file, so a case declared
+# in test_external.py always ran after every `order(-1)` case in this file -- including the
+# one that deletes the pointer's fetched checkout and the one that remounts the pool.
+# Declared here, directly after the no-op tick and before the check-mode run, they run on
+# a host that has deployed once and nothing more -- which is what they need: a checkout no
+# later case has pushed over, drifted, or deleted yet.
+
+
+@pytest.mark.order(-1)
+@pointer_case
+def test_the_host_fetched_the_pointed_repository(host, owner, name, source):
+    placed(host, owner)
+    checkout = host.file(f"{SOURCES}/{name}")
+    # The parent is what keeps the fetched trees root-only (0700); a clone itself is 0755.
+    assert checkout.is_directory and checkout.user == "root", f"{SOURCES}/{name}"
+    head = host.check_output(f"git -C {SOURCES}/{name} rev-parse HEAD")
+    remote = host.check_output(f"git -C /srv/git/{name}.git rev-parse {source['ref']}")
+    assert head == remote, f"{name}: fetched {head}, the remote's {source['ref']} is {remote}"
+    assert host.file(f"{SOURCES}/{name}/{source['path']}/service.yml").exists
+    assert host.file("/var/lib/storagebaby/sources").mode == 0o700
+
+
+@pytest.mark.order(-1)
+@pointer_case
+def test_the_secrets_came_from_the_external_tree_and_not_from_an_override(host, owner, name, source):
+    """The file the host decrypted is the external repository's, byte for byte.
+
+    A host override under hosts/<host>/secrets/ would also make the generic secret test
+    pass; the point of this case is that none exists for this service and the copy on the
+    host is the fixture tree's own. The two can be byte-equal on either route -- the
+    Molecule converge copying from the controller's fixture tree, the deploy tick copying
+    from the fetched checkout -- because prepare generated the file *into* the fixture tree
+    and seeded the external remote from that same tree.
+    """
+    hostname = host.check_output("uname -n")
+    placed(host, owner)
+    assert not (HOSTS / hostname / "secrets" / f"{name}.sops.yaml").exists(), "an override would hide the external path"
+    external = (FIXTURE / name / source["path"] / "secrets.sops.yaml").read_bytes()
+    on_host = host.file(f"/etc/storagebaby/{name}.secrets.sops.yaml")
+    assert on_host.exists and on_host.mode == 0o600
+    assert on_host.content == external
+
+
+@pytest.mark.order(-1)
+@pointer_case
+def test_the_page_served_is_the_external_repositorys_config(host, owner, name, source):
+    """config/ reached /etc/storagebaby/<name>/ from the fetched tree: the page says so."""
+    placed(host, owner)
+    hostname = host.check_output("uname -n")
+    domain = load_spec(HOSTS / hostname / "host.yml")["domain"]
+    spec = load_spec(FIXTURE / name / source["path"] / "service.yml")
+    r = host.run(f"curl -sk -H 'Host: {spec['domain']}.{domain}' https://127.0.0.1/")
+    assert r.rc == 0, r.stderr
+    assert "served from the fixture's own repository" in r.stdout, r.stdout
+
+
+@pytest.mark.order(-1)
+@pointer_case
+def test_a_service_with_registries_has_a_login_its_user_owns(host, owner, name, source):
+    """`registries` becomes the service user's auth.json, 0600, written before the pull.
+
+    The login is the host's (hosts/<host>/secrets/registries.sops.yaml, copied to the host
+    like a secret set); the service only named the registry. The path is the one podman
+    falls back to for a user whose runtime dir holds no auth.json -- and that it *is* read
+    is what the pull of this very image proved: the role fetched
+    `127.0.0.1:5000/ext-echo:latest` as the service user, and the registry answers nothing
+    without the login.
+    """
+    placed(host, owner)
+    spec = load_spec(FIXTURE / name / source["path"] / "service.yml")
+    if not spec.get("registries"):
+        pytest.skip("no registries declared")
+    user = f"svc-{name}"
+    home = host.user(user).home
+    auth = host.file(f"{home}/{AUTH_JSON}")
+    assert auth.exists and auth.mode == 0o600 and auth.user == user and auth.group == user, auth.path
+    for registry in spec["registries"]:
+        assert f'"{registry}"' in auth.content_string, f"{registry} is not in {auth.path}"
+    credential = host.file("/etc/storagebaby/set-registries.secrets.sops.yaml")
+    assert credential.exists and credential.mode == 0o600 and credential.user == "root"
+
+
+@pytest.mark.order(-1)
+@pointer_case
+def test_auto_update_authenticates_with_the_same_login(host, owner, name, source):
+    """The service user's own `podman auto-update` reaches the private registry.
+
+    A dry run contacts the registry for every `AutoUpdate=registry` container and reports
+    `pending` or `false`; a login it could not use reports `failed`. This is the half the
+    role's pull cannot stand in for -- the timer runs under the user manager, with the
+    environment that manager gives it.
+    """
+    placed(host, owner)
+    spec = load_spec(FIXTURE / name / source["path"] / "service.yml")
+    if not spec.get("registries"):
+        pytest.skip("no registries declared")
+    r = run_as(host, f"svc-{name}", "podman auto-update --dry-run --format '{{.ContainerName}} {{.Updated}}'")
+    assert r.rc == 0, r.stderr
+    line = next((ln for ln in r.stdout.splitlines() if ln.startswith(f"{name} ")), None)
+    assert line, f"auto-update lists no {name}:\n{r.stdout}"
+    assert line.split()[1] in {"false", "pending"}, f"auto-update could not check the private image: {line}\n{r.stderr}"
 
 
 # Declared after the case above and not before it, although it changes nothing itself:
@@ -254,12 +419,19 @@ def single_container_service(host):
     A `.build`- or `.image`-backed service is skipped for the reason above `UNIT_BACKED`.
     The filter earns its keep: `build-echo` sorts first among the services of both test
     hosts, so without it every case below would pick the one service whose `Image=` names
-    a unit and cannot be repointed at a tag. With it, test-a lands on jellyfin and test-ci
-    on kopia.
+    a unit and cannot be repointed at a tag. A pointer-placed service (`ext-echo`) is
+    skipped too, for a different reason: its spec is read from the fetched external
+    tree, not from the deploy's own checkout of this repo, so the cases below that `sed`
+    a template and push to `stable` would edit a file the host never reads and see a
+    silent no-op instead of the failure or the drift they're asserting on. With both
+    filters, test-a lands on jellyfin and test-ci on kopia.
     """
     hostname = host.check_output("uname -n")
     for owner, spec_path in SPECS:
-        name = spec_path.parent.name
+        if not spec_path.is_relative_to(HOSTS):
+            # A pointer's template can't be mutated through the deploy's own checkout.
+            continue
+        name = service_name(spec_path)
         if name == "traefik" or owner not in ("shared", hostname) or pod_unit(spec_path):
             continue
         containers = quadlets(spec_path, "container")
@@ -281,12 +453,12 @@ def test_deploy_restores_a_drifted_host_gateway_dropin(host):
     disk -- which is also the real failure mode, a host that has been edited by hand or
     converged from an older commit.
 
-    The commit pushed here is empty on purpose: `ansible-pull --only-if-changed` runs
-    the playbook only when the checkout moved, so the deploy needs a new sha, and an
-    empty one leaves the tree identical. Everything the converge then renders matches
-    what is already on the host except the file this test broke, which makes the pair
-    of assertions below -- this unit restarted, traefik did not -- say exactly that a
-    changed drop-in is what restarts a unit.
+    The commit pushed here is empty on purpose: the deploy script runs the playbook only
+    when a watched checkout's SHA differs from the state file, so the deploy needs a new
+    sha, and an empty commit leaves the tree identical. Everything the converge then
+    renders matches what is already on the host except the file this test broke, which
+    makes the pair of assertions below -- this unit restarted, traefik did not -- say
+    exactly that a changed drop-in is what restarts a unit.
     """
     found = single_container_service(host)
     if not found:
@@ -534,6 +706,146 @@ def test_deploy_runs_after_change_hooks(host):
     )
 
 
+# --- the external-repository path ---------------------------------------------------
+
+
+def first_pointer(host) -> tuple[str, str, dict] | None:
+    """(owner, name, source.yml) of the first pointer placed on this VM, or None.
+
+    The owner is 'shared' or the host folder, which is where the pointer folder lives --
+    the removal case below deletes it from the seeded checkout and needs that path.
+    """
+    hostname = host.check_output("uname -n")
+    for owner, name, source in pointer_cases():
+        if owner in ("shared", hostname):
+            return owner, name, source
+    return None
+
+
+def state_lines(host) -> dict[str, str]:
+    return dict(ln.split(" ", 1) for ln in host.file(STATE).content_string.splitlines() if " " in ln)
+
+
+@pytest.mark.order(-1)
+def test_a_push_to_the_external_repository_restarts_only_its_service(host):
+    """A commit in the pointed repository is a deploy: that service restarts, nothing else.
+
+    The change is one `Environment=` line in the fixture's template, which reaches exactly
+    one rendered file. The state file records the external HEAD afterwards, so the next
+    tick is a no-op again.
+    """
+    found = first_pointer(host)
+    if not found:
+        pytest.skip("no pointer placed on this host")
+    _, name, source = found
+    user, unit = f"svc-{name}", f"{name}.service"
+    other = other_placed_service(host)
+    before = unit_marks(host, user, unit)
+    assert before.active_since != "0", f"{unit} has no ActiveEnterTimestamp"
+    traefik_before = unit_marks(host, "svc-traefik", "traefik.service")
+    other_before = unit_marks(host, f"svc-{other[0]}", other[1]) if other and other[0] != name else None
+    if other_before:
+        assert other_before.active_since != "0", f"{other[1]} has no ActiveEnterTimestamp: is that the right unit name?"
+
+    template = f"{EXT_SRC}/{name}/{source['path']}/quadlet/{name}.container.j2"
+    r = host.run(
+        f"cd {EXT_SRC}/{name} && sed -i 's|^Environment=TZ=.*|&\\nEnvironment=EXT_DEPLOY_MARK=2|' {template} "
+        f"&& git -c user.name=t -c user.email=t@t commit -qam 'an environment line' && git push -q origin {source['ref']}"
+    )
+    assert r.rc == 0, r.stderr
+    pushed = host.check_output(f"git -C /srv/git/{name}.git rev-parse {source['ref']}")
+
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+    rendered = host.file(f"/etc/containers/systemd/users/{host.user(user).uid}/{name}.container").content_string
+    assert "Environment=EXT_DEPLOY_MARK=2" in rendered, rendered
+    assert unit_marks(host, user, unit).active_since != before.active_since, f"{unit} was not restarted"
+    assert_the_role_did_not_restart(host, "svc-traefik", "traefik.service", traefik_before, "traefik restarted too")
+    if other_before:
+        assert_the_role_did_not_restart(host, f"svc-{other[0]}", other[1], other_before, f"{other[0]} restarted too")
+    assert state_lines(host)[f"source:{name}"] == pushed
+    assert host.run(f"systemctl --user -M {user}@ is-active {unit}").stdout.strip() == "active"
+
+
+@pytest.mark.order(-1)
+def test_a_push_that_renders_nothing_new_restarts_nothing(host):
+    """A README commit in the pointed repository runs the playbook and changes no unit."""
+    found = first_pointer(host)
+    if not found:
+        pytest.skip("no pointer placed on this host")
+    _, name, source = found
+    user, unit = f"svc-{name}", f"{name}.service"
+    before = unit_marks(host, user, unit)
+    r = host.run(
+        f"cd {EXT_SRC}/{name} && printf '\\nA line nothing renders.\\n' >> README.md "
+        f"&& git -c user.name=t -c user.email=t@t commit -qam 'readme' && git push -q origin {source['ref']}"
+    )
+    assert r.rc == 0, r.stderr
+    pushed = host.check_output(f"git -C /srv/git/{name}.git rev-parse {source['ref']}")
+    r, journal = run_tick(host)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+    assert "PLAY RECAP" in journal, f"the playbook did not run for a moved checkout:\n{journal}"
+    assert_the_role_did_not_restart(host, user, unit, before, "a README commit restarted the service")
+    assert state_lines(host)[f"source:{name}"] == pushed
+
+
+@pytest.mark.order(-1)
+def test_a_revoked_token_fails_the_tick_and_leaves_the_service_up(host):
+    """The fetch is refused, the unit fails, the journal names the repository, nothing moves.
+
+    Revoked on the server side -- the git server re-reads its credentials file on every
+    request -- so the pointer's encrypted file is untouched and put back is one `mv`.
+    """
+    found = first_pointer(host)
+    if not found:
+        pytest.skip("no pointer placed on this host")
+    _, name, _ = found
+    user, unit = f"svc-{name}", f"{name}.service"
+    before = unit_marks(host, user, unit)
+    state_before = host.file(STATE).content_string
+    assert host.run("cp -a /etc/test-git-http/credentials /etc/test-git-http/credentials.harness-backup").rc == 0
+    try:
+        assert host.run("printf 'revoked\\n' > /etc/test-git-http/credentials").rc == 0
+        # No commit is needed to provoke the fetch: the script fetches every pointer on
+        # every tick, and the refusal happens there, before the state is even compared.
+        r, journal = run_tick(host)
+        assert r.rc != 0, f"the tick survived a revoked token\n{journal}"
+        assert name in journal and ("401" in journal or "Authentication failed" in journal), journal
+        assert "PLAY RECAP" not in journal, f"the playbook ran after a failed fetch\n{journal}"
+        assert host.file(STATE).content_string == state_before, "a failed tick changed the state file"
+        assert_the_role_did_not_restart(host, user, unit, before, "a failed fetch restarted the service")
+        assert host.run(f"systemctl --user -M {user}@ is-active {unit}").stdout.strip() == "active"
+    finally:
+        assert host.run("mv -f /etc/test-git-http/credentials.harness-backup /etc/test-git-http/credentials").rc == 0
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+
+
+@pytest.mark.order(-1)
+def test_a_registry_the_host_does_not_offer_is_refused(host):
+    """A service naming a registry outside the host's `registries` list fails the converge, by name.
+
+    Made in the pulled checkout and read back with `--check`, like the image-tag case in
+    `test_the_whole_playbook_runs_clean_in_check_mode`: nothing is pushed, nothing converges,
+    and `git checkout` takes it back. The assert in `registries.yml` runs under check mode
+    (asserts always do), and it runs before any copy or decrypt, so this is the message an
+    operator would read on the real host.
+    """
+    found = single_container_service(host)
+    if not found:
+        pytest.skip("no single-container service is placed on this host")
+    name, _, _, _, template = found
+    spec = str(Path(template).parent.parent.relative_to("/repo") / "service.yml")
+    assert host.run(f"cd {PULLED} && printf 'registries: [nowhere.example]\\n' >> {spec}").rc == 0
+    try:
+        r = host.run(CHECK)
+        assert r.rc != 0, f"--check accepted a registry the host does not offer\n{r.stdout[-4000:]}"
+        assert "nowhere.example" in r.stdout and name in r.stdout, r.stdout[-4000:]
+    finally:
+        assert host.run(f"cd {PULLED} && git checkout -- .").rc == 0
+    assert "nowhere.example" not in host.file(f"{PULLED}/{spec}").content_string, f"{spec} was not put back"
+
+
 # --- the storage role, from the deploy path ----------------------------------------
 #
 # Both of these push to the seeded remote and disturb the host's filesystems, so they are
@@ -548,10 +860,10 @@ def pool_unit(s: dict) -> str:
 def empty_commit(host, message: str):
     """A new sha on `stable` with an identical tree.
 
-    `ansible-pull --only-if-changed` runs the playbook only when the checkout moved, so a
-    deploy that is meant to converge needs one -- and an empty commit leaves everything the
-    converge renders identical to what is already on the host, which is what makes the
-    assertions about *one* difference meaningful.
+    The deploy script runs the playbook only when a watched checkout's SHA differs from
+    the state file, so the deploy needs a new sha, and an empty commit leaves the tree
+    identical -- everything the converge renders stays identical to what is already on
+    the host, which is what makes the assertions about *one* difference meaningful.
     """
     r = host.run(
         f"cd {SEEDED} && git -c user.name=t -c user.email=t@t commit -q --allow-empty "
@@ -615,6 +927,9 @@ def test_a_pool_option_change_remounts_the_pool_exactly_once(host):
 
     Runs last of everything for exactly that reason: the services on this host come back
     reading a stale union until they are restarted, and nothing after this would be reliable.
+    `test_removing_the_pointer_removes_the_fetched_repository` follows it anyway and survives:
+    `ext-echo` declares `volumes: {}` and a config bind under `/etc/storagebaby`, nothing
+    under the pool, so a stale union does not touch it.
 
     Not re-runnable inside one VM: the `sed` below matches `threads=2`, which the first run
     has already turned into `threads=3`, so a second run commits nothing, `git commit` exits
@@ -645,3 +960,33 @@ def test_a_pool_option_change_remounts_the_pool_exactly_once(host):
     empty_commit(host, "a second deploy cycle over the same pool option")
     assert host.run(DEPLOY).rc == 0, host.run(JOURNAL).stdout
     assert host.run(stamp).stdout.strip() == after, "the pool was remounted again by an unchanged unit"
+
+
+@pytest.mark.order(-1)
+def test_removing_the_pointer_removes_the_fetched_repository(host):
+    """Unplacing an external service deletes its checkout under sources/ and its state line.
+
+    Last in the file on purpose: after it the service is unplaced on this VM, and `prepare`
+    is what puts the pointer back. The service's units are left as every unplaced service's
+    are today -- `docs/ownership.md` § 3 names full removal as the target and § 7.6 records
+    that it does not exist yet; when it lands, the last assertion below flips with it. The
+    route file stays too: the role that would remove a stale one never runs for a service
+    that is unplaced.
+    """
+    found = first_pointer(host)
+    if not found:
+        pytest.skip("no pointer placed on this host")
+    owner, name, _ = found
+    folder = f"hosts/{owner}/services/{name}"
+    r = host.run(
+        f"cd {SEEDED} && git rm -rq {folder} "
+        "&& git -c user.name=t -c user.email=t@t commit -qm 'unplace the external service' && git push -q origin stable"
+    )
+    assert r.rc == 0, r.stderr
+    r = host.run(DEPLOY)
+    assert r.rc == 0, host.run(JOURNAL).stdout
+    assert not host.file(f"/var/lib/storagebaby/sources/{name}").exists
+    assert f"source:{name}" not in state_lines(host)
+    # The documented half of unplacing: the units stay, like every unplaced service's. A
+    # cleanup that stopped them would be a contract change and has to fail here first.
+    assert host.run(f"systemctl --user -M svc-{name}@ is-active {name}.service").stdout.strip() == "active"

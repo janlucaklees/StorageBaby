@@ -125,6 +125,12 @@ run = [
 	"docker volume rm -f $MOLECULE_CACHE"
 ]
 
+[tasks.test-base-image]
+description = "Rebuild the pre-upgraded base image the test VMs boot from (create does this on its own once a week)"
+# Its own domain and files beside the scenario's, so it does not need the Molecule VM
+# to be free. tests/integration/molecule/test-ci/tasks/base-image-stage.yml has the reasons.
+run = 'docker run --rm -t $DEVTOOLS_OPTS_VM $DEVTOOLS_IMAGE ansible-playbook tests/integration/molecule/test-ci/base-image.yml'
+
 # Secrets are edited with the workstation's own sops and age (pacman: `sops age`), not in
 # the devtools image: the key that opens them lives on this machine and the tools come
 # from the distribution. sops finds the key in ~/.config/sops/age/keys.txt by default.

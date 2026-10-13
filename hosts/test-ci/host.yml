@@ -114,3 +114,8 @@ packages: []
 service_config:
   kopia:
     repository: filesystem
+# The registries this host can log into. The one entry is the throwaway htpasswd registry
+# `prepare.yml` runs on the VM for the `ext-echo` fixture; the login is generated into
+# secrets/registries.sops.yaml beside the other test secrets. A service names a registry
+# from this list, and only from this list -- `test_hosts.py` and the role both hold that.
+registries: ['127.0.0.1:5000']

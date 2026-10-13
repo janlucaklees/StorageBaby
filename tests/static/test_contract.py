@@ -27,6 +27,7 @@ SPEC_KEYS = {
     "hooks",
     "backup",
     "tcp_ports",
+    "registries",
 }
 CLASSES = {"pool", "fast"}
 MODES = {"ro", "rw"}
@@ -55,6 +56,7 @@ ROUTE_KEYS = {"domain", "port", "scheme", "insecure_skip_verify", "basic_auth"}
 # here is silent -- the template reads the keys it knows and ignores the rest.
 BLOCK_KEYS = {"internal", "wildcard_cert", "scheme", "insecure_skip_verify", "basic_auth"}
 SCHEMES = {"http", "https"}
+REGISTRY_RE = re.compile(r"^(localhost|[a-z0-9-]+(\.[a-z0-9-]+)+)(:\d+)?$")
 
 
 def check_backend(p, opts: dict) -> None:
@@ -117,7 +119,7 @@ def test_service_contract(p):
     missing = REQUIRED - set(spec)
     assert not missing, f"{p.name}: missing keys {missing}"
     assert set(spec) <= SPEC_KEYS, f"{p.name}: unknown service keys {set(spec) - SPEC_KEYS}"
-    assert spec["name"] == p.dir.name, "name must equal the folder name"
+    assert spec["name"] == p.name, "name must equal the folder name"
     if "domain" in spec:
         assert isinstance(spec.get("port"), int), f"{p.name}: a service with a domain needs a loopback port"
     for route in routes_of(spec):
@@ -185,6 +187,10 @@ def test_service_contract(p):
     # a route port -- and `test_ports` only sees a `target` that differs from its `port`.
     targets = [e["target"] for e in tcp_ports(spec)]
     assert len(set(targets)) == len(targets), f"{p.name}: two tcp ports forward to the same loopback port"
+    registries = spec.get("registries", [])
+    assert isinstance(registries, list) and registries == sorted(set(registries)), f"{p.name}: registries is a sorted list"
+    for registry in registries:
+        assert REGISTRY_RE.match(registry), f"{p.name}: {registry!r} is not a registry host"
     for secret, ref in spec.get("host_secrets", {}).items():
         assert GROUP_RE.match(secret), f"{p.name}: invalid host secret name {secret}"
         assert re.match(r"^[a-z0-9-]+\.[A-Za-z0-9_-]+$", ref), f"{p.name}: host secret {secret} must reference <set>.<key>"

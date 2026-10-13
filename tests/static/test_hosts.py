@@ -33,6 +33,9 @@ OPTIONAL = {
     # Defaults to `[domain]` in the playbook, so a host whose services all take names
     # under its own domain declares nothing.
     "cert_zones",
+    # The registries this host can log into; `secrets/registries.sops.yaml` holds one
+    # login per entry. A service may only name a registry listed here.
+    "registries",
 }
 CLASSES = {"pool", "fast"}
 
@@ -49,6 +52,8 @@ def test_host_contract(host):
         f"{host}: cert_zones must be a list of domains"
     )
     assert cfg["domain"] in zones, f"{host}: cert_zones must contain the host's own domain"
+    registries = cfg.get("registries", [])
+    assert isinstance(registries, list) and registries == sorted(set(registries)), f"{host}: registries is a sorted list"
     assert isinstance(cfg["acme"], bool)
     assert isinstance(cfg["deploy_timer"], bool)
     assert isinstance(cfg["gpu"], bool)
@@ -94,3 +99,28 @@ def test_every_placed_route_is_under_a_domain_the_host_can_certify(host):
                 f"{host}/{p.name}: {fqdn} is not under any zone this host can certify "
                 f"({', '.join(zones)}). Add the zone to cert_zones, or take a name under one."
             )
+
+
+@pytest.mark.parametrize("host", host_names())
+def test_every_placed_service_names_only_registries_the_host_offers(host):
+    """The static half of the refusal: a service asks, the host offers or the converge fails.
+
+    Same shape as the cert_zones test above it, and for the same reason -- the role cannot
+    log a service into a registry the host holds no credential for, and a pull from a
+    private registry without one is "unauthorized" five minutes into a nightly converge.
+    """
+    offered = set(load_yaml(HOSTS / host / "host.yml").get("registries", []))
+    for p in (p for p in placements() if p.host == host):
+        missing = set(p.spec.get("registries", [])) - offered
+        assert not missing, f"{host}/{p.name}: names registries this host does not offer: {sorted(missing)}"
+
+
+# Test hosts generate theirs in prepare; a real host commits the file.
+@pytest.mark.parametrize("host", [h for h in host_names() if not h.startswith("test-")])
+def test_an_offered_registry_has_a_login(host):
+    offered = load_yaml(HOSTS / host / "host.yml").get("registries", [])
+    if not offered:
+        pytest.skip("this host offers no registry")
+    path = HOSTS / host / "secrets" / "registries.sops.yaml"
+    assert path.exists(), f"{host}: registries are offered but {path.name} is missing"
+    assert set(offered) <= set(load_yaml(path)) - {"sops"}, f"{host}: {path.name} lacks a login for an offered registry"
