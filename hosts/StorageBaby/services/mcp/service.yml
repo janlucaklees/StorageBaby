@@ -22,13 +22,17 @@ config:
   # the same on every host this service is placed on.
   mealie_url: https://mealie.klees.io
   nextcloud_host: https://nextcloud.klees.io
-  # A dedicated Nextcloud account with an app password, not jlk's own login.
-  nextcloud_user: mcp
   paperless_url: https://paperless.klees.io
+# `nextcloud_user` is not a secret and is here anyway: it is half of one credential, and
+# the operator sets it in the same moment as the app password it belongs to. One file to
+# open rather than two, and no pair that can drift apart. The account it names is the
+# operator's own -- Nextcloud's data is per-user, so an adapter signed in as a dedicated
+# account would see an empty Nextcloud rather than a narrower one.
 secrets:
   [
     hub_password_hash,
     mealie_api_token,
+    nextcloud_user,
     nextcloud_password,
     paperless_token,
     kopia_password

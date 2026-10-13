@@ -10,9 +10,15 @@ Environment=TZ={{ tz }}
    the host-gateway drop-in that makes that resolve from inside a pod. Not 127.0.0.1: a
    rootless container of another service user is not reachable on this one's loopback. #}
 Environment=NEXTCLOUD_HOST={{ service.config.nextcloud_host }}
-Environment=NEXTCLOUD_USERNAME={{ service.config.nextcloud_user }}
-{# An app password from Settings > Security > Devices & sessions, on a dedicated account.
-   `type=env` because this image documents no `_FILE` variant. #}
+{# The account and its app password are one credential, so they are set in one file --
+   the username is in `secrets` despite not being secret. `type=env` for both because this
+   image documents no `_FILE` variant for either.
+
+   The account is the operator's own, not a dedicated one: Nextcloud's notes, calendar,
+   contacts and files are all per-user, so an adapter signed in as a fresh account would
+   see an empty Nextcloud rather than a narrower one. The app password is what makes that
+   safe enough -- a separate credential, revocable on its own, without touching the login. #}
+Secret=nextcloud_user,type=env,target=NEXTCLOUD_USERNAME
 Secret=nextcloud_password,type=env,target=NEXTCLOUD_PASSWORD
 {# The image's entrypoint already is `nextcloud-mcp-server run --host 0.0.0.0`, whose
    default transport is streamable-http on 8000. Inside this pod that port is the hub's
