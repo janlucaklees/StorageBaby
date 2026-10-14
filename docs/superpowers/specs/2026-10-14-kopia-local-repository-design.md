@@ -1,6 +1,12 @@
 # Kopia's repository moves onto the pool, and `/apps` leaves the snapraid array
 
-**Status:** design, approved 2026-10-14
+**Status:** design, approved 2026-10-14. **Rolled out in two stages** (decided
+2026-10-15, at the whole-branch review): stage 1 ships § 3.2, § 3.3 and § 3.4 — the
+repository onto the pool, the hourly replica, the failed-unit report. § 3.1, `/apps`
+leaving the array, is stage 2 and is the operator's call once the repository holds
+Immich's library and parity has been written over it. Everything below describes the
+end state; the runbook says which half is live.
+
 **Supersedes:** nothing. It changes decisions taken in
 `2026-09-23-phase-3-pods-and-backups-design.md` (kopia's repository lives in Backblaze)
 and in `2026-09-25-phase-4-storage-and-ftp-design.md` (the whole pool is one snapraid
@@ -52,7 +58,7 @@ filesystem to hand it a frozen view instead.
  live app state      /pool/public, /pool/mk       StorageBaby/kopia
    |                     |                        |
  EXCLUDED from        in the array,             the kopia repository:
- the array            unchanged                 in the array
+ the array (stage 2)  unchanged                 in the array
    |                                               ^
    | kopia sidecars snapshot it, as today  --------+
    |                                               |
@@ -85,7 +91,22 @@ stops being asked to do a job it was never built for.
 
 ## 3. Changes
 
-### 3.1 `/apps` leaves the array
+### 3.1 `/apps` leaves the array — stage 2, not shipped yet
+
+**This section is the only part of the design that does not ship with the rest.** The
+order it implies is the problem: at the converge `/apps` leaves the array, at the next
+02:00 snapraid drops the parity it held over it, the first Immich snapshot starts hours
+after that and is a multi-hour local copy of 323 GB, and parity over the new repository
+only arrives the _following_ 02:00. For roughly a day the photo library would have
+exactly one copy, on one mergerfs branch, with neither parity nor a snapshot behind it.
+It has parity today, so that is a regression in safety during the transition and not a
+cost of the end state.
+
+Holding the exclude back keeps the four nightly soft errors for a few more nights, which
+is the status quo rather than a regression, and costs nothing else. The two conditions
+that release it, and the procedure, are the cutover runbook's "Stage 2" section.
+
+The change itself, when it comes:
 
 `hosts/StorageBaby/host.yml`, `storage.snapraid.excludes`, gains one anchored entry:
 
@@ -312,24 +333,39 @@ cosmetic — see step 4.
    client passwords are unchanged, so the stored connection reopens against the new
    repository — and `kopia-client.sh` already discards and remakes one that does not.
 
-5. **Converge.** The exclude lands, the override lands, `start.sh` takes the
-   `filesystem` branch and **creates** the repository at
-   `/pool/backups/devices/StorageBaby/kopia`, then registers every client.
+5. **Converge.** The override lands, `start.sh` takes the `filesystem` branch and
+   **creates** the repository at `/pool/backups/devices/StorageBaby/kopia`, then
+   registers every client. The exclude of § 3.1 does **not** land here; it is stage 2.
 6. **First full snapshot.** Local disk, no network, ~500 GB. Immich's 323 GB is the long
    pole and the whole point. Verify with `kopia snapshot list --all` that
    `immich@storagebaby:/data/upload` exists — it never has.
 7. **First sync**, with `sync_must_exist: false`. ~500 GB of upload. Then flip the key to
    `true` and converge.
 8. **First snapraid sync** picks up the repository as ~500 GB of new files and writes
-   parity for them. Expect a long run once.
+   parity for them. Expect a long run once. It is also stage 2's second gate: the sync
+   that counts is one that _started after_ step 6 finished, otherwise parity covers a
+   half-written repository.
 9. **Delete the old bucket** (operator), once step 6 has verified a complete set.
+10. **Stage 2** — the § 3.1 exclude, once 6 and 8 are both behind. Operator's call; the
+    runbook has it.
 
 A rollback after step 5 is a converge of the previous commit plus step 4 again; the old
 bucket still holds the old repository until step 9, which is why step 9 is last.
 
 ## 5. Verification
 
-- `snapraid sync` ends `exit:ok` with zero soft errors.
+- `snapraid sync` reports **zero soft errors under `/apps`** — and that is stage 2's
+  criterion, not stage 1's. Stage 1 leaves `/apps` in the array, so the four known soft
+  errors stay; what must not appear there is a fifth.
+
+  Not "ends `exit:ok` with zero soft errors", which is what this said and is very
+  likely unreachable once the repository is in the array: kopia's hourly maintenance
+  deletes blobs while a multi-hour sync reads, and snapraid reports every file that
+  vanished under it. Correctness is unaffected — a race on an append-and-delete
+  repository can only ever mean _missing_, never _wrong_, which is § 2's pivot — but the
+  exit code will not be clean. Removals under the repository path are expected and
+  benign.
+
 - `kopia snapshot list --all` lists a source for every `backup.paths` entry of every
   service that declares one — Immich's `upload` above all.
 - `kopia maintenance info` shows full cycles with no `cap exceeded`.

@@ -5,6 +5,13 @@ inert until an operator runs this. The repository is new, so this is a clean sta
 a migration — but one step below cannot move, and reordering it makes the whole change
 look like it did nothing.
 
+**This is stage 1 of two.** It ships the repository onto the pool, the hourly replica
+and the failed-unit report. `/apps` stays in the snapraid array exactly as it is today,
+so the four nightly soft errors stay with it — the status quo, not a regression, and
+the reason is that taking `/apps` out before the repository holds Immich's library
+would leave 323 GB of photos with neither parity nor a snapshot for about a day. Stage
+2 is the last section of this document and nothing automatic does it.
+
 > **Steps 1–4 happen before this branch merges to master.** The host converges itself
 > from `stable` — nothing on it reacts to a commit that hasn't reached `stable` yet, so
 > the change simply does not exist there until this merges and CI promotes it.
@@ -156,22 +163,32 @@ failed`, which reads like a wrong password and is not one.
       that is a little behind and picks up the rest next hour — never wrong, only late.
 
   `sync_must_exist` is already `false` in the committed `service.yml`, which is what
-  lets this first push create the replica's repository format blob. Watch it succeed:
+  lets this first push create the replica's repository format blob. Watch it run:
 
   ```
   journalctl _SYSTEMD_USER_UNIT=kopia-sync.service
   ```
 
-  or wait for the nightly mail's failed-unit list to stay empty.
+  It will not finish overnight — it is a ~500 GB upload over a home line, and the
+  hourly timer will start further runs beside it. "Still running" is the expected
+  state for a good while; the nightly mail's failed-unit list staying empty is the
+  signal that nothing has gone wrong with it.
 
-  Once it has succeeded once: flip `sync_must_exist` to `true` in
+  Once a run has completed — and not before, since the flag would make every earlier
+  attempt fail against a bucket that has no repository yet: flip `sync_must_exist` to
+  `true` in
   `hosts/StorageBaby/services/kopia/service.yml`, commit, push to master — same path as
   step 5. From then on a mistyped bucket fails loudly instead of quietly starting a
   second, empty repository.
 
 - [ ] **8. First snapraid sync.** Automatic, at 02:00. It picks up the new repository
       as roughly 500 GB of new files and writes parity for all of it in one run —
-      expect it to take noticeably longer than usual, once.
+      expect it to take noticeably longer than usual, once. The run that matters for
+      stage 2 is one that _started after_ step 6 finished; an earlier one parityies a
+      half-written repository. And it will not come back clean: the four `/apps` soft
+      errors are still there (stage 1 keeps `/apps` in the array), and kopia's hourly
+      maintenance deletes blobs while the sync reads, which snapraid reports too. A
+      removal under the repository path is expected and benign — see Verification.
 
 - [ ] **9. Delete the old bucket.** Operator, manual, and last — only once step 6 has
       verified a complete set in `kopia snapshot list --all`. The old bucket still
@@ -180,7 +197,15 @@ failed`, which reads like a wrong password and is not one.
 
 ## Verification
 
-- `snapraid sync` ends `exit:ok` with zero soft errors.
+- `snapraid sync` reports **no soft error that is new**. Not `exit:ok`, which this
+  said and which is the wrong bar twice over. Stage 1 keeps `/apps` in the array, so
+  its four known soft errors stay — they are what stage 2 removes, and zero under
+  `/apps` is stage 2's criterion, not this one. And once the repository is in the
+  array, kopia's hourly maintenance deletes blobs while a multi-hour sync reads them,
+  so removals under the repository path appear too. Those are expected: a kopia
+  repository on disk is append-and-delete only, so a race there can only mean
+  _missing_, never _wrong_. What to look for is a soft error under `/apps` that is not
+  one of the four, or one anywhere else in the pool.
 - `kopia snapshot list --all` lists a source for every `backup.paths` entry of every
   service that declares one — Immich's `upload` above all.
 - `kopia maintenance info` shows full cycles with no `cap exceeded`.
@@ -196,3 +221,39 @@ After step 5: converge the previous commit (revert the merge, or point `stable` 
 and repeat step 4 — stop kopia and the nine client pods, wipe `config`, `cache` and
 every `backup-cache` again. The old bucket still holds the old repository until step 9,
 which is why step 9 is last and not step 6.
+
+## Stage 2: `/apps` leaves the array
+
+Not tonight, not on a timer, and not part of the merge above. This is one commit the
+operator makes when the two conditions below are both true — which will be a day or
+more after stage 1, and possibly several if the first Immich snapshot needs more than
+one night.
+
+**The two preconditions, in this order:**
+
+1. `podman-as svc-kopia podman exec kopia kopia snapshot list --all` shows
+   `immich@storagebaby:/data/upload`, **complete**. That snapshot is what replaces
+   parity for the photo library; until it exists, removing parity leaves it with one
+   copy and nothing else.
+2. A `snapraid sync` that **started after** that snapshot finished has run. A sync that
+   was already running during the snapshot parityies a half-written repository, which
+   is not the same thing. In practice: see the snapshot in the list, then wait for the
+   next 02:00 run's mail.
+
+**The change**, in `hosts/StorageBaby/host.yml` under `storage.snapraid.excludes`:
+
+- add `- /apps/`, anchored, directly after `- /lost+found/`
+- remove the `- /apps/nextcloud/data/jlk/files/Projects/Kannji/…` line, which is dead
+  once the whole tree above it is excluded
+- rewrite the comment above `excludes:`, which currently explains why `/apps` is _not_
+  excluded
+
+Then merge to master as in step 5 and converge. What changes on the host: the next
+`snapraid sync` stops reading `/apps`, the four soft errors stop with it, and
+`snapraid fix` after a dead disk restores media, `/pool/jlk`, `/pool/backups` and the
+kopia repository — application state comes back from a snapshot instead, up to a night
+old. Jellyfin's 32 GB of metadata is then protected by nothing and is accepted as
+disposable (`docs/ownership.md` § 7, item 14).
+
+Reverting is symmetric and cheap: take the exclude back out and converge. The next sync
+re-parityies `/apps`, long once.
