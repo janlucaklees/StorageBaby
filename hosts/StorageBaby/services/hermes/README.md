@@ -20,13 +20,48 @@ Upstream's compose runs two containers, both with `network_mode: host`. Neither 
 - **No host networking.** This platform reserves that for Traefik. Hermes does not need it:
   every messaging channel it speaks is an outbound connection, and `HERMES_DASHBOARD_HOST`
   already defaults to `0.0.0.0`, so the dashboard is reachable through an ordinary
-  `PublishPort` on the pod. No flag the vendor warns against is passed — their warning is
-  about putting an unauthenticated dashboard on a LAN, which a loopback publish behind
-  Traefik does not do.
+  `PublishPort` on the pod.
 
 `gateway run` is the command. Inside the image that process is a `sleep infinity` heartbeat
 and s6 supervises the real gateway, so a crash is restarted in seconds without the
 container exiting — and `storagebaby-svc restart hermes` still stops everything cleanly.
+
+## The dashboard's login is mandatory, and three secrets are what start it
+
+Not a policy decision taken here — upstream's, enforced in its code, and it cost a debugging
+round to find out, so it is written down. Two guards do it:
+
+- **The auth gate.** It engages on any non-loopback bind, and if no auth provider is
+  registered the dashboard _fails closed at startup_. There is no unauthenticated public
+  bind: "to keep it local, bind to `127.0.0.1` and reach it over an SSH tunnel or
+  Tailscale." The failure mode is not a login page, it is a dashboard that never starts —
+  s6 supervises a dead service, nothing listens on 9119, and the health check kills the
+  container every ten seconds. That was the first measured state of this folder.
+- **The DNS-rebinding guard.** It accepts the bound address and the host of
+  `HERMES_DASHBOARD_PUBLIC_URL` as an HTTP `Host` and a WebSocket `Origin`, exactly, with no
+  wildcards. Traefik forwards the browser's `Host`, and the chat is a WebSocket, so without
+  that variable the page would load and the chat would close with 4403.
+
+Which rules out the shape this folder would otherwise have had: bind the dashboard to the
+container's loopback and let Traefik be the only thing in front of it. Declaring the public
+URL a proxied browser needs engages the gate by itself, "even when the backend binds to
+loopback" — deliberately, so that the local SPA's session token cannot become a remote
+authentication mechanism through a proxy.
+
+So the bundled username/password provider is configured — the one upstream recommends for a
+homelab container behind a VPN, and the only one of its three that needs no identity
+provider:
+
+| secret                  | what it is                                                        |
+| ----------------------- | ----------------------------------------------------------------- |
+| `dashboard_user`        | the login name, in sops beside the password rather than in a unit |
+| `dashboard_password`    | the password, plaintext; the image takes a scrypt hash too        |
+| `dashboard_session_key` | signs the session tokens — without it every restart logs you out  |
+
+The VPN-only route is therefore the second lock, not the only one. `basic_auth` on the route
+would be a third and is deliberately absent: it would prompt before a login page that is
+already there, and it would break the dashboard's own WebSocket, which carries no basic
+credentials.
 
 ## No chat channel yet, by choice
 

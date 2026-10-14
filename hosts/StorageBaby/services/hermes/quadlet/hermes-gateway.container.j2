@@ -17,14 +17,53 @@ Environment=HERMES_DASHBOARD=1
    and chowning the existing tree. #}
 Environment=HERMES_UID=10000
 Environment=HERMES_GID=10000
-Volume={{ volumes.data }}:/opt/data
-{# The dashboard, which is what the route points at -- so this asks the same question
-   Traefik does. curl is in the image (its runtime stage installs it alongside python3 and
-   procps), which upstream's own compose healthchecks rely on too.
+{# The dashboard binds 0.0.0.0 inside the container -- its own default, and what the pod's
+   loopback publish needs in order to reach it. A non-loopback bind engages its auth gate,
+   which is why the three secrets below are not optional. Measured on test-a before they
+   were there: gate engaged, no provider registered, so the dashboard never came up, s6
+   supervised a dead service, nothing listened on 9119 and the health check below killed
+   the container every 10 seconds. Upstream says it plainly in
+   `features/web-dashboard.md`: "a non-loopback dashboard fails closed at startup".
 
-   Not the gateway's health endpoint on 8642: that would report the engine while the thing
-   the route serves could still be down, and the engine is supervised by s6 anyway. #}
-HealthCmd=curl -fs -S --max-time 2 http://127.0.0.1:9119/ || exit 1
+   `HERMES_DASHBOARD_PUBLIC_URL` is the other half, and it is what makes the route usable
+   rather than merely answering. The dashboard's DNS-rebinding guard accepts the address it
+   bound to and the host of this URL -- exactly, no wildcards -- as an HTTP `Host` and as a
+   WebSocket `Origin`. Traefik forwards the browser's own `Host: {{ fqdn }}`, and the chat
+   is a WebSocket whose `Origin` is `https://{{ fqdn }}`, so without this the page would
+   load and the chat would close with 4403. Rendered from `fqdn` rather than written out:
+   it is a different name on every host this folder is placed on.
+
+   There is no third option. Binding loopback to dodge the gate is upstream's documented
+   auth-free shape, but it is for an SSH tunnel or Tailscale -- it cannot go behind Traefik,
+   because declaring the public URL a proxied browser needs engages the gate by itself,
+   "even when the backend binds to loopback". #}
+Environment=HERMES_DASHBOARD_PUBLIC_URL=https://{{ fqdn }}
+{# The bundled username/password provider -- the one upstream recommends for a homelab
+   container behind a VPN, and the only one of its three that needs no identity provider.
+   `type=env` because the dashboard reads all three from the environment and offers no file
+   form for any of them. `_SECRET` signs the session tokens: without it the signing key is
+   regenerated per boot and every restart logs the operator out. #}
+Secret=dashboard_user,type=env,target=HERMES_DASHBOARD_BASIC_AUTH_USERNAME
+Secret=dashboard_password,type=env,target=HERMES_DASHBOARD_BASIC_AUTH_PASSWORD
+Secret=dashboard_session_key,type=env,target=HERMES_DASHBOARD_BASIC_AUTH_SECRET
+Volume={{ volumes.data }}:/opt/data
+{# The image's own Cmd, which upstream's compose passes too. Without it the entrypoint
+   dispatcher gets no subcommand, s6 brings its tree up, the main process finishes, and the
+   container exits 0 -- "Goodbye! ☤" in the journal, then a restart loop. Measured on
+   test-a. Inside this image the process is a `sleep infinity` heartbeat that keeps the
+   container alive while s6 supervises the real gateway, which is why it looks redundant
+   and is not. #}
+Exec=gateway run
+{# `/api/status`, not `/`: it is the one dashboard endpoint upstream documents as public,
+   so it answers 200 whether or not the caller holds a session, while `/` is a redirect to
+   the login page as soon as the gate is on. It is the route's `probe_path` as well, for
+   the same reason. curl is in the image (its runtime stage installs it alongside python3
+   and procps), which upstream's own compose healthchecks rely on too.
+
+   Not the gateway's health endpoint on 8642: that port stays unpublished, its API server
+   is off unless given a key, and it would report the engine while the thing the route
+   serves could still be down. #}
+HealthCmd=curl -fs -S --max-time 2 http://127.0.0.1:9119/api/status || exit 1
 HealthOnFailure=kill
 {# s6 brings up its service tree, then python starts: measured generously rather than
    guessed, and the role's hook wait allows far more. #}
