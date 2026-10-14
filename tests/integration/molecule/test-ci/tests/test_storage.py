@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from conftest import run_as
 
 HOSTS = Path("/repo/hosts")
 
@@ -319,11 +320,30 @@ def test_the_failed_unit_report_is_installed_and_runs(host):
     the host's mail relay (/etc/msmtprc is 0600 root). Without this step an hourly
     kopia sync -- or any failed dump, or a crashed pod -- fails into a journal
     nobody reads. Root can reach those managers; that is what storagebaby-svc does.
+
+    Provokes a real failure rather than trusting the clean-VM fallback line: "No
+    failed units in any service manager." reads identically whether the discovery
+    loop checked every svc-* user and found nothing wrong, or matched no svc-* user
+    at all. Only a unit that actually failed, named back in the script's own output,
+    proves the discovery loop works. svc-traefik is the one service every host
+    places (`hosts/shared/services/traefik`), so it is always there to provoke.
     """
     script = host.file("/opt/storagebaby/maintenance/report_failed_units.sh")
     assert script.exists and script.mode == 0o755
 
-    run = host.run("bash /opt/storagebaby/maintenance/report_failed_units.sh")
-    assert run.rc == 0, run.stdout + run.stderr
-    # It reports; it never fails the run. A healthy VM has no failed units.
-    assert "svc-" in run.stdout or "No failed units" in run.stdout, run.stdout
+    user = "svc-traefik"
+    unit = "report-failed-units-probe.service"
+    try:
+        provoke = run_as(host, user, f"systemd-run --user --unit={unit} --wait /bin/false")
+        assert provoke.rc != 0, f"the probe unit did not fail as expected: {provoke.stdout}{provoke.stderr}"
+
+        run = host.run("bash /opt/storagebaby/maintenance/report_failed_units.sh")
+        # It reports; it never gates -- not even with a failed unit sitting right there.
+        assert run.rc == 0, run.stdout + run.stderr
+        assert f"{user}:" in run.stdout, run.stdout
+        assert unit in run.stdout, run.stdout
+    finally:
+        # Best-effort: a failed unit left behind by this test is exactly the kind of
+        # thing this script exists to surface, on every later run of it -- on this
+        # VM's own later tests, and for real on a host's nightly mail.
+        run_as(host, user, f"systemctl --user reset-failed {unit}")
