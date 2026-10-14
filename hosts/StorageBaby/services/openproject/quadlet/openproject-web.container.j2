@@ -1,0 +1,55 @@
+[Unit]
+Description=OpenProject web
+After=openproject-database.service
+Wants=openproject-database.service
+
+[Container]
+Image=docker.io/openproject/openproject:17.9.1-slim
+ContainerName=openproject-web
+Pod=openproject.pod
+Environment=TZ={{ tz }}
+{# The shared half of the configuration, the same file the worker and the seeder read.
+   Upstream expresses it as a compose YAML anchor; Quadlet has no anchors. #}
+EnvironmentFile={{ config_dir }}/app.env
+{# The migration, by the image's own mechanism: `docker/prod/web` runs `rake db:migrate`
+   before starting the server when this is set. Upstream's compose instead ships a separate
+   one-shot `seeder` service that web, worker and cron depend on -- which cannot be
+   expressed here, because a container unit may not be a process that exits. This flag is
+   the same work in the place the platform can already reach, and it is idempotent: a
+   no-op on a current schema, and on a version bump it runs the new image's migrations
+   before the new code serves anything.
+   Seeding is the other half and is not covered by it -- see the hook in service.yml. #}
+Environment=MIGRATE=true
+{# The password as a *file*, and the URL assembled from it below, so the one secret is
+   stored once. OpenProject reads neither a password file nor a split set of DB_* variables
+   -- it takes one `DATABASE_URL` -- and openarchiver already solved that shape here: a
+   shell entrypoint exports the composed value and then execs what the image would have
+   run. Hex passwords keep this safe: a URL field must not need escaping. #}
+Secret=database_password
+Secret=secret_key_base,type=env,target=SECRET_KEY_BASE
+Volume={{ volumes.data }}:/var/openproject/assets
+{# `./docker/prod/entrypoint-slim.sh ./docker/prod/web` is the image's own Entrypoint and
+   Cmd -- read off its Dockerfile, and a version bump has to read them again. The
+   entrypoint ends in `exec "$@"`, so passing the command through it keeps its jemalloc and
+   PGBIN setup. `exec` twice over so the server is pid 1 and gets the signals systemd
+   sends, rather than a shell that swallows them. #}
+Entrypoint=/bin/sh
+Exec=-c 'export DATABASE_URL="postgres://{{ service.config.database_user }}:$(cat /run/secrets/database_password)@127.0.0.1/{{ service.config.database_name }}?pool=20&encoding=unicode&reconnect=true"; exec ./docker/prod/entrypoint-slim.sh ./docker/prod/web'
+{# Ruby, because this image has neither curl nor wget -- upstream's own compose healthcheck
+   calls curl and cannot be working. `/health_checks/default` is OpenProject's readiness
+   endpoint and checks the database too, so a web process that booted against a broken
+   connection reports unhealthy rather than serving errors. Compared against "200" rather
+   than a range: a `<` in this value would be a shell redirect, podman running the command
+   through `/bin/sh -c`. #}
+HealthCmd=ruby -rnet/http -e 'exit(Net::HTTP.get_response(URI("http://127.0.0.1:8080/health_checks/default")).code == "200" ? 0 : 1)'
+HealthOnFailure=kill
+{# Rails boot plus whatever the seeder migrated ahead of it. Measured generously: the role
+   waits 60 x 10 s for a hook, and nothing here has a hook. #}
+HealthStartPeriod=180s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

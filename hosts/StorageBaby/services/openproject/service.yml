@@ -1,0 +1,35 @@
+name: openproject
+port: 8081
+domain: openproject.klees.io
+volumes:
+  # The attachment and avatar tree -- `APP_DATA_PATH` inside the image, which its
+  # Dockerfile creates and chowns to the `app` user. 1000: `useradd -d /home/app -m app`,
+  # the first non-system user in a ruby slim base.
+  data: { class: pool, owner: 1000 }
+  database: { class: fast, owner: 70 }
+  # No `owner`: written by the dump timer's `podman exec` with no `-u`, i.e. container root,
+  # which is the service user. `pool` for the usual reason -- a write-once nightly file has
+  # no business on the SSD.
+  backups: { class: pool }
+# Deliberately no volume for redis: OpenProject uses it as a Rails cache store, which is
+# regenerable by definition.
+config:
+  database_name: openproject
+  database_user: openproject
+secrets: [database_password, secret_key_base, kopia_password]
+# Seeding, which `MIGRATE=true` on the web container does not cover: that flag runs
+# `rake db:migrate` and stops there, and a migrated-but-unseeded OpenProject has no
+# administrator, no work-package types and no statuses. `rake db:seed` is idempotent, so
+# running it on every converge that changed a unit is harmless -- and the role waits for
+# the container's own health check first, which is exactly "the migration has finished".
+#
+# No `user:`: this image's `USER` is already `app`, unlike nextcloud's, where the hooks
+# have to name `www-data` because the image runs as root. `RAILS_ENV=production` comes
+# from the image, so the exec inherits it.
+hooks:
+  after_change:
+    - { container: openproject-web, command: 'bundle exec rake db:seed' }
+backup:
+  paths: [data, backups]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }

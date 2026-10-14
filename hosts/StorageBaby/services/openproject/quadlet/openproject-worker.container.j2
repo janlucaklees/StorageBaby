@@ -1,0 +1,38 @@
+[Unit]
+Description=OpenProject background worker
+{# Ordered behind web because web is what migrates (`MIGRATE=true` in its unit), and
+   GoodJob queries the schema web may still be migrating. Ordering only, no `Requires=`:
+   the worker is not dependent on web *running*, and a stopped web must not take the
+   worker's queue down with it. The window is small and `Restart=always` covers it either
+   way -- this just keeps a first start quiet instead of noisy. #}
+After=openproject-database.service openproject-web.service
+Wants=openproject-database.service
+
+[Container]
+Image=docker.io/openproject/openproject:17.9.1-slim
+ContainerName=openproject-worker
+Pod=openproject.pod
+Environment=TZ={{ tz }}
+EnvironmentFile={{ config_dir }}/app.env
+{# The same composition as web, for the same reason -- see the comments there. #}
+Secret=database_password
+Secret=secret_key_base,type=env,target=SECRET_KEY_BASE
+{# Background jobs write exports and attachments into the same tree web serves them from. #}
+Volume={{ volumes.data }}:/var/openproject/assets
+Entrypoint=/bin/sh
+Exec=-c 'export DATABASE_URL="postgres://{{ service.config.database_user }}:$(cat /run/secrets/database_password)@127.0.0.1/{{ service.config.database_name }}?pool=20&encoding=unicode&reconnect=true"; exec ./docker/prod/entrypoint-slim.sh ./docker/prod/worker'
+{# This process serves no HTTP at all, so there is nothing to request. The question that
+   does have a meaningful answer is whether GoodJob is still running -- `./docker/prod/worker`
+   ends in `bundle exec good_job start`, so its name is in a process cmdline for as long as
+   it lives. grep over /proc rather than pgrep: the image has no procps. podman runs a
+   string health command through `/bin/sh -c`, which is what expands the glob. #}
+HealthCmd=grep -qa good_job /proc/*/cmdline 2>/dev/null
+HealthOnFailure=kill
+HealthStartPeriod=180s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=OpenProject cache
+
+[Container]
+Image=docker.io/library/redis:alpine
+ContainerName=openproject-cache
+Pod=openproject.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+{# No volume: this is the Rails cache store, regenerable by definition. #}
+HealthCmd=redis-cli --raw incr ping
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
