@@ -226,7 +226,9 @@ widening of the contract, not an application of it, and it is not designed yet.
 
 ## 7. Where the platform does not do this yet
 
-The work list, measured against this document at 60b402f.
+The work list, measured against this document at 60b402f. Items 13 and 14 were added
+2026-10-14 alongside the local kopia repository change, not from a re-measurement of
+the rest of the list.
 
 1. **Domains are split.** A service owns the leftmost label, `host.yml` owns the rest,
    and the role joins them (`ansible/roles/service/tasks/main.yml:44`).
