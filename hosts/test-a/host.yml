@@ -96,11 +96,11 @@ volume_overrides: {}
 deploy_timer: false
 gpu: false
 packages: []
-# A test host has no Backblaze account, so kopia gets a local repository under its
-# `repo` volume instead of the S3 one storagebaby declares.
+# A test host has no Backblaze account, so the hourly replica push is a no-op --
+# the unit is still rendered and enabled, which is what keeps the path covered.
 service_config:
   kopia:
-    repository: filesystem
+    sync: none
 # The registries this host can log into. The one entry is the throwaway htpasswd registry
 # `prepare.yml` runs on the VM for the `ext-echo` fixture; the login is generated into
 # secrets/registries.sops.yaml beside the other test secrets. A service names a registry

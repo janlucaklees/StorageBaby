@@ -24,6 +24,20 @@ config:
   # collection off the metered link. `s3` is still accepted by start.sh and is what
   # this said until 2026-10-14; see the service README.
   repository: filesystem
+  # Where the off-site replica goes. These two keys kept their names through the
+  # 2026-10-14 change and changed meaning: they said where the repository *was*,
+  # they now say where it is *copied to*.
+  s3_endpoint: s3.eu-central-003.backblazeb2.com
+  s3_bucket: GTMyXab9-jlkkb
+  # `s3` or `none`. A host without a Backblaze account sets `none` in its own
+  # `service_config` and the hourly unit becomes a no-op.
+  sync: s3
+  # False for the very first sync into a fresh bucket, which has no repository
+  # format blob yet; true from then on, so a mistyped bucket fails loudly instead
+  # of quietly starting a second, empty repository. Flip it after the first run.
+  # It defaults to false where it is read, so a host that omits it gets no guard
+  # rather than a first sync that cannot succeed.
+  sync_must_exist: false
 secrets:
   - server_password
   - repository_password

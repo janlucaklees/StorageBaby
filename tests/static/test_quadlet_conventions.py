@@ -181,3 +181,18 @@ def test_no_template_writes_a_host_gateway_addhost(path):
             assert shortcut not in ln, (
                 f"{path.name}: {ln} -- reach another service by its route name, not by {shortcut}"
             )
+
+
+def test_every_config_script_a_unit_execs_is_mounted_into_the_container():
+    """kopia.container.j2 mounts start.sh as a single file, not the directory.
+
+    A second script in config/ is therefore invisible inside the container
+    unless it gets a Volume= line of its own -- and the failure is a `podman
+    exec` that cannot find the file, an hour after the deploy, in a service
+    user's journal nobody reads. Checked statically because that is the only
+    place it is cheap to catch.
+    """
+    unit = (REPO / "hosts/StorageBaby/services/kopia/quadlet/kopia.container.j2").read_text()
+    for script in ("start.sh", "sync.sh"):
+        needle = "{{ config_dir }}/" + script + ":{{ config_dir }}/" + script + ":ro"
+        assert needle in unit, f"kopia.container.j2 does not mount {script}"

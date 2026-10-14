@@ -38,9 +38,10 @@ on storagebaby — see [Volumes](#volumes)) on first start and connects to it af
 accepted values, and anything else makes the container exit 2 with a named reason rather
 than starting a server with no repository.
 
-The two test hosts still carry `service_config: { kopia: { repository: filesystem } }`
-in their `host.yml` — the override that used to be needed to get off the `s3` default.
-It is now redundant, overriding the default to the default, but harmless.
+The two test hosts carry `service_config: { kopia: { sync: none } }` in their
+`host.yml` — not a repository override any more (`filesystem` is the default
+everywhere now), but what keeps the hourly replica push, below, from trying to
+reach a Backblaze account that does not exist on a test host.
 
 ### Connect, then create
 
@@ -66,15 +67,17 @@ from the host's `kopia-clients` set instead, because the client services need th
 values — the registration section below has the whole mechanism.
 
 > **The two B2 values in `secrets.sops.yaml` are `REPLACE_ME`.** There was no
-> credential to carry over from the old stack. `start.sh` does not read either one
-> today — the repository backend is `filesystem`, not `s3` — so a converge does not
-> fail over them the way it used to. Put the real ones in with
+> credential to carry over from the old stack. `start.sh` itself does not read
+> either one — the repository backend is `filesystem`, not `s3` — but
+> `config/sync.sh` does, every hour, to authenticate the off-site replica push
+> below: a converge does not fail over them, the hourly `kopia-sync.service`
+> does, until they hold real values. Put the real ones in with
 >
 > ```sh
 > mise run sops hosts/StorageBaby/services/kopia/secrets.sops.yaml
 > ```
 >
-> before Backblaze is asked to do anything with them again.
+> before Backblaze is asked to do anything with them.
 
 > **The repository password cannot be recovered.** Kopia derives the repository's
 > encryption keys from it; there is no reset, no escrow and no way back into the
@@ -88,6 +91,67 @@ values — the registration section below has the whole mechanism.
 `kopia.service` with the new value. Rotating `repository_password` is **not** a
 password change — it would make the existing repository unreadable. Use
 `kopia repository change-password` against the running server instead.
+
+## The off-site replica
+
+Now that the repository itself is local, Backblaze holds a replica instead, fed
+hourly by `kopia-sync.timer` running `config/sync.sh` inside the container:
+
+```sh
+kopia repository sync-to s3 --bucket="$KOPIA_S3_BUCKET" --endpoint="$KOPIA_S3_ENDPOINT" \
+	--delete --parallel=8
+```
+
+`sync-to` produces a **complete, connectable repository** in the bucket, not an
+archive. The same `repository_password` that opens the local one opens this
+copy too — restoring from it is `kopia repository connect s3` against the
+bucket, nothing to unpack or reassemble first.
+
+Three config keys drive it, all read by `config/sync.sh` through the unit's
+`Environment=` lines, never as flags:
+
+```yaml
+s3_endpoint: s3.eu-central-003.backblazeb2.com
+s3_bucket: GTMyXab9-jlkkb
+# `s3` or `none`. A host with no Backblaze account sets `none` in its own
+# `service_config`; the unit still installs and runs, and sync.sh exits 0
+# without touching the network.
+sync: s3
+# False until the first real sync has created the bucket's repository format
+# blob, then flipped to true.
+sync_must_exist: false
+```
+
+`sync_must_exist` defaults to `false` on both the template and the script side
+— deliberately the opposite of what reads safer. `true` by default would make
+the very first sync of any new host fail against its own still-empty bucket;
+`false` is what lets that first sync create the bucket's repository, and only
+after that succeeds does flipping it to `true` buy anything — a mistyped
+bucket name failing loudly instead of quietly starting a second, empty
+repository next to the real one.
+
+**Credentials reach `sync-to` through `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`, read from the `b2_key_id` and `b2_application_key`
+podman secrets, never through a flag** — the same reasoning as every other
+secret in this service: argv is visible in this container's `ps` and in the
+host's `/proc/<pid>/cmdline`, where a flag would sit for as long as the command
+runs.
+
+**`--delete` only does what it says if the bucket's lifecycle rules let it.**
+Without it the replica keeps every blob the local repository's own garbage
+collection has already dropped, and grows without bound while the source stays
+trim. A Backblaze bucket keeps every version of an object by default, though,
+and under that policy a "deleted" blob is hidden, not gone — Backblaze keeps
+billing for the hidden version until a lifecycle rule expires it. The bucket
+needs a lifecycle rule that drops hidden versions after a short window, or
+`--delete` spends API calls to produce no savings at all.
+
+**The number to watch is Class C list transactions, not storage.** Uploads are
+free on ingress, and the push itself is usually small — a listing plus
+whatever blobs are new since the last one — but `sync-to` runs a Class C list
+underneath every call, 24 times a day on an hourly timer. If that ever shows
+up as a real cost, the agreed fallback is a longer `OnCalendar=` on
+`kopia-sync.timer`, not a smaller `--parallel`.
 
 ## How it runs
 
