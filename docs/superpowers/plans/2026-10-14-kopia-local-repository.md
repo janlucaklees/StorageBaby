@@ -51,6 +51,11 @@ def test_the_kopia_repository_is_not_excluded_from_the_array(host):
     tree would silently remove the only protection `/apps` has left. Written
     against `volume_overrides` rather than a literal path: the path is a host's
     decision and may move, the invariant may not.
+
+    Snapraid's excludes are relative to a *disk's* root, not to the pool mount --
+    but every branch of this pool is a disk root, so a path under `/pool` is the
+    same path under each branch. That is why comparing against `pool.mount` here
+    is correct and not an approximation.
     """
     repo = host_cfg(host).get("volume_overrides", {}).get("kopia/repo")
     if repo is None:
@@ -201,16 +206,13 @@ volume_overrides:
   kopia/repo: /pool/backups/devices/StorageBaby/kopia
 ```
 
-- [ ] **Step 3: Drop the now-redundant test-host overrides**
+- [ ] **Step 3: Leave the test-host overrides alone for now**
 
-In both `hosts/test-a/host.yml` and `hosts/test-ci/host.yml`, remove the `repository: filesystem` line and its comment from the `service_config.kopia` block. Leave the block itself in place — Task 3 puts `sync: none` in it. For now it becomes:
-
-```yaml
-# A test host has no Backblaze account. The repository backend is `filesystem` for
-# everyone now, so there is nothing to override here yet.
-service_config:
-  kopia: {}
-```
+`hosts/test-a/host.yml` and `hosts/test-ci/host.yml` still carry
+`service_config.kopia.repository: filesystem`. It is now redundant — it overrides the
+default to the default — but harmless, and Task 3 step 7 replaces the whole block with
+`sync: none`. Editing those two lines twice across two commits buys nothing, so this
+task does not touch them.
 
 - [ ] **Step 4: Run the tests**
 
@@ -374,12 +376,18 @@ export AWS_SECRET_ACCESS_KEY
 #   repository format blob yet; on from then on, so a mistyped bucket fails loudly
 #   instead of quietly starting a second, empty repository. Driven by a config key
 #   so the switch is one line of git and not an edit on the host.
+#
+#   **Defaults to off, on both sides.** A key left out means "no guard", not
+#   "guard on" -- deliberately: the other way round reads safer and would make the
+#   very first sync of any new host fail against its own empty bucket. The guard
+#   is a hardening step taken once the replica exists, never a prerequisite for
+#   creating it.
 set -- kopia repository sync-to s3 \
 	--bucket="$KOPIA_S3_BUCKET" \
 	--endpoint="$KOPIA_S3_ENDPOINT" \
 	--delete \
 	--parallel=8
-if [ "${KOPIA_SYNC_MUST_EXIST:-true}" = "true" ]; then
+if [ "${KOPIA_SYNC_MUST_EXIST:-false}" = "true" ]; then
 	set -- "$@" --must-exist
 fi
 
@@ -403,7 +411,7 @@ And beside the existing `KOPIA_S3_*` lines, replacing their comment:
    config/sync.sh and by nothing else. `KOPIA_SYNC=none` on a host with no
    Backblaze account makes the hourly unit a no-op. #}
 Environment=KOPIA_SYNC={{ service.config.sync | default('none') }}
-Environment=KOPIA_SYNC_MUST_EXIST={{ service.config.sync_must_exist | default(true) | lower }}
+Environment=KOPIA_SYNC_MUST_EXIST={{ service.config.sync_must_exist | default(false) | lower }}
 Environment=KOPIA_S3_ENDPOINT={{ service.config.s3_endpoint | default('') }}
 Environment=KOPIA_S3_BUCKET={{ service.config.s3_bucket | default('') }}
 ```
@@ -463,6 +471,8 @@ sync: s3
 # False for the very first sync into a fresh bucket, which has no repository
 # format blob yet; true from then on, so a mistyped bucket fails loudly instead
 # of quietly starting a second, empty repository. Flip it after the first run.
+# It defaults to false where it is read, so a host that omits it gets no guard
+# rather than a first sync that cannot succeed.
 sync_must_exist: false
 ```
 
