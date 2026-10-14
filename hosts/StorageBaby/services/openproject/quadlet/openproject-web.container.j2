@@ -20,21 +20,25 @@ EnvironmentFile={{ config_dir }}/app.env
    before the new code serves anything.
    Seeding is the other half and is not covered by it -- see the hook in service.yml. #}
 Environment=MIGRATE=true
-{# The password as a *file*, and the URL assembled from it below, so the one secret is
-   stored once. OpenProject reads neither a password file nor a split set of DB_* variables
-   -- it takes one `DATABASE_URL` -- and openarchiver already solved that shape here: a
-   shell entrypoint exports the composed value and then execs what the image would have
-   run. Hex passwords keep this safe: a URL field must not need escaping. #}
+{# The password as a *file*, and the URL composed from it by `config/db-url.sh`, so the one
+   secret is stored once. OpenProject reads neither a password file nor a split set of DB_*
+   variables -- it takes one `DATABASE_URL` -- and openarchiver already solved that shape
+   here. The composition lives in a sourced script rather than in this line because the
+   `db:seed` hook needs the same value and a `podman exec` does not inherit pid 1's
+   environment; that script's own comment has the error it produced. #}
 Secret=database_password
 Secret=secret_key_base,type=env,target=SECRET_KEY_BASE
 Volume={{ volumes.data }}:/var/openproject/assets
+{# Read-only, and the whole config directory rather than the one file: `app.env` lives
+   beside it and carries no secret by construction. #}
+Volume={{ config_dir }}:/config:ro
 {# `./docker/prod/entrypoint-slim.sh ./docker/prod/web` is the image's own Entrypoint and
    Cmd -- read off its Dockerfile, and a version bump has to read them again. The
    entrypoint ends in `exec "$@"`, so passing the command through it keeps its jemalloc and
-   PGBIN setup. `exec` twice over so the server is pid 1 and gets the signals systemd
-   sends, rather than a shell that swallows them. #}
+   PGBIN setup. `exec` so the server is pid 1 and gets the signals systemd sends, rather
+   than a shell that swallows them. #}
 Entrypoint=/bin/sh
-Exec=-c 'export DATABASE_URL="postgres://{{ service.config.database_user }}:$(cat /run/secrets/database_password)@127.0.0.1/{{ service.config.database_name }}?pool=20&encoding=unicode&reconnect=true"; exec ./docker/prod/entrypoint-slim.sh ./docker/prod/web'
+Exec=-c '. /config/db-url.sh; exec ./docker/prod/entrypoint-slim.sh ./docker/prod/web'
 {# Ruby, because this image has neither curl nor wget -- upstream's own compose healthcheck
    calls curl and cannot be working. `/health_checks/default` is OpenProject's readiness
    endpoint and checks the database too, so a web process that booted against a broken

@@ -190,6 +190,14 @@ deployment travels with its code. The first is right for anything you merely run
   3. **Only then, a platform conversation.** If neither fits, the gap is real and
      `docs/ownership.md` is where it gets argued, not worked around.
 
+- **A hook's `podman exec` does not inherit the entrypoint's environment.** It starts a
+  process with the container's _configured_ environment — the `Environment=` and
+  `Secret=…,type=env` lines — so anything a shell entrypoint exported belongs to pid 1
+  alone. A service that composes a value at start (openarchiver's and openproject's
+  `DATABASE_URL`, from a password file) and then has a hook that needs it must put the
+  composition somewhere both can reach: a script in `config/`, mounted read-only, sourced
+  by the unit's `Exec=` and by the hook's command. openproject's `config/db-url.sh` is the
+  worked example, and the error it produced is in its comment.
 - **`owner` is the uid _inside_ the container**, which the role maps to
   `subuid_start + owner - 1`. Read it off the image rather than guessing
   (`podman exec <name>-app id -u`); a wrong one hands a whole tree to the wrong uid, once.

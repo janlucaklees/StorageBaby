@@ -14,13 +14,14 @@ ContainerName=openproject-worker
 Pod=openproject.pod
 Environment=TZ={{ tz }}
 EnvironmentFile={{ config_dir }}/app.env
-{# The same composition as web, for the same reason -- see the comments there. #}
+{# The same composition as web, from the same sourced script -- see the comments there. #}
 Secret=database_password
 Secret=secret_key_base,type=env,target=SECRET_KEY_BASE
 {# Background jobs write exports and attachments into the same tree web serves them from. #}
 Volume={{ volumes.data }}:/var/openproject/assets
+Volume={{ config_dir }}:/config:ro
 Entrypoint=/bin/sh
-Exec=-c 'export DATABASE_URL="postgres://{{ service.config.database_user }}:$(cat /run/secrets/database_password)@127.0.0.1/{{ service.config.database_name }}?pool=20&encoding=unicode&reconnect=true"; exec ./docker/prod/entrypoint-slim.sh ./docker/prod/worker'
+Exec=-c '. /config/db-url.sh; exec ./docker/prod/entrypoint-slim.sh ./docker/prod/worker'
 {# This process serves no HTTP at all, so there is nothing to request. The question that
    does have a meaningful answer is whether GoodJob is still running -- `./docker/prod/worker`
    ends in `bundle exec good_job start`, so its name is in a process cmdline for as long as

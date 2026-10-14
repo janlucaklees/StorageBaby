@@ -26,9 +26,17 @@ secrets: [database_password, secret_key_base, kopia_password]
 # No `user:`: this image's `USER` is already `app`, unlike nextcloud's, where the hooks
 # have to name `www-data` because the image runs as root. `RAILS_ENV=production` comes
 # from the image, so the exec inherits it.
+#
+# `db-url.sh` has to be sourced first, and that is not decoration: `podman exec` starts a
+# process with the container's *configured* environment, so the `DATABASE_URL` the
+# entrypoint exported for pid 1 is not there. Without it Rails looks for a local unix
+# socket and the hook fails -- measured on test-a.
 hooks:
   after_change:
-    - { container: openproject-web, command: 'bundle exec rake db:seed' }
+    - {
+        container: openproject-web,
+        command: '. /config/db-url.sh; bundle exec rake db:seed'
+      }
 backup:
   paths: [data, backups]
   schedule: '03:00'

@@ -65,13 +65,27 @@ at start:
 
 ```
 Entrypoint=/bin/sh
-Exec=-c 'export DATABASE_URL="postgres://openproject:$(cat /run/secrets/database_password)@…"; exec ./docker/prod/entrypoint-slim.sh ./docker/prod/web'
+Exec=-c '. /config/db-url.sh; exec ./docker/prod/entrypoint-slim.sh ./docker/prod/web'
 ```
 
 openarchiver does the same thing for the same reason, and its unit is the model. Two details
 make it work: the entrypoint the image would have run is passed through rather than replaced,
 because it ends in `exec "$@"` and does the jemalloc and `PGBIN` setup; and `exec` keeps the
 server as pid 1, so systemd's signals reach it instead of a shell.
+
+**The composition lives in a sourced script, not in the unit**, and that is the whole reason
+`config/db-url.sh` exists. `podman exec` starts a process with the container's _configured_
+environment — `Environment=` and `Secret=…,type=env` — so a variable exported by the
+entrypoint belongs to pid 1 alone. The `db:seed` hook ran without it and Rails fell back to a
+local unix socket:
+
+```
+ActiveRecord::ConnectionNotEstablished: connection to server on socket
+"/var/run/postgresql/.s.PGSQL.5432" failed: No such file or directory
+```
+
+One definition, three callers: web, the worker, and the hook. The config directory is mounted
+read-only at `/config` to make it reachable from inside.
 
 The password must be URL-safe, which is why every generated password here is hex. A value
 with `@`, `:` or `/` in it would need escaping inside the URL field and would silently
