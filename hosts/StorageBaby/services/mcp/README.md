@@ -9,7 +9,7 @@ nothing from the internet.
 An MCP server is neither part of the agent nor part of the application: it is an adapter
 that calls the application's REST API over HTTPS. Where it runs is decided by who needs to
 reach it and where the token should live, and here the answer to both is "this host" —
-OpenClaw is itself a service, so "next to the agent" and "next to the application" are the
+the agent is itself a service, so "next to the agent" and "next to the application" are the
 same box.
 
 `mcp-hub` is then the piece that makes one service possible at all. Two of the three
@@ -121,12 +121,12 @@ private space is the second layer instead.
 ## Connecting a client
 
 A browser-capable client does OAuth against the hub with the password above. One that
-cannot — OpenClaw, and anything driving the OpenAI Responses API — uses a resource-bound
+cannot — Hermes, and anything driving the OpenAI Responses API — uses a resource-bound
 token, created on the host and printed exactly once:
 
 ```sh
 doas /usr/local/sbin/podman-as svc-mcp podman exec mcp-hub \
-	node /app/dist/admin.js tokens create --resource hub --days 90 --label openclaw
+	node /app/dist/admin.js tokens create --resource hub --days 90 --label hermes
 ```
 
 Path routing gives each adapter its own endpoint — `/mealie`, `/nextcloud`, `/paperless` —

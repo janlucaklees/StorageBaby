@@ -1,0 +1,24 @@
+name: hermes
+# The dashboard. The gateway's own OpenAI-compatible API listens on 8642 inside the
+# container and is deliberately not published: the dashboard reaches it over the
+# container's loopback, and nothing outside needs it.
+port: 9119
+# Private. It holds the model provider's API key and has no authentication of its own --
+# upstream's compose says so plainly and tells you to put a reverse proxy in front or
+# tunnel to it. Here the pod publishes loopback only and the route is VPN-only.
+domain: hermes
+volumes:
+  # Everything: the profile, the agent's memory, the skills it writes for itself, the
+  # sessions, and the provider API key once it is entered in the dashboard. Small and
+  # written constantly, so `fast`.
+  #
+  # 10000 is `HERMES_UID`'s own default, set explicitly in the unit beside it. The image
+  # runs as root and its s6 init remaps an internal user to that uid, then drops each
+  # supervised service to it -- so the files in here end up owned by 10000 whatever the
+  # platform does, and declaring it is what makes the role's one-time chown agree.
+  data: { class: fast, owner: 10000 }
+secrets: [kopia_password]
+backup:
+  paths: [data]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }

@@ -1,0 +1,38 @@
+[Unit]
+Description=Hermes Agent
+
+[Container]
+Image=docker.io/nousresearch/hermes-agent:v0.22.0
+ContainerName=hermes-gateway
+Pod=hermes.pod
+Environment=TZ={{ tz }}
+{# One container, not the two upstream's compose uses. `HERMES_DASHBOARD=1` registers the
+   dashboard as an s6-supervised service beside the gateway in this same container, which
+   is what the image's own docker guide recommends -- and it means the dashboard reaches
+   the gateway's API on the container's loopback with nothing published for it. #}
+Environment=HERMES_DASHBOARD=1
+{# Both at their own defaults, written out because the `data` volume's `owner` has to
+   agree with them: the image's s6 init remaps its internal user to these and then drops
+   every supervised service to it. Changing either means changing `owner` in service.yml
+   and chowning the existing tree. #}
+Environment=HERMES_UID=10000
+Environment=HERMES_GID=10000
+Volume={{ volumes.data }}:/opt/data
+{# The dashboard, which is what the route points at -- so this asks the same question
+   Traefik does. curl is in the image (its runtime stage installs it alongside python3 and
+   procps), which upstream's own compose healthchecks rely on too.
+
+   Not the gateway's health endpoint on 8642: that would report the engine while the thing
+   the route serves could still be down, and the engine is supervised by s6 anyway. #}
+HealthCmd=curl -fs -S --max-time 2 http://127.0.0.1:9119/ || exit 1
+HealthOnFailure=kill
+{# s6 brings up its service tree, then python starts: measured generously rather than
+   guessed, and the role's hook wait allows far more. #}
+HealthStartPeriod=120s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
