@@ -376,3 +376,32 @@ def test_the_retired_root_directories_are_gone():
             "the array and the nightly maintenance run are ansible/roles/storage, and Samba is "
             "dropped rather than migrated."
         )
+
+
+@pytest.mark.parametrize("host", STORAGE_HOSTS)
+def test_the_kopia_repository_is_not_excluded_from_the_array(host):
+    """The whole design rests on parity covering the kopia repository.
+
+    `/apps` is excluded because live application state cannot be parityed; the
+    repository is what makes that acceptable, so putting it under an excluded
+    tree would silently remove the only protection `/apps` has left. Written
+    against `volume_overrides` rather than a literal path: the path is a host's
+    decision and may move, the invariant may not.
+
+    Snapraid's excludes are relative to a *disk's* root, not to the pool mount --
+    but every branch of this pool is a disk root, so a path under `/pool` is the
+    same path under each branch. That is why comparing against `pool.mount` here
+    is correct and not an approximation.
+    """
+    repo = host_cfg(host).get("volume_overrides", {}).get("kopia/repo")
+    if repo is None:
+        pytest.skip(f"{host} does not override kopia's repo volume")
+    storage = storage_of(host)
+    pool = storage["pool"]["mount"]
+    assert repo.startswith(pool + "/"), f"{host}: {repo} is not under {pool}"
+    relative = repo[len(pool) :]
+    for exclude in storage["snapraid"]["excludes"]:
+        # Only an anchored directory rule can swallow a whole tree; the glob rules
+        # (`*.bak`, `*.log`) match single files and cannot hide the repository.
+        if exclude.startswith("/") and exclude.endswith("/"):
+            assert not relative.startswith(exclude), f"{host}: {repo} is under exclude {exclude}"

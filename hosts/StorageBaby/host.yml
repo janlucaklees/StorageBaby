@@ -52,18 +52,25 @@ storage:
   pool:
     mount: /pool
     options: defaults,allow_other,use_ino,category.create=pfrd,moveonenospc=true,minfreespace=20G,fsname=mergerfsPool,cache.writeback=false,cache.symlinks=false,cache.readdir=false,async_read=true,threads=4
-  # The array. `excludes` are paths relative to a *disk's* root, which for a branch of this
-  # pool is the same as relative to /pool -- they are the deployed ones with the Nextcloud
-  # path moved onto the platform's volume layout (`/apps/nextcloud/volumes/nextcloud/data/`
-  # -> `/apps/nextcloud/data/`, the `data` volume of the nextcloud service; the
-  # installation's own trees are on the SSD now and need no exclude).
   snapraid:
     block_size: 256
+    # Paths are relative to a *disk's* root, which for a branch of this pool is the
+    # same as relative to /pool.
+    #
+    # `/apps/` is the whole of live application state, and it is excluded because
+    # snapraid cannot parity a file that is rewritten while it reads it: the nightly
+    # run ended in `exit:warning` on four soft errors every night, all of them a
+    # SQLite or appdata file under a running service. What protects that tree instead
+    # is the kopia repository, which lives at /pool/backups/devices/StorageBaby/kopia
+    # -- outside this exclude, and therefore still covered by parity. A service there
+    # without a `backup:` block (jellyfin, stirling-pdf) is covered by nothing, which
+    # is a decision and not an oversight: see the design spec, section 3.1.
     excludes:
       - '*.bak'
       - '*.unrecoverable'
       - /tmp/
       - /lost+found/
+      - /apps/
       - .AppleDouble
       - ._AppleDouble
       - .DS_Store
@@ -73,7 +80,6 @@ storage:
       - .TemporaryItems
       - .Trashes
       - .AppleDB
-      - /apps/nextcloud/data/jlk/files/Projects/Kannji/_app_workspace/app/build/
       - '*.tmp'
       - '*.log'
       - /cache/
