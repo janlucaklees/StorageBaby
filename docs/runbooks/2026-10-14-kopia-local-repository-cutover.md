@@ -20,10 +20,10 @@ look like it did nothing.
       under `/pool/backups/devices/`; the pool now has 1.6 TB free, comfortably ahead of
       the ~500 GB needed. Nothing left to do here.
 
-      The design also named `/pool/jlk` (954 GB) as a second candidate. It has not been
-                  touched and is not required for this cutover — noted here so a reader doesn't
-                  wonder whether that half of step 1 was dropped, not as an instruction: it's the
-                  operator's own data and nobody has decided it's stale.
+  - The design also named `/pool/jlk` (954 GB) as a second candidate. It has not been
+    touched and is not required for this cutover — noted here so a reader doesn't wonder
+    whether that half of step 1 was dropped, not as an instruction: it's the operator's
+    own data and nobody has decided it's stale.
 
 - [x] **2. The bucket and its credentials — done.**
   - [x] `b2_key_id` and `b2_application_key` for bucket `GTMyXab9-jlkkb` are committed
@@ -34,12 +34,11 @@ look like it did nothing.
         would carry a local fault — a degraded branch, a bad restore, a mistaken `rm`
         — off-site inside the hour, which is exactly what a replica is supposed to
         survive. Nothing is deleted or hidden at Backblaze, so there is nothing for a
-        lifecycle rule to expire. Leave versioning as it is.
-
-        The cost is that the replica keeps blobs the local repository's garbage
-                collection has already dropped, and grows faster than the source. That is the
-                accepted trade until a sanity guard exists on this side; the full argument is
-                in the service README, "The off-site replica", and in `docs/ownership.md` § 7.
+        lifecycle rule to expire. Leave versioning as it is. The cost is that the
+        replica keeps blobs the local repository's garbage collection has already
+        dropped, and grows faster than the source — the accepted trade until a sanity
+        guard exists on this side. Full argument in the service README, "The off-site
+        replica", and in `docs/ownership.md` § 7.
 
 - [ ] **3. Rotate `repository_password` — optional.** Not required: a fresh repository
       derives fresh keys from whatever password it is given, and the bucket the current
@@ -102,9 +101,15 @@ failed`, which reads like a wrong password and is not one.
     unchanged, and `kopia-client.sh` already checks the stored connection against
     `kopia repository status` on every start and discards and remakes it if that fails
   - kopia's `logs` volume
-  - `/pool/backups/devices/StorageBaby/kopia` itself — the new repository's target
-    path, already confirmed empty; it needs no action, just confirmation it stays that
-    way until step 5
+  - `/pool/backups/devices/StorageBaby/kopia` — **it does not exist.** Measured on the
+    host: the parent `/pool/backups/devices/StorageBaby/` is there and empty, the
+    `kopia` directory below it is not. The converge creates it, 0750 and owned by
+    `svc-kopia`, and `start.sh` then finds it empty and creates the repository in it.
+    Nothing to wipe and nothing to confirm beyond leaving it alone — and it is
+    deliberately not in the block above, because nothing that lives under the
+    repository path belongs in a wipe list, today or at any later run of this runbook.
+    (Should anyone create it by hand before the converge, `owner: 0` on the `repo`
+    volume makes the role adopt it; that is what the declaration is for.)
 
   **Do not start kopia by hand after this.** A manual start before the merge lands runs
   the _old_ `start.sh`, which still reads `KOPIA_REPOSITORY=s3` and reconnects straight
@@ -124,9 +129,10 @@ failed`, which reads like a wrong password and is not one.
   the last successful run — a no-op on an unchanged checkout, so running it early or
   more than once costs nothing (`docs/quickstart.md`, `docs/external-service.md`).
 
-  `start.sh` finds `repository.config` absent, takes the `filesystem` branch, and
-  because `/pool/backups/devices/StorageBaby/kopia` is empty, **creates** the
-  repository there rather than connecting to one, then registers every client. The
+  The role creates `/pool/backups/devices/StorageBaby/kopia` — it does not exist yet —
+  owned by `svc-kopia`. `start.sh` then finds `repository.config` absent, takes the
+  `filesystem` branch, and because that directory is empty **creates** the repository
+  in it rather than connecting to one, then registers every client. The
   converge also starts every pod stopped in step 4: the `service` role's "Start units
   that are not up" task (`ansible/roles/service/tasks/units.yml`) starts any unit of a
   placed service that is not `active`, whether or not that service's own files changed

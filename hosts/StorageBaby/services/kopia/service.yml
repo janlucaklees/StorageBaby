@@ -16,7 +16,16 @@ volumes:
   # empty stub while the repository lived in Backblaze, and it is now the primary
   # copy of every backup on this host. storagebaby overrides the path to
   # /pool/backups/devices/StorageBaby/kopia; a test host gets its pool root.
-  repo: { class: pool }
+  #
+  # `owner: 0` is the uid kopia runs as inside the container, which is the service
+  # user -- the same thing leaving it out would mean while the directory is
+  # absent. It is declared because the role only adopts an *existing* directory's
+  # owner when `owner` is, and this path is one an operator could plausibly create
+  # by hand: the override names it, and the tree above it already exists. A
+  # root-owned directory left unadopted converges green and leaves kopia unable to
+  # write to its own repository, restart-looping where nobody is looking. Same
+  # reasoning as immich's `upload`.
+  repo: { class: pool, owner: 0 }
 config:
   server_username: jlk
   # `filesystem` on every host. The repository lives on local storage and Backblaze
