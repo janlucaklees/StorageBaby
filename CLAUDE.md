@@ -141,11 +141,11 @@ Snapraid                           /etc/snapraid.conf, rendered from the same bl
 
 ## Storage maintenance pipeline
 
-`storage-maintenance.timer` (`OnCalendar` from `storage.snapraid.maintenance.on_calendar`, 02:00, `Persistent=true`) runs `storage-maintenance.service`, a oneshot that `Requires=` the pool and execs `/opt/storagebaby/maintenance/storage-maintenance-unattended.sh`. The role installs that whole directory as root: six scripts at 0755 — the wrapper, the orchestrator, `sync.sh`, `scrub.sh`, `balance_disks.sh` and `storage-maintenance-failed.sh`, the notifier `storage-maintenance-failed.service` execs — plus the `plugins/` tree and `maintenance.env`, which is 0644 because it carries no secret by construction.
+`storage-maintenance.timer` (`OnCalendar` from `storage.snapraid.maintenance.on_calendar`, 02:00, `Persistent=true`) runs `storage-maintenance.service`, a oneshot that `Requires=` the pool and execs `/opt/storagebaby/maintenance/storage-maintenance-unattended.sh`. The role installs that whole directory as root: seven scripts at 0755 — the wrapper, the orchestrator, `sync.sh`, `scrub.sh`, `balance_disks.sh`, `report_failed_units.sh` and `storage-maintenance-failed.sh`, the notifier `storage-maintenance-failed.service` execs — plus the `plugins/` tree and `maintenance.env`, which is 0644 because it carries no secret by construction.
 
 The wrapper logs to `/var/log/storage-maintenance/` and mails the log with `mutt`, which is told to send through `msmtp` explicitly — the host runs no MTA. `/etc/msmtprc` (0600 root) is rendered from `storage.mail` plus `smtp_password` out of `hosts/<host>/secrets/mail.sops.yaml`; msmtp logs to the journal, so `journalctl -t msmtp` is where a refused relay shows up. If the pool does not come up, the unit's start job fails before the wrapper runs at all, which is what `storage-maintenance-failed.service` on `OnFailure=` exists to mail.
 
-The orchestrator runs these steps in order, unchanged from the hand-stowed original:
+The orchestrator runs these steps in order; all but step 9 are unchanged from the hand-stowed original:
 
 1. `on-start` hook
 2. Snapraid status print
@@ -154,7 +154,9 @@ The orchestrator runs these steps in order, unchanged from the hand-stowed origi
 5. `on-after-sync` hook
 6. `scrub.sh` (new blocks, then `scrub_percent` of anything older than `scrub_older_days`)
 7. `on-after-scrub` hook
-8. Final status + SMART report + `on-finish` hook
+8. Final status + SMART report
+9. `report_failed_units.sh` (every `svc-*` service manager's failed units, for the mail)
+10. `on-finish` hook
 
 If any step or hook fails, the orchestrator runs the `on-failure` hook before aborting; that one is best-effort, so one broken recovery script does not stop the others. It also fires on SIGINT/SIGTERM (a systemd stop or a timeout mid-run), so a service stopped by `on-before-balance` is never left down.
 

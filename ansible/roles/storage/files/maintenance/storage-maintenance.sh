@@ -111,4 +111,12 @@ print_snapraid_status "Final Snapraid Status"
 
 print_snapraid_smart
 
+echo_section "Failed service units"
+echo
+
+# Not wrapped in `fail`: this step reports, it does not gate. A failed unit in a
+# service manager is news for the mail, not a reason to abort a run whose parity
+# work has already succeeded.
+bash "${SCRIPT_DIR}/report_failed_units.sh"
+
 run_hook "on-finish"

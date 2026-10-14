@@ -312,3 +312,18 @@ def test_a_run_that_cannot_start_still_mails(host):
     # The report is about a named unit and carries its state, not just a subject line.
     assert "storage-maintenance.service could not start." in body, body[:4000]
     assert "systemctl status storage-maintenance.service" in body, body[:4000]
+
+
+def test_the_failed_unit_report_is_installed_and_runs(host):
+    """Service units live in each service user's own systemd, which has no path to
+    the host's mail relay (/etc/msmtprc is 0600 root). Without this step an hourly
+    kopia sync -- or any failed dump, or a crashed pod -- fails into a journal
+    nobody reads. Root can reach those managers; that is what storagebaby-svc does.
+    """
+    script = host.file("/opt/storagebaby/maintenance/report_failed_units.sh")
+    assert script.exists and script.mode == 0o755
+
+    run = host.run("bash /opt/storagebaby/maintenance/report_failed_units.sh")
+    assert run.rc == 0, run.stdout + run.stderr
+    # It reports; it never fails the run. A healthy VM has no failed units.
+    assert "svc-" in run.stdout or "No failed units" in run.stdout, run.stdout
