@@ -110,7 +110,14 @@ storage:
     smtp_port: 465
     starttls: false
     smtp_user: storagebaby@klees.io
-volume_overrides: {}
+# The kopia repository, deliberately outside `storage_roots.pool` (= /pool/apps):
+# /apps is excluded from the snapraid array and the repository must not be. The
+# path follows the operator's existing structure -- /pool/backups/devices/ already
+# holds CloudBaby, KAIZN-vps and StorageBaby. A filesystem path on this machine is
+# a host fact, which is why it is here and not in the service folder
+# (docs/ownership.md section 4).
+volume_overrides:
+  kopia/repo: /pool/backups/devices/StorageBaby/kopia
 # The LAN address, explicitly: this host also has a VPN interface and Docker's leftover
 # bridges, and Traefik's TCP entrypoints must bind the one address the scanner reaches.
 # It is also what the FTP server advertises in its PASV reply. Give it a DHCP reservation.
