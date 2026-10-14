@@ -55,7 +55,8 @@ deployment travels with its code. The first is right for anything you merely run
 | many parts, plain-TCP ports     | `paperless`                              |
 | two hostnames, one service      | `nextcloud`                              |
 | image built on the host         | `mcp` (and the `build-echo` fixture)     |
-| a unit that runs once and exits | `paperless-dump.service.j2`              |
+| a scheduled job                 | `paperless-dump.timer.j2` + its service  |
+| start-up work before serving    | `openproject` (an image flag and a hook) |
 
 5. `docs/ownership.md` § 7 — **before** proposing any change to the role or to a
    `service.yml` key. That section is the list of places the repository already disagrees
@@ -155,6 +156,7 @@ deployment travels with its code. The first is right for anything you merely run
 | No template writes `AddHost=<fqdn>:host-gateway`, or reaches the host by `host.containers.internal` / `host.docker.internal` / `169.254.1.2` | `test_no_template_writes_a_host_gateway_addhost`                           |
 | An `Environment=` value that renders with whitespace is quoted whole                                                                         | `test_environment_values_with_whitespace_are_quoted`                       |
 | No `*.image.j2` unit                                                                                                                         | `test_no_service_declares_an_image_unit`                                   |
+| Every `*.timer.j2` has a matching `*.service.j2` **and the reverse**                                                                         | `test_service_contract`                                                    |
 | One folder per service across hosts — symlink, or byte-identical copy                                                                        | `test_a_service_placed_on_several_hosts_is_one_folder_or_identical_copies` |
 
 ## Gotchas
@@ -166,18 +168,28 @@ deployment travels with its code. The first is right for anything you merely run
 - **`config/` is copied, `quadlet/` is templated.** `config/` is `ansible.builtin.copy`, so no
   Jinja runs in it. A value needed both in a unit and in a config file is duplicated by hand —
   say so in a comment.
-- **A one-shot cannot be a `*.container.j2`.** The health-and-restart test demands
-  `Restart=always` and `HealthCmd=`, which a process that runs once and exits has neither of.
-  Write a plain `<name>-<thing>.service.j2` doing `podman run --rm --pod <name> …`.
-- **The role renders `*.service.j2` but only enables `*.timer.j2`.** `tasks/timers.yml`
-  builds `timer_units` from the timer glob alone, so a one-shot with no timer sibling is
-  written to the user's unit directory and never started. Pull it in from the containers
-  that need it — `Requires=` plus `After=` in their `[Unit]` section, which systemd honours
-  by activating it as a dependency. Leave `RemainAfterExit` **off**: a successfully-exited
-  one-shot is inactive, so every restart of a dependent re-runs it, which is what an
-  application that migrates its database on upgrade needs. With `RemainAfterExit=yes` the
-  migration would run once, ever, and a version bump would start the new code against the
-  old schema.
+- **A job that runs once and exits has no legal home — don't build one.** Three walls, in
+  order: `test_container_declares_health_and_restart` demands `Restart=always` and
+  `HealthCmd=` of every `*.container.j2`, which a process that exits cannot give;
+  `tasks/timers.yml` renders every `*.service.j2` but builds its enable list from
+  `*.timer.j2` alone, so a bare one is written and never started; and `test_service_contract`
+  pairs every `*.service.j2` with a `*.timer.j2` and refuses the folder outright if one is
+  missing. A one-shot pulled in by `Requires=` from a container does work on the host — but
+  the contract will not let you commit it.
+
+  So reach for these instead, in this order:
+
+  1. **The image's own mechanism.** Most dockerised applications already do start-up work
+     themselves, often behind a flag. OpenProject migrates when `MIGRATE=true`; mealie,
+     paperless and nextcloud migrate unconditionally. Read the entrypoint and the scripts it
+     execs before concluding you need a unit.
+  2. **`hooks.after_change`.** For work that must happen _after_ the application is up, which
+     the role guarantees by waiting for the container's own health check. It must be
+     idempotent, since it runs on every converge that changed a unit — `rake db:seed` is the
+     worked example, on openproject.
+  3. **Only then, a platform conversation.** If neither fits, the gap is real and
+     `docs/ownership.md` is where it gets argued, not worked around.
+
 - **`owner` is the uid _inside_ the container**, which the role maps to
   `subuid_start + owner - 1`. Read it off the image rather than guessing
   (`podman exec <name>-app id -u`); a wrong one hands a whole tree to the wrong uid, once.
