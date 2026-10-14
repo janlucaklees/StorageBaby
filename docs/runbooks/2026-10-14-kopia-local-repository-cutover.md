@@ -55,8 +55,10 @@ look like it did nothing.
   storagebaby-svc stop paperless
   ```
 
-  That is a real, if short, maintenance window: nine services go offline for the length
-  of the wipe.
+  That is a real maintenance window, and longer than the wipe itself: the nine services
+  stay offline from this point until the merge below clears CI (including the
+  `test-ci` Molecule scenario) and the host's deploy timer reaches it, up to five
+  minutes after that. Budget for all of it, not just the few minutes the wipe takes.
 
   With everything stopped, remove — the directory itself, not just its contents, so the
   next converge recreates it fresh with the right owner. Measured on the host today:
@@ -96,17 +98,18 @@ message authentication failed` — which reads like a wrong password and is not 
       nothing further to run by hand. `start.sh` finds `repository.config` absent,
       takes the `filesystem` branch, and because `/pool/backups/devices/StorageBaby/kopia`
       is empty, **creates** the repository there rather than connecting to one, then
-      registers every client. The converge also starts every pod stopped in step 4 —
-      that is "starting what is down" (`docs/ownership.md` § 3), which happens on every
-      converge, changed code or not.
+      registers every client. The converge also starts every pod stopped in step 4: the
+      `service` role's "Start units that are not up" task (`ansible/roles/service/tasks/units.yml`)
+      starts any unit of a placed service that is not `active`, whether or not that
+      service's own files changed in this run.
 
 - [ ] **6. First full snapshot.** Not an operator action to start — each client
       sidecar's own scheduler takes it, at that service's `KOPIA_SNAPSHOT_TIME`. Local
       disk, no network, roughly 500 GB; Immich's 323 GB `upload` is the long pole and
-      the whole point of this change. Verify:
+      the whole point of this change. Verify, as root on the host:
 
   ```
-  kopia snapshot list --all
+  podman-as svc-kopia podman exec kopia kopia snapshot list --all
   ```
 
   shows `immich@storagebaby:/data/upload`. It never has.
@@ -118,9 +121,13 @@ message authentication failed` — which reads like a wrong password and is not 
       that is a little behind and picks up the rest next hour — never wrong, only late.
 
   `sync_must_exist` is already `false` in the committed `service.yml`, which is what
-  lets this first push create the replica's repository format blob. Watch it succeed —
-  `journalctl` for `kopia-sync.service` in `svc-kopia`'s manager, or the nightly mail's
-  failed-unit list staying empty.
+  lets this first push create the replica's repository format blob. Watch it succeed:
+
+  ```
+  journalctl _SYSTEMD_USER_UNIT=kopia-sync.service
+  ```
+
+  or wait for the nightly mail's failed-unit list to stay empty.
 
   Once it has succeeded once: flip `sync_must_exist` to `true` in
   `hosts/StorageBaby/services/kopia/service.yml`, commit, push to master — same path as
