@@ -278,12 +278,15 @@ cosmetic — see step 4.
    `hosts/StorageBaby/services/kopia/secrets.sops.yaml`. Nothing in this work reads,
    writes or echoes a credential value.
 
-   **Check the bucket's lifecycle rules before the first sync.** Backblaze keeps all
-   versions by default, which means `--delete` only _hides_ a blob and the bytes keep
-   being billed — the replica would grow forever while the source stays trim, which is
-   the exact thing `--delete` is there to prevent. Set the bucket to keep only the last
-   version, or to hide then delete after a short window. Worth getting right before a
-   500 GB first push rather than after.
+   **Superseded before rollout: no lifecycle rule, and no `--delete`.** This step used
+   to say the bucket must be set to keep only the last version before the first sync.
+   It is not: `--delete` was dropped from `config/sync.sh` for the initial rollout
+   (§ 3.3's flag list is the target state, not what ships), because a replica that
+   mirrors removals hourly carries a local fault off-site within the hour, and a bucket
+   that keeps only the last version leaves nothing to roll back to. With no `--delete`
+   nothing is hidden at Backblaze and no rule has anything to expire. The runbook and
+   `docs/ownership.md` § 7 carry the current instruction and the conditions for
+   bringing the flag back.
 
 3. **Optionally rotate `repository_password`.** Not required: a fresh repository derives
    fresh keys from whatever password it is given, and the bucket that the current value

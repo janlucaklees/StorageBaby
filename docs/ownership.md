@@ -226,8 +226,8 @@ widening of the contract, not an application of it, and it is not designed yet.
 
 ## 7. Where the platform does not do this yet
 
-The work list, measured against this document at 60b402f. Items 13 and 14 were added
-2026-10-14 alongside the local kopia repository change, not from a re-measurement of
+The work list, measured against this document at 60b402f. Items 13 to 16 were added
+2026-10-14/15 alongside the local kopia repository change, not from a re-measurement of
 the rest of the list.
 
 1. **Domains are split.** A service owns the leftmost label, `host.yml` owns the rest,
@@ -281,3 +281,11 @@ the rest of the list.
     outside the snapraid array it has neither parity nor a kopia snapshot behind it.
     Accepted as disposable — a library re-scan rebuilds it; revisit when the mount
     structure is reworked.
+15. **The off-site replica never deletes.** `config/sync.sh` deliberately omits
+    `--delete` from `kopia repository sync-to`, so Backblaze keeps every blob the local
+    repository's garbage collection has dropped — a complete superset of the source
+    that only grows, and is billed for the difference. Deferred rather than wrong: the
+    repository is local now, so propagating removals hourly would carry a local fault
+    off-site within the hour. The flag returns once `sync.sh` can refuse a sync when
+    the source looks unexpectedly small, _and_ the bucket keeps hidden versions for a
+    short window instead of none. Until then, watch the bucket's stored bytes.

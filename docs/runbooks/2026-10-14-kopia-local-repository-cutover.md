@@ -21,20 +21,25 @@ look like it did nothing.
       the ~500 GB needed. Nothing left to do here.
 
       The design also named `/pool/jlk` (954 GB) as a second candidate. It has not been
-          touched and is not required for this cutover — noted here so a reader doesn't
-          wonder whether that half of step 1 was dropped, not as an instruction: it's the
-          operator's own data and nobody has decided it's stale.
+                  touched and is not required for this cutover — noted here so a reader doesn't
+                  wonder whether that half of step 1 was dropped, not as an instruction: it's the
+                  operator's own data and nobody has decided it's stale.
 
-- [ ] **2. The bucket and its credentials.**
+- [x] **2. The bucket and its credentials — done.**
   - [x] `b2_key_id` and `b2_application_key` for bucket `GTMyXab9-jlkkb` are committed
         in `hosts/StorageBaby/services/kopia/secrets.sops.yaml`.
-  - [ ] **Outstanding: the bucket's lifecycle rule.** Backblaze keeps every version of
-        an object by default. Under that policy `sync.sh`'s `--delete` only _hides_ a
-        blob — the bytes are still billed and the replica grows forever while the
-        source stays trim, which is the exact thing `--delete` exists to prevent. Set
-        the bucket to keep only the last version (or hide-then-delete after a short
-        window) before the first sync in step 7, not after — that push is ~500 GB and
-        the mistake is expensive to walk back.
+  - [x] **The bucket's lifecycle rule is no longer a precondition, and the bucket
+        should keep versions for now.** `config/sync.sh` does not pass `--delete`:
+        the replica is downstream of a local primary, and propagating removals hourly
+        would carry a local fault — a degraded branch, a bad restore, a mistaken `rm`
+        — off-site inside the hour, which is exactly what a replica is supposed to
+        survive. Nothing is deleted or hidden at Backblaze, so there is nothing for a
+        lifecycle rule to expire. Leave versioning as it is.
+
+        The cost is that the replica keeps blobs the local repository's garbage
+                collection has already dropped, and grows faster than the source. That is the
+                accepted trade until a sanity guard exists on this side; the full argument is
+                in the service README, "The off-site replica", and in `docs/ownership.md` § 7.
 
 - [ ] **3. Rotate `repository_password` — optional.** Not required: a fresh repository
       derives fresh keys from whatever password it is given, and the bucket the current

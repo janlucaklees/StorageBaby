@@ -1,8 +1,18 @@
 #!/bin/sh
 # Push the local repository to its off-site replica. Run by kopia-sync.timer via
 # `podman exec`, so it inherits the container's environment -- which is where
-# KOPIA_PASSWORD, KOPIA_CONFIG_PATH and the three KOPIA_SYNC*/KOPIA_S3_* values
-# below come from, and why this script sets none of them.
+# KOPIA_CONFIG_PATH and the KOPIA_SYNC*/KOPIA_S3_* values below come from, and
+# why this script sets none of them.
+#
+# KOPIA_PASSWORD is *not* among them, which is worth knowing before debugging an
+# authentication failure here. The unit mounts the repository password as a file
+# (`Secret=repository_password`), and only start.sh reads it, into its own
+# process. What makes this script work is that the unit also sets
+# KOPIA_PERSIST_CREDENTIALS_ON_CONNECT=true, so start.sh's connect left the
+# password stored beside repository.config -- every later `kopia` command in this
+# container, including this one, picks it up from there. So a failure here is far
+# more likely to be the B2 credentials below than the repository password, and
+# wiping the config volume takes the stored password with it.
 #
 # dash, not bash: the kopia image's /bin/sh answers `Illegal option -o pipefail`.
 set -eu
@@ -35,11 +45,29 @@ export AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/b2_application_key)"
 export AWS_SECRET_ACCESS_KEY
 
-# --delete: without it the replica keeps every blob the local repository's
-#   garbage collection has already dropped, and grows forever while the source
-#   stays trim. It only does what it says if the bucket's lifecycle rules allow a
-#   delete to actually remove the object -- Backblaze keeps all versions by
-#   default. See the README.
+# --delete: DELIBERATELY ABSENT. Do not re-add it without reading this.
+#   It propagates removals, and that is the whole problem: until this change the
+#   repository *was* Backblaze, so a local fault -- a degraded branch that still
+#   mounts, a bad restore, a mistaken `rm` under the repository path -- could not
+#   reach the off-site copy. With `--delete` on an hourly timer it reaches it
+#   within the hour, and if the bucket also keeps only the last version there is
+#   no generation left to roll back to. The replica would then be a mirror of the
+#   damage rather than a way out of it.
+#
+#   What its absence costs: the replica keeps every blob the local repository's
+#   garbage collection has already dropped, so it is a complete superset of the
+#   source that only ever grows, and it is billed for the difference.
+#
+#   What has to exist before it comes back, both of them and not one:
+#     1. a sanity guard in this script that refuses to sync when the local
+#        repository looks unexpectedly small against the last run -- the signal
+#        that distinguishes "maintenance dropped some packs" from "the source is
+#        damaged", which `sync-to` itself cannot tell apart;
+#     2. a short hidden-version window at Backblaze rather than none, so a
+#        propagated delete is recoverable for a few days instead of immediately
+#        final.
+#   Until then the growth is the cheaper mistake. See the README, "The off-site
+#   replica", and docs/ownership.md section 7.
 # --parallel: the flag defaults to 1, which would make the first ~500 GB push
 #   take days.
 # --must-exist: off for the very first sync, because the destination has no
@@ -55,7 +83,6 @@ export AWS_SECRET_ACCESS_KEY
 set -- kopia repository sync-to s3 \
 	--bucket="$KOPIA_S3_BUCKET" \
 	--endpoint="$KOPIA_S3_ENDPOINT" \
-	--delete \
 	--parallel=8
 if [ "${KOPIA_SYNC_MUST_EXIST:-false}" = "true" ]; then
 	set -- "$@" --must-exist

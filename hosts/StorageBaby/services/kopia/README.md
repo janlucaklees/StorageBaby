@@ -99,7 +99,7 @@ hourly by `kopia-sync.timer` running `config/sync.sh` inside the container:
 
 ```sh
 kopia repository sync-to s3 --bucket="$KOPIA_S3_BUCKET" --endpoint="$KOPIA_S3_ENDPOINT" \
-	--delete --parallel=8
+	--parallel=8
 ```
 
 `sync-to` produces a **complete, connectable repository** in the bucket, not an
@@ -107,7 +107,7 @@ archive. The same `repository_password` that opens the local one opens this
 copy too — restoring from it is `kopia repository connect s3` against the
 bucket, nothing to unpack or reassemble first.
 
-Three config keys drive it, all read by `config/sync.sh` through the unit's
+Four config keys drive it, all read by `config/sync.sh` through the unit's
 `Environment=` lines, never as flags:
 
 ```yaml
@@ -137,14 +137,40 @@ secret in this service: argv is visible in this container's `ps` and in the
 host's `/proc/<pid>/cmdline`, where a flag would sit for as long as the command
 runs.
 
-**`--delete` only does what it says if the bucket's lifecycle rules let it.**
-Without it the replica keeps every blob the local repository's own garbage
-collection has already dropped, and grows without bound while the source stays
-trim. A Backblaze bucket keeps every version of an object by default, though,
-and under that policy a "deleted" blob is hidden, not gone — Backblaze keeps
-billing for the hidden version until a lifecycle rule expires it. The bucket
-needs a lifecycle rule that drops hidden versions after a short window, or
-`--delete` spends API calls to produce no savings at all.
+**`--delete` is deliberately not passed, and the growth that costs is accepted
+on purpose.** `sync-to` without it never removes anything from the destination,
+so the replica keeps every blob the local repository's own garbage collection
+has already dropped: a complete superset of the source that only ever grows, and
+is billed for the difference.
+
+The reason is what the replica is _for_. Until the 2026-10-14 change the
+repository **was** Backblaze, and a local fault could not reach it — a degraded
+branch that still mounts, a restore gone wrong, a mistaken `rm` under the
+repository path. Now the local copy is the primary and Backblaze is downstream
+of it, so `--delete` on an hourly timer would carry exactly those faults off-site
+within the hour. Pair that with a bucket set to keep only the last version and
+the last recovery path is gone with no generation left to roll back to: the
+replica becomes a faithful mirror of the damage.
+
+Two things have to exist before the flag comes back, and both of them, not one:
+
+1. **A sanity guard in `config/sync.sh`** that refuses to sync when the local
+   repository looks unexpectedly small against the previous run. `sync-to` cannot
+   tell "maintenance dropped some packs" from "the source is damaged"; something
+   has to, and it has to be on this side.
+2. **A short hidden-version window at Backblaze**, rather than none. A bucket
+   that keeps only the last version makes a propagated delete final the moment it
+   lands; a few days of hidden versions makes it recoverable, at the cost of
+   paying for the hidden bytes for that window.
+
+Until both are in place, paying for a replica that grows is the cheaper mistake.
+Recorded as deliberately deferred in `docs/ownership.md` § 7.
+
+**The bucket's lifecycle rule is therefore not a precondition of the first
+sync.** Backblaze keeps every version of an object by default, and with no
+`--delete` nothing is hidden, so there is nothing for a rule to expire. Leave
+versioning on for now — it is the second half of the condition above — and
+revisit it together with the sanity guard.
 
 **The number to watch is Class C list transactions, not storage.** Uploads are
 free on ingress, and the push itself is usually small — a listing plus

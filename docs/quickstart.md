@@ -51,7 +51,11 @@ mise run sops hosts/StorageBaby/services/paperless/secrets.sops.yaml # opens nvi
 Replace every `REPLACE_ME` the README's operator table lists for the services you place.
 Kopia's `client_<service>` and that service's `kopia_password` are the same string, kept
 in two files on purpose. A B2 bucket name is global and public; Object Lock and lifecycle
-rules off, Kopia manages retention itself.
+rules off, Kopia manages retention itself. That holds for a bucket Kopia uses _as_ its
+repository — on storagebaby the repository is local now and the bucket is a replica fed
+by `kopia repository sync-to`, which is a different animal: the sync deliberately does
+not pass `--delete`, so versioning stays on and there is still nothing for a lifecycle
+rule to do (`hosts/StorageBaby/services/kopia/README.md`, "The off-site replica").
 
 ## 4. Place one service and converge
 
