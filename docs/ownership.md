@@ -269,3 +269,13 @@ The work list, measured against this document at 60b402f.
     where the host's usual one would do. The path escape hatch stays; what is missing is
     the name that should make it the exception, and the default that should make the
     class optional — § 4.1.
+13. **`mergerfs.balance` moves live application files under running containers.**
+    Excluding `/apps` from the snapraid array does not touch it: only Jellyfin is
+    stopped for the balance pass, and Nextcloud's and Immich's live trees are already
+    moved while running today. Pre-existing, unrelated to the 2026-10-14 change, worth
+    its own look.
+14. **Jellyfin's metadata is protected by nothing.** Its 32 GB of artwork, metadata and
+    watch state sits in `/pool/apps` with no `backup:` block, so now that `/apps` is
+    outside the snapraid array it has neither parity nor a kopia snapshot behind it.
+    Accepted as disposable — a library re-scan rebuilds it; revisit when the mount
+    structure is reworked.
