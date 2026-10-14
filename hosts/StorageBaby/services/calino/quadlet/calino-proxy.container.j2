@@ -1,0 +1,31 @@
+[Unit]
+Description=Calino CORS proxy
+
+[Container]
+Image=ghcr.io/ivan-malinovski/calino-proxy:0.39.1
+ContainerName=calino-proxy
+Pod=calino.pod
+Environment=TZ={{ tz }}
+{# Its default is 8081; the route port instead, so one number means the same thing from
+   Traefik to the process. #}
+Environment=PORT=8086
+{# The whole of this relay's access control, and worth being precise about what each does.
+   `ALLOWED_TARGETS` is the real limit: it may fetch this host and nothing else, so even an
+   unauthenticated caller can only reach MXroute, where they still need an MXroute
+   password. `ALLOWED_ORIGINS` is a courtesy -- a browser sends `Origin` honestly, a script
+   sends whatever it likes -- so it stops a *page* on another site from using this proxy,
+   not a program. #}
+Environment=ALLOWED_TARGETS={{ service.config.allowed_targets }}
+Environment=ALLOWED_ORIGINS={{ service.config.allowed_origins }}
+{# `/health` and not `/`: to this proxy a path is a URL-encoded target, so `/` is a
+   malformed request rather than a home page. The route declares the same path as its
+   `probe_path`. #}
+HealthCmd=wget -qO- http://127.0.0.1:8086/health || exit 1
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

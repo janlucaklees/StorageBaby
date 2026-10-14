@@ -1,0 +1,9 @@
+[Unit]
+Description=Build the calino bundle with its baked accounts
+
+[Build]
+ImageTag=localhost/calino:latest
+File={{ config_dir }}/build/Containerfile
+{# The context is the Containerfile's own directory as the role deployed it, which is
+   where `calino.config.json` goes once the operator has generated it. #}
+SetWorkingDirectory=file

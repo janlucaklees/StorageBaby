@@ -1,0 +1,61 @@
+# Calino, built here because its accounts are compiled into the JS bundle.
+#
+# Upstream's own Dockerfile cannot be used directly: a Quadlet `.build` names one
+# Containerfile and the context is this directory, not a checkout. So the two stages below
+# mirror theirs -- and that is the cost of the baked-config design, written down rather
+# than discovered later: when upstream changes its build, this file has to follow. The
+# version is pinned, so it follows on purpose rather than by surprise.
+#
+# Fully qualified image names throughout: a rootless build has no
+# containers-registries.conf, so a short name resolves to nothing and the build dies
+# before STEP 1.
+
+# ── Stage 1: the bundle ──────────────────────────────────────────────────────────────
+FROM docker.io/library/node:25-alpine3.21 AS build
+
+RUN npm install -g corepack@latest --force && corepack enable && corepack prepare pnpm@10 --activate
+
+WORKDIR /app
+
+# The source, at a pinned tag. `ADD` does not extract a remote archive, so tar does it.
+ADD https://github.com/Ivan-Malinovski/calino/archive/refs/tags/v0.39.1.tar.gz /src.tgz
+RUN tar -xzf /src.tgz --strip-components=1 -C /app && rm /src.tgz
+
+# The whole build context, which is this service's `config/build/` as the role deployed it.
+# Copied wholesale rather than naming the config file, because the file is absent until the
+# operator has run the `/setup` wizard -- and a `COPY` of a missing path fails the build.
+# Present: the accounts are baked and the app asks for a master password. Absent: upstream's
+# default, where each browser is told its CalDAV account once. Both are working states, and
+# the second is what the first deploy is.
+# `find … -exec` rather than a shell conditional: a `RUN if …; then …; fi` is parsed as
+# shell by prettier-plugin-sh, which formats this file, and `RUN` in front of `if` breaks
+# it. find is a no-op when the file is absent, so there is no failure to swallow either.
+COPY . /ctx/
+RUN find /ctx -maxdepth 1 -name calino.config.json -exec cp {} /app/calino.config.json \;
+
+# `CALINO_SELF_HOSTED=true` is upstream's flag for a private, possibly plain-HTTP DAV
+# server. The site URL is ours; the rest of their build args keep their defaults.
+ENV VITE_SITE_URL=https://calino.klees.io
+ENV CALINO_SELF_HOSTED=true
+
+# No `--mount=type=cache` on the install, unlike upstream's: the cache id would be shared
+# across every build on the host and buys nothing for a build that runs when a pinned
+# version changes. `--frozen-lockfile` so the pinned tag's lockfile is authoritative.
+RUN pnpm install --frozen-lockfile
+RUN node scripts/update-sample-events.mjs && pnpm exec vite build
+
+# ── Stage 2: serving it ──────────────────────────────────────────────────────────────
+# Caddy, as upstream does, with their Caddyfile reproduced: a static root with an
+# index.html fallback for the SPA's client-side routes, and the security headers they set.
+# `:8085` rather than their 8080 -- a rootless container's netns keeps the unprivileged
+# port floor at 1024, and caddy's image runs as root so 8080 would work, but matching the
+# route port keeps one number meaningful from Traefik to the process.
+FROM docker.io/library/caddy:2-alpine
+
+RUN printf ':8085 {\n\troot * /srv\n\ttry_files {path} /index.html\n\tfile_server\n\n\trequest_body {\n\t\tmax_size 1mb\n\t}\n\n\tencode gzip\n\n\theader {\n\t\tX-Frame-Options "SAMEORIGIN"\n\t\tX-Content-Type-Options "nosniff"\n\t\tReferrer-Policy "strict-origin-when-cross-origin"\n\t\tPermissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"\n\t\t-Server\n\t}\n\n\t@assets path /assets/*\n\theader @assets Cache-Control "public, immutable"\n\n\tlog {\n\t\toutput stdout\n\t\tformat console\n\t}\n}\n' > /etc/caddy/Caddyfile
+
+COPY --from=build /app/dist /srv
+
+EXPOSE 8085
+
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

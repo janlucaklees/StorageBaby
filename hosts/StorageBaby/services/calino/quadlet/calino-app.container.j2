@@ -1,0 +1,25 @@
+[Unit]
+Description=Calino
+
+[Container]
+{# The unit reference, not the tag the build writes: Quadlet turns this into a
+   `Requires=`/`After=` on `calino-app-build.service`, so the image exists before anything
+   runs it and a changed Containerfile -- or a newly added `calino.config.json` -- restarts
+   this container. Naming the tag directly would start whatever image happened to exist,
+   and the role's pre-pull would try to fetch it. #}
+Image=calino-app.build
+ContainerName=calino-app
+Pod=calino.pod
+Environment=TZ={{ tz }}
+{# busybox wget, which the caddy alpine image has and which upstream's own healthcheck
+   uses. Asking for `/` is the whole test here: the service is a static bundle, so a 200
+   on the document means it is serving. #}
+HealthCmd=wget -qO- http://127.0.0.1:8085/ || exit 1
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
