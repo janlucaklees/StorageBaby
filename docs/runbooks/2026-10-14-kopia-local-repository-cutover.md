@@ -12,18 +12,20 @@ the reason is that taking `/apps` out before the repository holds Immich's libra
 would leave 323 GB of photos with neither parity nor a snapshot for about a day. Stage
 2 is the last section of this document and nothing automatic does it.
 
-> **Steps 1–4 happen before this branch merges to master.** The host converges itself
-> from `stable` — nothing on it reacts to a commit that hasn't reached `stable` yet, so
-> the change simply does not exist there until this merges and CI promotes it.
-> `start.sh` connects a repository only when `repository.config` is absent, and that
-> file exists today, pointing at the old Backblaze bucket. Merge before the wipe in
-> step 4 is done, and the first converge after the merge just restarts kopia onto the
-> old bucket — the `filesystem` branch never runs, and nothing about the change is
-> visible.
+> **The wipe must land between the merge and the next converge, and nothing may
+> converge in that window.** `start.sh` connects a repository only when
+> `repository.config` is absent, and that file exists today, pointing at the old
+> Backblaze bucket. A converge with it still there restarts kopia straight onto
+> Backblaze — the `filesystem` branch never runs and the change appears to do nothing.
+> A converge _after_ the wipe but on the _old_ commit is worse: it recreates
+> `repository.config` against the old bucket and silently undoes the wipe. The deploy
+> timer fires every five minutes and converges whenever **any** tracked checkout moves,
+> including an external service's own `stable`, so it is stopped first (step 4) and
+> only the operator decides when the host converges (step 7).
 
 - [x] **1. Free the space — done.** The pool was at 87% and the new repository will
       hold roughly 500 GB once Immich's `upload` is actually in it, which it never has
-      been (step 6). The operator has already deleted the stale 532 GB `CloudBaby` tree
+      been (step 8). The operator has already deleted the stale 532 GB `CloudBaby` tree
       under `/pool/backups/devices/`; the pool now has 1.6 TB free, comfortably ahead of
       the ~500 GB needed. Nothing left to do here.
 
@@ -49,12 +51,53 @@ would leave 323 GB of photos with neither parity nor a snapshot for about a day.
 
 - [ ] **3. Rotate `repository_password` — optional.** Not required: a fresh repository
       derives fresh keys from whatever password it is given, and the bucket the current
-      value opens is being deleted in step 9 anyway. Rotate it only for a clean break.
+      value opens is being deleted in step 11 anyway. Rotate it only for a clean break.
       Either way: **back the value up outside this repository before anything is
       written.** There is no reset and no escrow.
 
-- [ ] **4. Stop kopia and every client pod, then wipe — before the converge.** This is
-      what the warning above is about.
+- [ ] **4. Stop the deploy timer.** As root on the host:
+
+  ```
+  doas systemctl stop storagebaby-deploy.timer
+  doas systemctl is-active storagebaby-deploy.service
+  ```
+
+  This is first, before the merge and long before the wipe. The timer fires every five
+  minutes and the deploy script converges whenever **any** checkout it tracks differs
+  from the last successful run — not just this repository, but every external service
+  this host points at, `renaissance` among them. Such a tick during the window below
+  converges the _old_ commit, and the `service` role's "Start units that are not up"
+  task restarts kopia with the old `start.sh`, which recreates `repository.config`
+  against the old bucket and silently undoes the wipe. That is exactly what the banner
+  at the top warns about, and stopping the timer is what makes the warning hold.
+
+  Stopping the timer does not stop a converge already running, hence the second line.
+  Read its answer: `inactive` means nothing is in flight, go on. `active` or
+  `activating` means a converge is running — wait for it. `failed` means the last one
+  failed and waiting will not help; read
+  `journalctl -u storagebaby-deploy.service` before going any further, because a host
+  that cannot converge the old commit will not converge the new one either, and step 6
+  would leave the nine services down with no converge to bring them back.
+
+  Nothing is left disabled afterwards. `host_base` sets the timer `enabled` and
+  `state: started` from `deploy_timer: true` on every converge
+  (`ansible/roles/host_base/tasks/main.yml`, "Deploy timer state"), so step 7 re-arms
+  it as a side effect of converging.
+
+- [ ] **5. Merge, and wait for the host's view of it.** Merge this branch to master,
+      then wait for two things, not one: CI green (it runs the static suite and the
+      `test-ci` Molecule scenario), and CI's fast-forward of `stable` to that commit.
+      Nothing on the host reacts to a commit that has not reached `stable`.
+
+  This is the step that can take a while and the step that can fail. It is deliberately
+  before the wipe: if CI goes red, nothing has been stopped, nothing has been deleted,
+  and the branch gets fixed with every service still running. Stopping nine pods first
+  would mean waiting out the whole CI window with them down — and no way forward if it
+  never goes green.
+
+- [ ] **6. Stop kopia and every client pod, then wipe.** Only now, with `stable`
+      already pointing at the new commit and the deploy timer stopped. This is the
+      short step: from here until step 7 completes, the nine services are offline.
 
   Stop the server and every service that carries a backup sidecar.
   `storagebaby-svc stop <name>` is pod-aware: for kopia itself, a single-container
@@ -74,11 +117,8 @@ would leave 323 GB of photos with neither parity nor a snapshot for about a day.
   storagebaby-svc stop paperless
   ```
 
-  That is a real maintenance window, and longer than the wipe itself: the nine services
-  stay offline from this point until the merge below clears CI (including the
-  `test-ci` Molecule scenario) and the host converges — either the deploy timer's own
-  five-minute cycle, or immediately via the command step 5 gives. Budget for CI, not
-  just the wipe.
+  The window is the wipe plus one converge, because step 5 already absorbed the CI
+  wait. Run step 7 straight after this one.
 
   With everything stopped, remove each path below — as a directory, not just its
   contents, so the next converge recreates it fresh with the right owner:
@@ -118,13 +158,13 @@ failed`, which reads like a wrong password and is not one.
     (Should anyone create it by hand before the converge, `owner: 0` on the `repo`
     volume makes the role adopt it; that is what the declaration is for.)
 
-  **Do not start kopia by hand after this.** A manual start before the merge lands runs
-  the _old_ `start.sh`, which still reads `KOPIA_REPOSITORY=s3` and reconnects straight
-  to the old bucket — recreating the exact file just deleted.
+  **Do not start kopia by hand between here and step 7.** A manual start runs whatever
+  `start.sh` is on disk, which is still the old one until the converge replaces it: it
+  reads `KOPIA_REPOSITORY=s3` and reconnects straight to the old bucket, recreating the
+  exact file just deleted.
 
-- [ ] **5. Converge.** Merge this branch to master. Once CI is green, `stable`
-      fast-forwards and the host's deploy timer picks it up on its own within five
-      minutes — or collapse the wait:
+- [ ] **7. Converge.** The timer is stopped, so this is the operator's call and not a
+      wait:
 
   ```
   doas systemctl start storagebaby-deploy.service
@@ -133,19 +173,21 @@ failed`, which reads like a wrong password and is not one.
 
   Safe to run by hand: it's the same plain `Type=oneshot` the timer fires, fetching
   `stable` and every pointed repository and converging only when something differs from
-  the last successful run — a no-op on an unchanged checkout, so running it early or
-  more than once costs nothing (`docs/quickstart.md`, `docs/external-service.md`).
+  the last successful run — a no-op on an unchanged checkout, so running it more than
+  once costs nothing (`docs/quickstart.md`, `docs/external-service.md`). It also puts
+  the deploy timer back, so nothing from step 4 has to be undone by hand; confirm with
+  `systemctl is-active storagebaby-deploy.timer` once the run is through.
 
   The role creates `/pool/backups/devices/StorageBaby/kopia` — it does not exist yet —
   owned by `svc-kopia`. `start.sh` then finds `repository.config` absent, takes the
   `filesystem` branch, and because that directory is empty **creates** the repository
   in it rather than connecting to one, then registers every client. The
-  converge also starts every pod stopped in step 4: the `service` role's "Start units
+  converge also starts every pod stopped in step 6: the `service` role's "Start units
   that are not up" task (`ansible/roles/service/tasks/units.yml`) starts any unit of a
   placed service that is not `active`, whether or not that service's own files changed
   in this run.
 
-- [ ] **6. First full snapshot.** Not an operator action to start — each client
+- [ ] **8. First full snapshot.** Not an operator action to start — each client
       sidecar's own scheduler takes it, at that service's `KOPIA_SNAPSHOT_TIME`. Local
       disk, no network, roughly 500 GB; Immich's 323 GB `upload` is the long pole and
       the whole point of this change. Verify, as root on the host:
@@ -156,9 +198,9 @@ failed`, which reads like a wrong password and is not one.
 
   shows `immich@storagebaby:/data/upload`. It never has.
 
-- [ ] **7. First sync.** Also not an operator action to start — `kopia-sync.timer`
+- [ ] **9. First sync.** Also not an operator action to start — `kopia-sync.timer`
       fires hourly on its own (`RandomizedDelaySec=300`), and it will very likely fire
-      before step 6's first full snapshot finishes. That is fine: a Kopia repository on
+      before step 8's first full snapshot finishes. That is fine: a Kopia repository on
       disk is append-and-delete only, so a sync mid-snapshot just copies a blob set
       that is a little behind and picks up the rest next hour — never wrong, only late.
 
@@ -177,20 +219,19 @@ failed`, which reads like a wrong password and is not one.
   Once a run has completed — and not before, since the flag would make every earlier
   attempt fail against a bucket that has no repository yet: flip `sync_must_exist` to
   `true` in
-  `hosts/StorageBaby/services/kopia/service.yml`, commit, push to master — same path as
-  step 5. From then on a mistyped bucket fails loudly instead of quietly starting a
+  `hosts/StorageBaby/services/kopia/service.yml`, commit, push to master, and converge as in step 7. From then on a mistyped bucket fails loudly instead of quietly starting a
   second, empty repository.
 
-- [ ] **8. First snapraid sync.** Automatic, at 02:00. It picks up the new repository
+- [ ] **10. First snapraid sync.** Automatic, at 02:00. It picks up the new repository
       as roughly 500 GB of new files and writes parity for all of it in one run —
       expect it to take noticeably longer than usual, once. The run that matters for
-      stage 2 is one that _started after_ step 6 finished; an earlier one parityies a
+      stage 2 is one that _started after_ step 8 finished; an earlier one parities a
       half-written repository. And it will not come back clean: the four `/apps` soft
       errors are still there (stage 1 keeps `/apps` in the array), and kopia's hourly
       maintenance deletes blobs while the sync reads, which snapraid reports too. A
       removal under the repository path is expected and benign — see Verification.
 
-- [ ] **9. Delete the old bucket.** Operator, manual, and last — only once step 6 has
+- [ ] **11. Delete the old bucket.** Operator, manual, and last — only once step 8 has
       verified a complete set in `kopia snapshot list --all`. The old bucket still
       holds the old repository until this point, which is what the rollback below
       depends on.
@@ -217,10 +258,14 @@ failed`, which reads like a wrong password and is not one.
 
 ## Rollback
 
-After step 5: converge the previous commit (revert the merge, or point `stable` back)
-and repeat step 4 — stop kopia and the nine client pods, wipe `config`, `cache` and
-every `backup-cache` again. The old bucket still holds the old repository until step 9,
-which is why step 9 is last and not step 6.
+After step 7, in the same order as the cutover: stop the deploy timer (step 4), get the
+previous commit onto `stable` (revert the merge, or point `stable` back), then repeat
+step 6 — stop kopia and the nine client pods and wipe `config`, `cache` and every
+`backup-cache` again — and converge (step 7). The order matters for the same reason it
+does going forward: a converge between the wipe and the right commit undoes the wipe.
+
+The old bucket still holds the old repository until step 11, which is why step 11 is
+last and not step 8.
 
 ## Stage 2: `/apps` leaves the array
 
@@ -236,7 +281,7 @@ one night.
    parity for the photo library; until it exists, removing parity leaves it with one
    copy and nothing else.
 2. A `snapraid sync` that **started after** that snapshot finished has run. A sync that
-   was already running during the snapshot parityies a half-written repository, which
+   was already running during the snapshot parities a half-written repository, which
    is not the same thing. In practice: see the snapshot in the list, then wait for the
    next 02:00 run's mail.
 
@@ -248,7 +293,7 @@ one night.
 - rewrite the comment above `excludes:`, which currently explains why `/apps` is _not_
   excluded
 
-Then merge to master as in step 5 and converge. What changes on the host: the next
+Then merge to master and converge as in steps 5 and 7. What changes on the host: the next
 `snapraid sync` stops reading `/apps`, the four soft errors stop with it, and
 `snapraid fix` after a dead disk restores media, `/pool/jlk`, `/pool/backups` and the
 kopia repository — application state comes back from a snapshot instead, up to a night
@@ -256,4 +301,4 @@ old. Jellyfin's 32 GB of metadata is then protected by nothing and is accepted a
 disposable (`docs/ownership.md` § 7, item 14).
 
 Reverting is symmetric and cheap: take the exclude back out and converge. The next sync
-re-parityies `/apps`, long once.
+re-parities `/apps`, long once.

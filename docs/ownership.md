@@ -290,3 +290,9 @@ the rest of the list.
     off-site within the hour. The flag returns once `sync.sh` can refuse a sync when
     the source looks unexpectedly small, _and_ the bucket keeps hidden versions for a
     short window instead of none. Until then, watch the bucket's stored bytes.
+16. **`mergerfs.balance` now has ~500 GB more to move.** The kopia repository lives on
+    the pool, so the nightly balance shuffles it between branches whenever they drift
+    further apart than `balance_threshold: 5`, and whatever it moves the next
+    `snapraid sync` has to re-parity. Runtime and disk churn, not correctness — the
+    repository is append-and-delete and a moved blob is the same blob. Worth measuring
+    once the repository has reached full size; the lever is `balance_threshold`.

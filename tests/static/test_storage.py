@@ -382,9 +382,12 @@ def test_the_retired_root_directories_are_gone():
 def test_the_kopia_repository_is_not_excluded_from_the_array(host):
     """The whole design rests on parity covering the kopia repository.
 
-    `/apps` is excluded because live application state cannot be parityed; the
+    `/apps` is to be excluded because live application state cannot be parityed
+    -- stage 2 of the 2026-10-14 rollout; it is still in the array today. The
     repository is what makes that acceptable, so putting it under an excluded
-    tree would silently remove the only protection `/apps` has left. Written
+    tree would silently remove the only protection `/apps` would have left. The
+    assertion holds in both stages, and vacuously in neither: it is the guard
+    that has to be in place *before* the exclude lands, not after. Written
     against `volume_overrides` rather than a literal path: the path is a host's
     decision and may move, the invariant may not.
 

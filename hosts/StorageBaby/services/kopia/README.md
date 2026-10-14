@@ -415,9 +415,11 @@ A running server rereads its user list within 5–10 minutes, or immediately on
 `pool`: it was an empty stub while the repository lived in Backblaze, and it is now the
 primary copy of every backup this platform holds. On storagebaby `volume_overrides` in
 `host.yml` points it at `/pool/backups/devices/StorageBaby/kopia`, deliberately outside
-`storage_roots.pool` (`/pool/apps`) — `/apps` is excluded from the snapraid array
-(`storage.snapraid.excludes` in the same file) and the repository must not be, or parity
-stops covering the one thing that makes excluding the rest of `/apps` acceptable. A test
+`storage_roots.pool` (`/pool/apps`) — `/apps` is what leaves the snapraid array in
+stage 2 of the 2026-10-14 rollout (it is still in it today), and the repository must not
+go with it, or parity stops covering the one thing that makes excluding the rest of
+`/apps` acceptable; a static test holds that invariant whichever stage the host is on.
+A test
 host declares no override and gets the plain pool root, `/pool/apps/kopia/repo`. The unit
 states `KOPIA_CONFIG_PATH`, `KOPIA_CACHE_DIRECTORY` and `KOPIA_LOG_DIR` explicitly even
 though the image sets the same three, so the four mounts above are guaranteed to be the

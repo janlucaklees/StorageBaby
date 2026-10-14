@@ -291,6 +291,14 @@ reason to abort parity.
 The repository is new, so this is a clean start, not a migration. The order below is not
 cosmetic — see step 4.
 
+**The runbook is authoritative on the order, and it differs from this list.** It stops
+the host's deploy timer first, merges and waits out CI with every service still
+running, and only then stops the pods and wipes — because a deploy tick between the
+wipe and the right commit silently undoes the wipe, and because a red CI would
+otherwise leave nine services down with no way forward. This section keeps the shape;
+`docs/runbooks/2026-10-14-kopia-local-repository-cutover.md` is what an operator
+follows.
+
 1. **Free the space.** Delete the stale application backups under `/pool/backups` and
    `/pool/jlk` (operator; ~500 GB). The pool is at 87% and the new repository will hold
    roughly 500 GB once Immich is actually in it.

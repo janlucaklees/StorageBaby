@@ -241,6 +241,11 @@ def test_a_maintenance_run_is_clean(host):
         "=== Scrubbing ===",
         "=== Final Snapraid Status ===",
         "=== SMART Report ===",
+        # The failed-unit report's own section. Asserted here and not only in the case
+        # below it, because this is the one that proves the section reaches the *mail
+        # body*: the wrapper mails this log, so a step that runs but prints outside it
+        # tells nobody, which is the whole failure mode the report exists to close.
+        "=== Failed service units ===",
         "=== Job Finished with Status: SUCCESS ===",
     ]:
         assert section in log, log[-6000:]
