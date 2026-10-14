@@ -211,6 +211,18 @@ deployment travels with its code. The first is right for anything you merely run
 - **Prefer a `_FILE` variable over `type=env`.** With the file form the value never appears in
   the container's environment at all. `Secret=<name>,type=env,target=<VAR>` is for images that
   offer no file variant.
+- **An image may refuse to serve at all until its own authentication is configured — check
+  before assuming the VPN-only route is enough.** The platform's "private" route is a second
+  lock, not a substitute for the application's first one, and a hardened image can treat an
+  unauthenticated non-loopback bind as a misconfiguration and _fail closed at startup_. What
+  that looks like from here is indistinguishable from a bad port: the container runs, nothing
+  listens, the health check reports `unhealthy`. Read the vendor's own auth and
+  reverse-proxy pages before writing the unit, and look for two things specifically: whether
+  a gate engages on a non-loopback bind, and whether the app validates the `Host` header or
+  the WebSocket `Origin` against a configured public URL — Traefik forwards the browser's
+  name, so an app that only accepts the address it bound to needs that URL declared, usually
+  rendered from `fqdn`. (`hermes` cost a VM cycle on exactly this; its README has the
+  measurements.)
 - **Reach another service by its public route name**, never by loopback: rootless containers
   of different users cannot see each other's loopback. The role renders the host-gateway map
   for every placed route name; your template must not.
