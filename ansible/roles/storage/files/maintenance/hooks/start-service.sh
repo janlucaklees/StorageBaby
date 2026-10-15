@@ -2,8 +2,9 @@
 #
 # Installed by the `storage` role as `plugins/<service>/on-after-scrub.sh` **and** as
 # `plugins/<service>/on-failure.sh`, one directory per name in
-# `storage.snapraid.maintenance.stop_services`. The failure copy is the half that matters:
-# it is what keeps a service stopped for a run that then aborted from staying down.
+# `storage.snapraid.maintenance.stop_services` -- the other half of `on-before-sync.sh`.
+# The failure copy is the one that matters: it is what keeps a service stopped for a run
+# that then aborted from staying down.
 #
 # The service name is this script's own directory name -- see `stop-service.sh`.
 set -euo pipefail

@@ -214,14 +214,12 @@ The same `storage` block carries the rest of it.
 storage:
   snapraid:
     block_size: 256
-    excludes:
-      ['*.bak', /lost+found/, /apps/nextcloud/data/jlk/files/…/build/, …]
+    excludes: ['*.bak', /lost+found/, /apps/, /cache/, '*.db-wal', …]
     maintenance:
       on_calendar: '02:00'
-      balance_threshold: 5
       scrub_percent: 8
       scrub_older_days: 12
-      stop_services: [jellyfin]
+      stop_services: [] # or [jellyfin, …]
   mail:
     to: email@janlucaklees.de
     from: storagebaby@janlucaklees.de
@@ -239,28 +237,34 @@ storage:
   disk, the `excludes` and the `block_size`. Nothing restarts when it changes — snapraid is
   run by a timer and reads the file every time.
 - **`snapraid.excludes` are paths relative to a _disk's_ root**, which for a branch of this
-  pool is the same as relative to `pool.mount`. That is why the Nextcloud entry is
-  `/apps/nextcloud/data/…`: the pool-class volume `data` of the `nextcloud` service.
+  pool is the same as relative to `pool.mount`. That is why `/apps/` — which on storagebaby
+  takes every pool-class service volume out of the array, since `storage_roots.pool` is
+  `/pool/apps` — is written anchored and without the pool mount in front of it.
 - **The disk `name` is snapraid's identity for that disk.** Renaming one makes snapraid treat
   the whole disk as new, which is a full parity rewrite on the next sync.
-- **`/opt/storagebaby/maintenance/`** holds seven scripts, all 0755 root and **copied byte for
+- **`/opt/storagebaby/maintenance/`** holds six scripts, all 0755 root and **copied byte for
   byte** from the role's `files/maintenance/`: the orchestrator, `sync.sh`, `scrub.sh`,
-  `balance_disks.sh`, `report_failed_units.sh` (asks every `svc-*` service manager for its
+  `report_failed_units.sh` (asks every `svc-*` service manager for its
   failed units, since that manager has no path of its own to the mail relay), the unattended
   wrapper, and `storage-maintenance-failed.sh` — the one `storage-maintenance-failed.service`
   execs on `OnFailure=`, which is the only way a pool that will not mount is reported at all.
   Logs go to `/var/log/storage-maintenance/` (the wrapper's own, and the body of the mail) and
-  `/var/log/snapraid/` (each snapraid command's).
+  `/var/log/snapraid/` (each snapraid command's). Six, exactly: `balance_disks.sh`, the
+  seventh until 2026-10-15, is **removed** from a host that still carries it, the way a
+  plugin directory for a service no longer stopped is. Its log is left where it is.
 - **Parameters reach those scripts through one rendered file and only through it**:
   `/opt/storagebaby/maintenance/maintenance.env`, which every script sources. No threshold,
   percentage, pool path or address is rendered _into_ a script — so a change touches one
   file, and running `bash /opt/storagebaby/maintenance/sync.sh` by hand behaves exactly like
   the timer's run. A static test asserts that none of the shipped scripts contains a template
   expression at all.
-- **`stop_services`** is the plugin set. It replaces the hand-written `plugins/` directory
+- **`stop_services`** is the plugin set, and on storagebaby it is **empty**: with `/apps`
+  excluded and no balance step left, nothing the nightly run reads or moves belongs to a
+  service, so nothing is stopped for it. The test hosts each declare one name, which is
+  what keeps the path below exercised. It replaces the hand-written `plugins/` directory
   the retired `snapraid/` tree carried, one script per service per hook: the role creates
   `plugins/<service>/` for each declared name and drops the same two scripts into it —
-  `on-before-balance.sh` (stop) and `on-after-scrub.sh` plus `on-failure.sh` (start). The
+  `on-before-sync.sh` (stop) and `on-after-scrub.sh` plus `on-failure.sh` (start). The
   failure copy is the half that matters: a run that aborts after stopping a service must not
   leave it down. Those scripts read the service name off **their own directory**, so they
   carry no rendered value and are identical on every host, and they resolve
@@ -306,8 +310,13 @@ maintenance run succeeds and its mail step fails, nightly.
 
 ### `mergerfs-tools`, and why its pin works differently
 
-`balance_disks.sh` calls `mergerfs.balance`, which ships in `mergerfs-tools` — in neither
-Arch's repositories nor Chaotic-AUR, so it is built by the same `aur_build.yml`. The AUR
+`mergerfs.balance` ships in `mergerfs-tools` — in neither Arch's repositories nor
+Chaotic-AUR, so it is built by the same `aur_build.yml`. **Nothing in the nightly run
+calls it:** the balance step was removed on 2026-10-15, because the pool creates new
+files with `category.create=pfrd` and spreads them by free space on its own. The package
+is installed anyway, because a tool that is wanted only once the branches have already
+gone uneven is not one to go and build at that moment — `mergerfs.balance -p <percent>
+/pool`, by hand, is what it is for. The AUR
 package is `mergerfs-tools-git`: a VCS recipe, whose `pkgver()` runs at build time and
 produces a version from whatever upstream commit it checked out. That version is never the
 one in `.SRCINFO`, so the "is the pinned version installed" guard could never match and the
@@ -322,7 +331,7 @@ without its version.
 **So `mergerfs_tools_aur_commit` pins the recipe, not the source.** `pkgver()` checks out
 upstream `master` at build time, and the stamp records only the AUR commit — two rebuilds
 months apart can therefore install different `mergerfs.balance` code with the role reporting
-nothing. There is no versioned package to prefer instead: the AUR carries `mergerfs`,
+nothing — which matters less now that nothing but an operator runs it. There is no versioned package to prefer instead: the AUR carries `mergerfs`,
 `mergerfs-bin`, `mergerfs-git` and `mergerfs-tools-git`, and no `mergerfs-tools`
 (checked through the AUR RPC, 2026-09-29). Upstream has cut no release of the tools either,
 which is why the recipe is a `-git` one at all. If that drift ever matters, the way out is

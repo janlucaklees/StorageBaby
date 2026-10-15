@@ -77,19 +77,12 @@ function fail() {
 # Code
 
 # Run the on-failure hook if the script is killed (e.g. systemd stop/timeout
-# during the run), so services stopped by on-before-balance aren't left down.
+# during the run), so services stopped by on-before-sync aren't left down.
 trap 'fail "Received signal, terminating."' INT TERM
 
 run_hook "on-start"
 
 print_snapraid_status "Initial Snapraid Status"
-
-run_hook "on-before-balance"
-
-echo_section "Balancing disks"
-if ! bash "${SCRIPT_DIR}/balance_disks.sh"; then
-	fail "Balancing disks failed."
-fi
 
 run_hook "on-before-sync"
 

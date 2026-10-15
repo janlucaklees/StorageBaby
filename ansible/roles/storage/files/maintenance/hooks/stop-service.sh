@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# Installed by the `storage` role as `plugins/<service>/on-before-balance.sh`, one
+# Installed by the `storage` role as `plugins/<service>/on-before-sync.sh`, one
 # directory per name in `storage.snapraid.maintenance.stop_services`. The service is
-# stopped before the balance moves its files between branches and started again after the
-# scrub -- and on failure, so a run that aborts never leaves one down.
+# stopped for the parity window -- the sync and the scrub -- and started again after the
+# scrub, and on failure, so a run that aborts never leaves one down.
 #
 # The service name is this script's own directory name, which is why the file carries no
 # rendered value at all and is byte-identical on every host: `stop_services` decides which

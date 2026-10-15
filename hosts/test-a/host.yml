@@ -72,11 +72,12 @@ storage:
       - '*.db-wal'
     maintenance:
       on_calendar: '02:00'
-      balance_threshold: 5
       scrub_percent: 8
       scrub_older_days: 12
-      # jellyfin is placed here, so the run stops it before the balance moves its files
-      # between branches, exactly as on storagebaby.
+      # jellyfin is placed here, so the run stops it before the sync and starts it
+      # again after the scrub. Not a copy of storagebaby, which stops nothing now: the
+      # hook mechanism has no production user any more, and a test host declaring one
+      # is what keeps it from rotting.
       stop_services: [jellyfin]
   # The throwaway SMTP sink `prepare.yml` installs on the VM, on the loopback. `tls: false`
   # because nothing but the loopback is between the two ends, and `auth: plain` explicitly

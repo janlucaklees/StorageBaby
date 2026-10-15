@@ -5,12 +5,13 @@ inert until an operator runs this. The repository is new, so this is a clean sta
 a migration — but one step below cannot move, and reordering it makes the whole change
 look like it did nothing.
 
-**This is stage 1 of two.** It ships the repository onto the pool, the hourly replica
-and the failed-unit report. `/apps` stays in the snapraid array exactly as it is today,
-so the four nightly soft errors stay with it — the status quo, not a regression, and
-the reason is that taking `/apps` out before the repository holds Immich's library
-would leave 323 GB of photos with neither parity nor a snapshot for about a day. Stage
-2 is the last section of this document and nothing automatic does it.
+**This was stage 1 of two**, and the numbered steps below are stage 1's. It ships the
+repository onto the pool, the hourly replica and the failed-unit report, and leaves
+`/apps` in the snapraid array with its four nightly soft errors — the status quo, not a
+regression, because taking `/apps` out before the repository held Immich's library
+would have left 323 GB of photos with neither parity nor a snapshot for about a day.
+Stage 2 is the last section of this document; it was committed on 2026-10-15 and goes
+to the host by an ordinary merge and converge.
 
 > **The wipe must land between the merge and the next converge, and nothing may
 > converge in that window.** `start.sh` connects a repository only when
@@ -267,38 +268,44 @@ does going forward: a converge between the wipe and the right commit undoes the 
 The old bucket still holds the old repository until step 11, which is why step 11 is
 last and not step 8.
 
-## Stage 2: `/apps` leaves the array
+## Stage 2: `/apps` leaves the array — committed 2026-10-15, not yet converged
 
-Not tonight, not on a timer, and not part of the merge above. This is one commit the
-operator makes when the two conditions below are both true — which will be a day or
-more after stage 1, and possibly several if the first Immich snapshot needs more than
-one night.
+**Status: the change is made.** It is in the repository as its own commit and is no
+longer something an operator edits by hand; what is left is the ordinary route to the
+host — merge to master, CI green, `stable` fast-forwarded, converge (steps 5 and 7
+above). Kept here because the preconditions and the consequences are the record of why
+it was allowed to land, and because the revert is the one thing a reader may still need.
 
-**The two preconditions, in this order:**
+**The preconditions, and which of them was actually verified.**
 
 1. `podman-as svc-kopia podman exec kopia kopia snapshot list --all` shows
-   `immich@storagebaby:/data/upload`, **complete**. That snapshot is what replaces
-   parity for the photo library; until it exists, removing parity leaves it with one
-   copy and nothing else.
-2. A `snapraid sync` that **started after** that snapshot finished has run. A sync that
-   was already running during the snapshot parities a half-written repository, which
-   is not the same thing. In practice: see the snapshot in the list, then wait for the
-   next 02:00 run's mail.
+   `immich@storagebaby:/data/upload`, **complete**. **Verified by the operator on
+   2026-10-15**, together with `nextcloud@storagebaby:/data/data` — every source has a
+   completed snapshot. That snapshot is what replaces parity for the photo library.
+2. A `snapraid sync` that **started after** that snapshot finished has run. **Not
+   confirmed, and the operator's to check before the merge.** Stage 1 converged on the
+   evening of 2026-10-14 and the first full snapshot is a multi-hour local copy of
+   341 GB, so the 02:00 run may well have started in the middle of it and parityed a
+   half-written repository. A manual `mergerfs.balance` moving blobs between branches
+   has the same effect on whatever parity that run did write. If the mail from the run
+   that counts has not arrived yet, hold the merge — nothing else in the change depends
+   on timing.
 
-**The change**, in `hosts/StorageBaby/host.yml` under `storage.snapraid.excludes`:
+**The change**, in `hosts/StorageBaby/host.yml` under `storage.snapraid.excludes` —
+done, and this is what to read the diff against:
 
-- add `- /apps/`, anchored, directly after `- /lost+found/`
-- remove the `- /apps/nextcloud/data/jlk/files/Projects/Kannji/…` line, which is dead
-  once the whole tree above it is excluded
-- rewrite the comment above `excludes:`, which currently explains why `/apps` is _not_
-  excluded
+- `- /apps/`, anchored, directly after `- /lost+found/`
+- the `- /apps/nextcloud/data/jlk/files/Projects/Kannji/…` line is gone, dead once the
+  whole tree above it is excluded
+- the comment above `excludes:` now says why `/apps` _is_ excluded
 
-Then merge to master and converge as in steps 5 and 7. What changes on the host: the next
-`snapraid sync` stops reading `/apps`, the four soft errors stop with it, and
-`snapraid fix` after a dead disk restores media, `/pool/jlk`, `/pool/backups` and the
-kopia repository — application state comes back from a snapshot instead, up to a night
-old. Jellyfin's 32 GB of metadata is then protected by nothing and is accepted as
-disposable (`docs/ownership.md` § 7, item 14).
+What changes on the host at that converge: the next `snapraid sync` stops reading
+`/apps`, the four soft errors are expected to go with it — the first sync after the
+converge is what shows that, not the converge itself — and `snapraid fix` after a dead
+disk restores media, `/pool/jlk`, `/pool/backups` and the kopia repository.
+Application state comes back from a snapshot instead, up to a night old. Jellyfin's
+32 GB of metadata is then protected by nothing and is accepted as disposable
+(`docs/ownership.md` § 7, item 14).
 
 Reverting is symmetric and cheap: take the exclude back out and converge. The next sync
 re-parities `/apps`, long once.

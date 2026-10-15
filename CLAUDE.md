@@ -126,9 +126,9 @@ Physical disks                     one rendered .mount unit per entry, What= a s
 mergerfs pool
   /pool                            union over the data disks only (parity is not a branch)
   /pool/apps/<service>/<volume>    pool-class service volumes (storage_roots.pool) —
-                                    live app state, still IN the array (stage 1)
+                                    live app state, EXCLUDED from the array
   /pool/backups/devices/StorageBaby/kopia   the kopia repository (volume_overrides) —
-                                    outside /apps, so in the array either way
+                                    outside /apps, so in the array
   /pool/shared/media               the media library Jellyfin reads
   /pool/shared/scans, /pool/jlk/backups, …   former Samba trees, now data nothing serves
 
@@ -137,7 +137,7 @@ Snapraid                           /etc/snapraid.conf, rendered from the same bl
   content files on each data disk + /etc/snapraid.content
 ```
 
-- **`/pool/apps` is still in the array, and is meant to leave it in a second stage.** The 2026-10-14 design takes live application state out of snapraid — it cannot parity a file rewritten while it reads it, which is the nightly `exit:warning` on four soft errors — and makes the kopia repository, now on the pool and outside `/apps`, what protects that tree instead. The exclude is held back until the repository actually holds the data: dropping it the same night would leave Immich's 323 GB of photos with neither parity nor a snapshot for about a day. `hosts/StorageBaby/host.yml`'s `excludes` comment and the cutover runbook's "Stage 2" section carry the condition and the procedure.
+- **`/pool/apps` is out of the array**, as of the 2026-10-14 design's stage 2 (committed 2026-10-15). Snapraid cannot parity a file rewritten while it reads it — that was the nightly `exit:warning` on four soft errors — so live application state is excluded and the kopia repository, on the pool and outside `/apps`, is what protects that tree instead. The cost: a dead disk means restoring application state from the last snapshot rather than repairing it in place, and anything under `/apps` with no `backup:` block (jellyfin's 32 GB of metadata above all) is protected by nothing. `hosts/StorageBaby/host.yml`'s `excludes` comment carries the reasoning; the cutover runbook's "Stage 2" section is the record of how it got there.
 - **The role never partitions, formats or wipes.** No `mkfs`, `parted`, `wipefs`, `sgdisk`, ever. A declared device that is not there fails the converge naming the entry, and after mounting it asserts every declared path really is a mount point — the pair that replaced `host_base`'s `mountpoints` list, and what keeps an unmounted `/pool` from being recreated as empty directories on the root filesystem by the nightly deploy timer.
 - **The create policy is `pfrd`** (proportional free random distribution: a branch chosen at random, weighted by free space) — **not** `eplfs`, which this file claimed for a long time and the deployed `pool.mount` never said. The option string is `storage.pool.options` in `host.yml` and is copied into the unit verbatim; that file is the source of truth for it.
 - **A changed `pool.options`, branch or `fstype` remounts the union**, and every container holding a bind mount under it comes back reading an empty directory until it is restarted. The role warns before it does so; `--check --diff` first, then stop the pool-class services.
@@ -145,35 +145,36 @@ Snapraid                           /etc/snapraid.conf, rendered from the same bl
 
 ## Storage maintenance pipeline
 
-`storage-maintenance.timer` (`OnCalendar` from `storage.snapraid.maintenance.on_calendar`, 02:00, `Persistent=true`) runs `storage-maintenance.service`, a oneshot that `Requires=` the pool and execs `/opt/storagebaby/maintenance/storage-maintenance-unattended.sh`. The role installs that whole directory as root: seven scripts at 0755 — the wrapper, the orchestrator, `sync.sh`, `scrub.sh`, `balance_disks.sh`, `report_failed_units.sh` and `storage-maintenance-failed.sh`, the notifier `storage-maintenance-failed.service` execs — plus the `plugins/` tree and `maintenance.env`, which is 0644 because it carries no secret by construction.
+`storage-maintenance.timer` (`OnCalendar` from `storage.snapraid.maintenance.on_calendar`, 02:00, `Persistent=true`) runs `storage-maintenance.service`, a oneshot that `Requires=` the pool and execs `/opt/storagebaby/maintenance/storage-maintenance-unattended.sh`. The role installs that whole directory as root: six scripts at 0755 — the wrapper, the orchestrator, `sync.sh`, `scrub.sh`, `report_failed_units.sh` and `storage-maintenance-failed.sh`, the notifier `storage-maintenance-failed.service` execs — plus the `plugins/` tree and `maintenance.env`, which is 0644 because it carries no secret by construction.
 
 The wrapper logs to `/var/log/storage-maintenance/` and mails the log with `mutt`, which is told to send through `msmtp` explicitly — the host runs no MTA. `/etc/msmtprc` (0600 root) is rendered from `storage.mail` plus `smtp_password` out of `hosts/<host>/secrets/mail.sops.yaml`; msmtp logs to the journal, so `journalctl -t msmtp` is where a refused relay shows up. If the pool does not come up, the unit's start job fails before the wrapper runs at all, which is what `storage-maintenance-failed.service` on `OnFailure=` exists to mail.
 
-The orchestrator runs these steps in order; all but step 9 are unchanged from the hand-stowed original:
+The orchestrator runs these steps in order:
 
 1. `on-start` hook
 2. Snapraid status print
-3. `on-before-balance` hook → `balance_disks.sh` (mergerfs.balance, `balance_threshold`)
-4. `on-before-sync` hook → `sync.sh` (snapraid touch + sync)
-5. `on-after-sync` hook
-6. `scrub.sh` (new blocks, then `scrub_percent` of anything older than `scrub_older_days`)
-7. `on-after-scrub` hook
-8. Final status + SMART report
-9. `report_failed_units.sh` (every `svc-*` service manager's failed units, for the mail)
-10. `on-finish` hook
+3. `on-before-sync` hook → `sync.sh` (snapraid touch + sync)
+4. `on-after-sync` hook
+5. `scrub.sh` (new blocks, then `scrub_percent` of anything older than `scrub_older_days`)
+6. `on-after-scrub` hook
+7. Final status + SMART report
+8. `report_failed_units.sh` (every `svc-*` service manager's failed units, for the mail)
+9. `on-finish` hook
 
-If any step or hook fails, the orchestrator runs the `on-failure` hook before aborting; that one is best-effort, so one broken recovery script does not stop the others. It also fires on SIGINT/SIGTERM (a systemd stop or a timeout mid-run), so a service stopped by `on-before-balance` is never left down.
+**There is no balance step and no `on-before-balance` hook** — both were removed on 2026-10-15. The pool's create policy is `category.create=pfrd`, which already spreads new files over the branches by free space, so the packing the nightly `mergerfs.balance` existed to undo does not happen. The tool is still installed and is the operator's to run by hand.
 
-**The hook contract is still `plugins/<name>/<hook>.sh`, but nothing hand-writes one any more.** `storage.snapraid.maintenance.stop_services` is the list (storagebaby: `[jellyfin]`); the role creates one directory per name and drops the same three scripts in — `on-before-balance.sh` (stop), `on-after-scrub.sh` and `on-failure.sh` (start) — which read the service name off their own directory, so they are byte-identical on every host, and resolve `<name>-pod.service` against `<name>.service` the way `storagebaby-svc` does. A directory for a name no longer in the list is removed. The old `samba` and `snapshot-*` plugins are gone with the tree that held them: Samba is retired and Kopia is the only backup path.
+If any step or hook fails, the orchestrator runs the `on-failure` hook before aborting; that one is best-effort, so one broken recovery script does not stop the others. It also fires on SIGINT/SIGTERM (a systemd stop or a timeout mid-run), so a service stopped by `on-before-sync` is never left down.
+
+**The hook contract is still `plugins/<name>/<hook>.sh`, but nothing hand-writes one any more.** `storage.snapraid.maintenance.stop_services` is the list, **empty on storagebaby** since /apps left the array — the run touches nothing a service writes, so nothing is stopped for it, and only the test hosts keep the mechanism exercised; the role creates one directory per name and drops the same three scripts in — `on-before-sync.sh` (stop), `on-after-scrub.sh` and `on-failure.sh` (start) — which read the service name off their own directory, so they are byte-identical on every host, and resolve `<name>-pod.service` against `<name>.service` the way `storagebaby-svc` does. A directory for a name no longer in the list is removed. The old `samba` and `snapshot-*` plugins are gone with the tree that held them: Samba is retired and Kopia is the only backup path.
 
 **No parameter is rendered into a script.** They all come from `/opt/storagebaby/maintenance/maintenance.env`, which every script sources, so a threshold changes in git and a hand-run script behaves exactly like the timer's. To run maintenance manually, on the host:
 
 ```bash
-doas systemctl start storage-maintenance.service           # the real nightly run, blocking
-bash /opt/storagebaby/maintenance/storage-maintenance.sh   # the same, without wrapper or mail
-bash /opt/storagebaby/maintenance/sync.sh                  # sync only
-bash /opt/storagebaby/maintenance/scrub.sh                 # scrub only
-bash /opt/storagebaby/maintenance/balance_disks.sh [0-100] # balance only
+doas systemctl start storage-maintenance.service         # the real nightly run, blocking
+bash /opt/storagebaby/maintenance/storage-maintenance.sh # the same, without wrapper or mail
+bash /opt/storagebaby/maintenance/sync.sh                # sync only
+bash /opt/storagebaby/maintenance/scrub.sh               # scrub only
+mergerfs.balance -p 5 /pool                              # by hand; never nightly
 ```
 
 ## Networking

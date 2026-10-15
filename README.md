@@ -159,16 +159,18 @@ disk into the array.
 
 `storage-maintenance.timer` fires at 02:00 (`Persistent=true`, so a host that was off
 catches up) and runs the orchestrator in `/opt/storagebaby/maintenance/`: snapraid status,
-`mergerfs.balance` while the branches are more than 5 % apart, `snapraid touch` + `sync`,
-a scrub of the new blocks and 8 % of anything older than 12 days, then a final status and
-a SMART report. Logs land in `/var/log/storage-maintenance/` and `/var/log/snapraid/`, and
-the whole run is mailed — `mutt` composing, `msmtp` sending through the relay in
+`snapraid touch` + `sync`, a scrub of the new blocks and 8 % of anything older than 12
+days, then a final status, a SMART report and the failed units of every service manager.
+It does **not** balance the pool: `category.create=pfrd` already spreads new files over
+the branches by free space, and `mergerfs.balance` is the operator's to run by hand.
+Logs land in `/var/log/storage-maintenance/` and `/var/log/snapraid/`, and the whole
+run is mailed — `mutt` composing, `msmtp` sending through the relay in
 `storage.mail`, with the password in `hosts/<host>/secrets/mail.sops.yaml`.
 
-Services that must not be running while files move between branches are named in
-`storage.snapraid.maintenance.stop_services` (storagebaby: `jellyfin`). The role turns each
-name into a plugin directory that stops it before the balance and starts it again after the
-scrub — **and on failure**, so a run that aborts never leaves a service down. If the pool
+Services that must not be running across the parity window are named in
+`storage.snapraid.maintenance.stop_services`. The role turns each name into a plugin
+directory that stops it before the sync and starts it again after the scrub — **and on
+failure**, so a run that aborts never leaves a service down. If the pool
 does not come up at all, the maintenance unit's start job fails before the wrapper ever
 runs and nothing would be sent; `storage-maintenance-failed.service`, hooked on
 `OnFailure=`, is the mail that says so.
@@ -613,8 +615,8 @@ systemctl is-enabled storage-maintenance.timer && systemctl list-timers storage-
 ```
 
 Then run the nightly job once, by hand, rather than waiting for 02:00 — it is the only
-thing that proves the array, the balance, the scrub **and** the mail at the same time.
-It takes as long as a sync takes, and it stops jellyfin for the duration:
+thing that proves the array, the sync, the scrub **and** the mail at the same time.
+It takes as long as a sync takes:
 
 ```sh
 doas systemctl start storage-maintenance.service # blocking: it is a oneshot
@@ -625,7 +627,8 @@ A mail has to arrive, subject `[SUCCESS] SnapRAID Sync Report`. If none does, th
 itself was still fine — `journalctl -t msmtp` is where a refused relay or a rejected
 sender says why, and `storage.mail` is what to correct. Check afterwards that
 `snapraid.content` exists on all three data disks and `snapraid.parity` on the parity
-disk, and that jellyfin came back up (`storagebaby-svc ps jellyfin`).
+disk. Nothing is stopped for the run on storagebaby — `stop_services` is empty — so
+nothing has to have come back up.
 
 **Does a scan reach Paperless?** Send one page from the printer. It should appear as a
 document within a minute or two — the consumer polls rather than watching inotify,
