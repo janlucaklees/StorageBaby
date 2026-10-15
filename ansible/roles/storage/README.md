@@ -249,7 +249,9 @@ storage:
   wrapper, and `storage-maintenance-failed.sh` — the one `storage-maintenance-failed.service`
   execs on `OnFailure=`, which is the only way a pool that will not mount is reported at all.
   Logs go to `/var/log/storage-maintenance/` (the wrapper's own, and the body of the mail) and
-  `/var/log/snapraid/` (each snapraid command's).
+  `/var/log/snapraid/` (each snapraid command's). Six, exactly: `balance_disks.sh`, the
+  seventh until 2026-10-15, is **removed** from a host that still carries it, the way a
+  plugin directory for a service no longer stopped is. Its log is left where it is.
 - **Parameters reach those scripts through one rendered file and only through it**:
   `/opt/storagebaby/maintenance/maintenance.env`, which every script sources. No threshold,
   percentage, pool path or address is rendered _into_ a script — so a change touches one

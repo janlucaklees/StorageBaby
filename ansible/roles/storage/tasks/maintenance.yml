@@ -33,6 +33,22 @@
     - scrub.sh
     - report_failed_units.sh
 
+# The balance step was removed on 2026-10-15 and its script with it, but a host that
+# converged before then still has the file -- and an orphaned script in this directory is
+# not inert: it sources `maintenance.env`, which no longer carries the threshold it reads,
+# and it is one of the paths an operator runs by hand. Removed for the same reason a
+# plugin directory and a Traefik route file this role no longer writes are removed.
+#
+# Its log, /var/log/snapraid/balance_disks.log, is deliberately left alone: it is the
+# record of runs that really happened, it cannot grow again now that nothing writes it,
+# and a converge that deletes an operator's logs is a habit this role should not acquire.
+- name: Scripts the maintenance run no longer has
+  ansible.builtin.file:
+    path: /opt/storagebaby/maintenance/{{ item }}
+    state: absent
+  loop:
+    - balance_disks.sh
+
 - name: The maintenance parameters, rendered from host.yml
   ansible.builtin.template:
     src: maintenance.env.j2
