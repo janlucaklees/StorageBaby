@@ -276,12 +276,11 @@ the rest of the list.
     stopped for the balance pass, and Nextcloud's and Immich's live trees are already
     moved while running today. Pre-existing, unrelated to the 2026-10-14 change, worth
     its own look.
-14. **Jellyfin's metadata will be protected by nothing.** Its 32 GB of artwork,
-    metadata and watch state sits in `/pool/apps` with no `backup:` block, so once
-    `/apps` leaves the snapraid array it has neither parity nor a kopia snapshot behind
-    it. Not yet true: `/apps` is still in the array, and the exclude is stage 2 of the
-    2026-10-14 rollout. Accepted as disposable when it lands — a library re-scan
-    rebuilds it; revisit when the mount structure is reworked.
+14. **Jellyfin's metadata is protected by nothing.** Its 32 GB of artwork, metadata
+    and watch state sits in `/pool/apps` with no `backup:` block, and `/apps` left the
+    snapraid array with the 2026-10-14 rollout's stage 2 (committed 2026-10-15), so it
+    has neither parity nor a kopia snapshot behind it. Accepted as disposable — a
+    library re-scan rebuilds it; revisit when the mount structure is reworked.
 15. **The off-site replica never deletes.** `config/sync.sh` deliberately omits
     `--delete` from `kopia repository sync-to`, so Backblaze keeps every blob the local
     repository's garbage collection has dropped — a complete superset of the source

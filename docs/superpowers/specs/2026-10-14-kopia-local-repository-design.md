@@ -1,11 +1,11 @@
 # Kopia's repository moves onto the pool, and `/apps` leaves the snapraid array
 
-**Status:** design, approved 2026-10-14. **Rolled out in two stages** (decided
-2026-10-15, at the whole-branch review): stage 1 ships § 3.2, § 3.3 and § 3.4 — the
-repository onto the pool, the hourly replica, the failed-unit report. § 3.1, `/apps`
-leaving the array, is stage 2 and is the operator's call once the repository holds
-Immich's library and parity has been written over it. Everything below describes the
-end state; the runbook says which half is live.
+**Status:** design, approved 2026-10-14, **implemented in full**. It was rolled out in
+two stages (decided 2026-10-15, at the whole-branch review): stage 1 shipped § 3.2,
+§ 3.3 and § 3.4 — the repository onto the pool, the hourly replica, the failed-unit
+report — and stage 2, § 3.1's exclude, was committed on 2026-10-15 once the repository
+held Immich's library. Everything below describes the end state, which is now what the
+repository declares; the runbook records how each half reached the host.
 
 **Supersedes:** nothing. It changes decisions taken in
 `2026-09-23-phase-3-pods-and-backups-design.md` (kopia's repository lives in Backblaze)
@@ -58,7 +58,7 @@ filesystem to hand it a frozen view instead.
  live app state      /pool/public, /pool/mk       StorageBaby/kopia
    |                     |                        |
  EXCLUDED from        in the array,             the kopia repository:
- the array (stage 2)  unchanged                 in the array
+ the array             unchanged                 in the array
    |                                               ^
    | kopia sidecars snapshot it, as today  --------+
    |                                               |
@@ -91,39 +91,35 @@ stops being asked to do a job it was never built for.
 
 ## 3. Changes
 
-### 3.1 `/apps` leaves the array — stage 2, not shipped yet
+### 3.1 `/apps` leaves the array
 
-**This section is the only part of the design that does not ship with the rest.** The
-order it implies is the problem: at the converge `/apps` leaves the array, at the next
-02:00 snapraid drops the parity it held over it, the first Immich snapshot starts hours
-after that and is a multi-hour local copy of 323 GB, and parity over the new repository
-only arrives the _following_ 02:00. For roughly a day the photo library would have
-exactly one copy, on one mergerfs branch, with neither parity nor a snapshot behind it.
-It has parity today, so that is a regression in safety during the transition and not a
-cost of the end state.
+**This section shipped a day after the rest, as stage 2**, because of the order it
+implies: at the converge `/apps` leaves the array, at the next 02:00 snapraid drops the
+parity it held over it, and had the first Immich snapshot not already existed, the photo
+library would have spent roughly a day with exactly one copy, on one mergerfs branch,
+with neither parity nor a snapshot behind it. Holding the exclude back until the
+repository held that snapshot kept the four nightly soft errors for a few more nights,
+which was the status quo rather than a regression, and cost nothing else. The conditions
+that released it are the cutover runbook's "Stage 2" section.
 
-Holding the exclude back keeps the four nightly soft errors for a few more nights, which
-is the status quo rather than a regression, and costs nothing else. The two conditions
-that release it, and the procedure, are the cutover runbook's "Stage 2" section.
+The change itself:
 
-The change itself, when it comes:
-
-`hosts/StorageBaby/host.yml`, `storage.snapraid.excludes`, gains one anchored entry:
+`hosts/StorageBaby/host.yml`, `storage.snapraid.excludes`, carries one anchored entry:
 
 ```yaml
 - /apps/
 ```
 
 Paths in that list are relative to a _disk's_ root, which for a branch of this pool is
-the same as relative to `/pool`. The nextcloud-specific exclude below it
-(`/apps/nextcloud/data/jlk/files/Projects/Kannji/…`) becomes dead and is removed in the
-same change.
+the same as relative to `/pool`. The nextcloud-specific exclude that used to sit below it
+(`/apps/nextcloud/data/jlk/files/Projects/Kannji/…`) is dead once the whole tree above it
+is excluded, and was removed in the same change.
 
 Nothing else leaves the array. `/pool/shared` (4.9 TB), `/pool/jlk`, `/pool/public`,
 `/pool/mk` and `/pool/backups` stay exactly as they are.
 
 **What this leaves unprotected.** Everything in `/pool/apps` without a `backup:` block is
-then covered by neither parity nor Kopia:
+covered by neither parity nor Kopia:
 
 |                                         | size   | decision                                                                                             |
 | --------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
@@ -343,7 +339,7 @@ follows.
 
 5. **Converge.** The override lands, `start.sh` takes the `filesystem` branch and
    **creates** the repository at `/pool/backups/devices/StorageBaby/kopia`, then
-   registers every client. The exclude of § 3.1 does **not** land here; it is stage 2.
+   registers every client. The exclude of § 3.1 did **not** land here; it was stage 2.
 6. **First full snapshot.** Local disk, no network, ~500 GB. Immich's 323 GB is the long
    pole and the whole point. Verify with `kopia snapshot list --all` that
    `immich@storagebaby:/data/upload` exists — it never has.

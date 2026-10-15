@@ -126,9 +126,9 @@ Physical disks                     one rendered .mount unit per entry, What= a s
 mergerfs pool
   /pool                            union over the data disks only (parity is not a branch)
   /pool/apps/<service>/<volume>    pool-class service volumes (storage_roots.pool) —
-                                    live app state, still IN the array (stage 1)
+                                    live app state, EXCLUDED from the array
   /pool/backups/devices/StorageBaby/kopia   the kopia repository (volume_overrides) —
-                                    outside /apps, so in the array either way
+                                    outside /apps, so in the array
   /pool/shared/media               the media library Jellyfin reads
   /pool/shared/scans, /pool/jlk/backups, …   former Samba trees, now data nothing serves
 
@@ -137,7 +137,7 @@ Snapraid                           /etc/snapraid.conf, rendered from the same bl
   content files on each data disk + /etc/snapraid.content
 ```
 
-- **`/pool/apps` is still in the array, and is meant to leave it in a second stage.** The 2026-10-14 design takes live application state out of snapraid — it cannot parity a file rewritten while it reads it, which is the nightly `exit:warning` on four soft errors — and makes the kopia repository, now on the pool and outside `/apps`, what protects that tree instead. The exclude is held back until the repository actually holds the data: dropping it the same night would leave Immich's 323 GB of photos with neither parity nor a snapshot for about a day. `hosts/StorageBaby/host.yml`'s `excludes` comment and the cutover runbook's "Stage 2" section carry the condition and the procedure.
+- **`/pool/apps` is out of the array**, as of the 2026-10-14 design's stage 2 (committed 2026-10-15). Snapraid cannot parity a file rewritten while it reads it — that was the nightly `exit:warning` on four soft errors — so live application state is excluded and the kopia repository, on the pool and outside `/apps`, is what protects that tree instead. The cost: a dead disk means restoring application state from the last snapshot rather than repairing it in place, and anything under `/apps` with no `backup:` block (jellyfin's 32 GB of metadata above all) is protected by nothing. `hosts/StorageBaby/host.yml`'s `excludes` comment carries the reasoning; the cutover runbook's "Stage 2" section is the record of how it got there.
 - **The role never partitions, formats or wipes.** No `mkfs`, `parted`, `wipefs`, `sgdisk`, ever. A declared device that is not there fails the converge naming the entry, and after mounting it asserts every declared path really is a mount point — the pair that replaced `host_base`'s `mountpoints` list, and what keeps an unmounted `/pool` from being recreated as empty directories on the root filesystem by the nightly deploy timer.
 - **The create policy is `pfrd`** (proportional free random distribution: a branch chosen at random, weighted by free space) — **not** `eplfs`, which this file claimed for a long time and the deployed `pool.mount` never said. The option string is `storage.pool.options` in `host.yml` and is copied into the unit verbatim; that file is the source of truth for it.
 - **A changed `pool.options`, branch or `fstype` remounts the union**, and every container holding a bind mount under it comes back reading an empty directory until it is restarted. The role warns before it does so; `--check --diff` first, then stop the pool-class services.
