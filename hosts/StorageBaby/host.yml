@@ -97,10 +97,24 @@ storage:
       on_calendar: '02:00'
       scrub_percent: 8
       scrub_older_days: 12
-      # Services stopped before the balance moves their files between branches and started
-      # again after the scrub -- and on failure, so a run that aborts never leaves one
-      # down. Every name has to be a service placed on this host.
-      stop_services: [jellyfin]
+      # Services stopped across the parity window -- before the sync, started again
+      # after the scrub, and on failure so a run that aborts never leaves one down.
+      # Every name has to be a service placed on this host.
+      #
+      # Empty, and that is being tried out rather than settled. It held `jellyfin`
+      # for two reasons that are both gone: the nightly balance moved its config tree
+      # between branches under the running container, and the sync parityed that tree
+      # while it was being written. There is no balance step any more, and /apps is out
+      # of the array -- so nothing the run reads belongs to jellyfin, and stopping the
+      # media server every night at 02:00 buys nothing.
+      #
+      # What is left is the one tree jellyfin can still write that the run does read:
+      # /pool/shared/media, which it has `rw` (artwork, NFO and trickplay files written
+      # beside the library). If that turns out to matter, the symptom is a new soft
+      # error under /shared/media in the nightly mail -- and the fix is to put jellyfin
+      # back in this list, not to mount the library read-only, which would also stop
+      # the operator's own writes to it.
+      stop_services: []
   # Where the maintenance report goes. `smtp_host` and `smtp_user` are operator items: the
   # deployed wrapper used whatever MTA the host happened to have, which this repository
   # never captured, so the relay has to be filled in before the first converge --

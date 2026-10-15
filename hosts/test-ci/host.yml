@@ -81,14 +81,15 @@ storage:
       on_calendar: '02:00'
       scrub_percent: 8
       scrub_older_days: 12
-      # The list is the placement, not a copy of storagebaby's: this host has no jellyfin,
-      # and a plugin for a service that is not here would fail every maintenance run. It is
-      # not empty either, because `stable` is promoted on this host's run alone -- an empty
-      # list makes the whole stop-before-sync path, the hook scripts the role generates
-      # and the pod-or-container unit resolution behind them, vacuous on CI. `yuzukam` is a
-      # single-container service that is placed here and costs nothing to stop and start.
-      # test-a stops jellyfin, also a single container; no test host exercises the pod
-      # branch of that resolution, which storagebaby's own list does not use either.
+      # The list is the placement, not a copy of storagebaby's -- storagebaby stops
+      # nothing at all now, and this host has no jellyfin anyway. It is not empty
+      # either, and that is the point: `stable` is promoted on this host's run alone,
+      # and an empty list makes the whole stop-before-sync path, the hook scripts the
+      # role generates and the pod-or-container unit resolution behind them, vacuous on
+      # CI -- a mechanism with no user in production is one only a test host can keep
+      # honest. `yuzukam` is a single-container service that is placed here and costs
+      # nothing to stop and start; test-a stops jellyfin for the same reason. No test
+      # host exercises the pod branch of that resolution.
       stop_services: [yuzukam]
   # The throwaway SMTP sink `prepare.yml` installs on the VM, on the loopback. `tls: false`
   # because nothing but the loopback is between the two ends, and `auth: plain` explicitly

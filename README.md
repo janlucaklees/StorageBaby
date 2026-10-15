@@ -627,7 +627,8 @@ A mail has to arrive, subject `[SUCCESS] SnapRAID Sync Report`. If none does, th
 itself was still fine — `journalctl -t msmtp` is where a refused relay or a rejected
 sender says why, and `storage.mail` is what to correct. Check afterwards that
 `snapraid.content` exists on all three data disks and `snapraid.parity` on the parity
-disk, and that jellyfin came back up (`storagebaby-svc ps jellyfin`).
+disk. Nothing is stopped for the run on storagebaby — `stop_services` is empty — so
+nothing has to have come back up.
 
 **Does a scan reach Paperless?** Send one page from the printer. It should appear as a
 document within a minute or two — the consumer polls rather than watching inotify,

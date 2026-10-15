@@ -219,7 +219,7 @@ storage:
       on_calendar: '02:00'
       scrub_percent: 8
       scrub_older_days: 12
-      stop_services: [jellyfin]
+      stop_services: [] # or [jellyfin, …]
   mail:
     to: email@janlucaklees.de
     from: storagebaby@janlucaklees.de
@@ -256,7 +256,10 @@ storage:
   file, and running `bash /opt/storagebaby/maintenance/sync.sh` by hand behaves exactly like
   the timer's run. A static test asserts that none of the shipped scripts contains a template
   expression at all.
-- **`stop_services`** is the plugin set. It replaces the hand-written `plugins/` directory
+- **`stop_services`** is the plugin set, and on storagebaby it is **empty**: with `/apps`
+  excluded and no balance step left, nothing the nightly run reads or moves belongs to a
+  service, so nothing is stopped for it. The test hosts each declare one name, which is
+  what keeps the path below exercised. It replaces the hand-written `plugins/` directory
   the retired `snapraid/` tree carried, one script per service per hook: the role creates
   `plugins/<service>/` for each declared name and drops the same two scripts into it —
   `on-before-sync.sh` (stop) and `on-after-scrub.sh` plus `on-failure.sh` (start). The
