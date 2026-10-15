@@ -34,6 +34,12 @@ Environment=KOPIA_SERVER_USERNAME={{ service.config.server_username }}
    certificate it generates, beside the container's own hostname. #}
 Environment=KOPIA_PUBLIC_HOST=kopia.{{ domain }}
 Environment=KOPIA_REPOSITORY={{ service.config.repository }}
+{# Where the off-site replica goes, and the two values that used to say where the
+   repository *was*. The repository is local since 2026-10-14; these are read by
+   config/sync.sh and by nothing else. `KOPIA_SYNC=none` on a host with no
+   Backblaze account makes the hourly unit a no-op. #}
+Environment=KOPIA_SYNC={{ service.config.sync | default('none') }}
+Environment=KOPIA_SYNC_MUST_EXIST={{ service.config.sync_must_exist | default(false) | lower }}
 Environment=KOPIA_S3_ENDPOINT={{ service.config.s3_endpoint | default('') }}
 Environment=KOPIA_S3_BUCKET={{ service.config.s3_bucket | default('') }}
 {# The hostname half of every client identity. Kopia matches a connecting client by
@@ -54,6 +60,7 @@ Secret=b2_application_key
 Secret={{ key }}
 {% endfor %}
 Volume={{ config_dir }}/start.sh:{{ config_dir }}/start.sh:ro
+Volume={{ config_dir }}/sync.sh:{{ config_dir }}/sync.sh:ro
 Volume={{ volumes.config }}:/app/config
 Volume={{ volumes.cache }}:/app/cache
 Volume={{ volumes.logs }}:/app/logs

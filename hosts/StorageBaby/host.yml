@@ -52,13 +52,32 @@ storage:
   pool:
     mount: /pool
     options: defaults,allow_other,use_ino,category.create=pfrd,moveonenospc=true,minfreespace=20G,fsname=mergerfsPool,cache.writeback=false,cache.symlinks=false,cache.readdir=false,async_read=true,threads=4
-  # The array. `excludes` are paths relative to a *disk's* root, which for a branch of this
-  # pool is the same as relative to /pool -- they are the deployed ones with the Nextcloud
-  # path moved onto the platform's volume layout (`/apps/nextcloud/volumes/nextcloud/data/`
-  # -> `/apps/nextcloud/data/`, the `data` volume of the nextcloud service; the
-  # installation's own trees are on the SSD now and need no exclude).
   snapraid:
     block_size: 256
+    # Paths are relative to a *disk's* root, which for a branch of this pool is the
+    # same as relative to /pool.
+    #
+    # `/apps/` is NOT excluded, and that is the whole of stage 1. The design
+    # (2026-10-14, section 3.1) takes live application state out of the array,
+    # because snapraid cannot parity a file that is rewritten while it reads it --
+    # the nightly run ends in `exit:warning` on four soft errors, all of them a
+    # SQLite or appdata file under a running service. What is meant to protect that
+    # tree instead is the kopia repository at /pool/backups/devices/StorageBaby/kopia,
+    # which sits outside /apps and is therefore in the array either way.
+    #
+    # The exclude is held back until that repository actually holds the data. Drop it
+    # at the converge and the sequence is: parity over /apps goes away at the next
+    # 02:00, the first immich snapshot starts hours later and takes hours more, and
+    # parity over the new repository only arrives the following night. For roughly a
+    # day Immich's 323 GB of photos would have exactly one copy, on one mergerfs
+    # branch, with neither parity nor a snapshot behind it. They have parity today.
+    #
+    # So: stage 1 keeps /apps in the array and keeps the four soft errors, which is
+    # the status quo and not a regression. Stage 2 adds `- /apps/` back and removes
+    # the Kannji line below with it, once `kopia snapshot list --all` shows
+    # immich@storagebaby:/data/upload and a snapraid sync that started after that
+    # snapshot finished has written parity for the repository. The runbook's "Stage 2"
+    # section is the procedure; it is the operator's call, not a timer's.
     excludes:
       - '*.bak'
       - '*.unrecoverable'
@@ -104,7 +123,15 @@ storage:
     smtp_port: 465
     starttls: false
     smtp_user: storagebaby@klees.io
-volume_overrides: {}
+# The kopia repository, deliberately outside `storage_roots.pool` (= /pool/apps):
+# /apps is what leaves the snapraid array in stage 2, and the repository must not go
+# with it -- which is also why a static test asserts this path is under no anchored
+# exclude. The path follows the operator's existing structure -- /pool/backups/devices/ already
+# holds CloudBaby, KAIZN-vps and StorageBaby. A filesystem path on this machine is
+# a host fact, which is why it is here and not in the service folder
+# (docs/ownership.md section 4).
+volume_overrides:
+  kopia/repo: /pool/backups/devices/StorageBaby/kopia
 # The LAN address, explicitly: this host also has a VPN interface and Docker's leftover
 # bridges, and Traefik's TCP entrypoints must bind the one address the scanner reaches.
 # It is also what the FTP server advertises in its PASV reply. Give it a DHCP reservation.

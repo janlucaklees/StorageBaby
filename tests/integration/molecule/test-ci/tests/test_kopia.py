@@ -90,3 +90,23 @@ def test_container_identity_is_stable(host, owner, spec_path):
     rc, hostname = r.rc, r.stdout.strip()
     assert rc == 0, f"could not run hostname in the {name} container"
     assert hostname == spec["name"], f"container hostname is {hostname}, expected {spec['name']}"
+
+
+@kopia_case
+def test_the_sync_unit_is_installed_and_is_a_no_op_without_a_replica(host, owner, spec_path):
+    """The timer is rendered and enabled on every host, including one with no
+    Backblaze account -- that is what keeps this path covered by CI at all. On
+    such a host sync.sh must exit 0 and do nothing; anything else turns an
+    hourly unit into an hourly failure in a journal nobody reads.
+    """
+    placed(host, owner)
+
+    enabled = run_as(host, "svc-kopia", "systemctl --user is-enabled kopia-sync.timer")
+    assert enabled.stdout.strip() == "enabled", enabled.stdout + enabled.stderr
+
+    # /bin/sh, not a direct exec: the config copy does not carry the script's execute
+    # bit onto the host (see kopia-sync.service.j2), so this has to invoke it the same
+    # way the unit does.
+    run = run_as(host, "svc-kopia", "podman exec kopia /bin/sh /etc/storagebaby/kopia/sync.sh")
+    assert run.rc == 0, run.stdout + run.stderr
+    assert "sync is disabled on this host" in run.stdout, run.stdout

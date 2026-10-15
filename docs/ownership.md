@@ -226,7 +226,9 @@ widening of the contract, not an application of it, and it is not designed yet.
 
 ## 7. Where the platform does not do this yet
 
-The work list, measured against this document at 60b402f.
+The work list, measured against this document at 60b402f. Items 13 to 16 were added
+2026-10-14/15 alongside the local kopia repository change, not from a re-measurement of
+the rest of the list.
 
 1. **Domains are split.** A service owns the leftmost label, `host.yml` owns the rest,
    and the role joins them (`ansible/roles/service/tasks/main.yml:44`).
@@ -269,3 +271,28 @@ The work list, measured against this document at 60b402f.
     where the host's usual one would do. The path escape hatch stays; what is missing is
     the name that should make it the exception, and the default that should make the
     class optional — § 4.1.
+13. **`mergerfs.balance` moves live application files under running containers.**
+    Excluding `/apps` from the snapraid array does not touch it: only Jellyfin is
+    stopped for the balance pass, and Nextcloud's and Immich's live trees are already
+    moved while running today. Pre-existing, unrelated to the 2026-10-14 change, worth
+    its own look.
+14. **Jellyfin's metadata will be protected by nothing.** Its 32 GB of artwork,
+    metadata and watch state sits in `/pool/apps` with no `backup:` block, so once
+    `/apps` leaves the snapraid array it has neither parity nor a kopia snapshot behind
+    it. Not yet true: `/apps` is still in the array, and the exclude is stage 2 of the
+    2026-10-14 rollout. Accepted as disposable when it lands — a library re-scan
+    rebuilds it; revisit when the mount structure is reworked.
+15. **The off-site replica never deletes.** `config/sync.sh` deliberately omits
+    `--delete` from `kopia repository sync-to`, so Backblaze keeps every blob the local
+    repository's garbage collection has dropped — a complete superset of the source
+    that only grows, and is billed for the difference. Deferred rather than wrong: the
+    repository is local now, so propagating removals hourly would carry a local fault
+    off-site within the hour. The flag returns once `sync.sh` can refuse a sync when
+    the source looks unexpectedly small, _and_ the bucket keeps hidden versions for a
+    short window instead of none. Until then, watch the bucket's stored bytes.
+16. **`mergerfs.balance` now has ~500 GB more to move.** The kopia repository lives on
+    the pool, so the nightly balance shuffles it between branches whenever they drift
+    further apart than `balance_threshold: 5`, and whatever it moves the next
+    `snapraid sync` has to re-parity. Runtime and disk churn, not correctness — the
+    repository is append-and-delete and a moved blob is the same blob. Worth measuring
+    once the repository has reached full size; the lever is `balance_threshold`.

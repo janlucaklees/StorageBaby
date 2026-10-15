@@ -32,6 +32,7 @@
     - sync.sh
     - scrub.sh
     - balance_disks.sh
+    - report_failed_units.sh
 
 - name: The maintenance parameters, rendered from host.yml
   ansible.builtin.template:

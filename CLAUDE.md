@@ -36,11 +36,11 @@ secrets.sops.yaml  sops+age encrypted key/value pairs
 
 `service.yml` beyond the basics — `ansible/roles/service/README.md` is the full reference for what a template may use:
 
-- **`volumes`** — `<name>: { class: pool | fast, owner: <uid> }`, resolved against the host's `storage_roots` (or a `volume_overrides` entry) to a directory the role creates **only when it is absent**, 0750 and owned by what `owner` names. `owner` is the uid the process has _inside_ the container, which the role maps onto `subuid_start + owner - 1` here; container uid 0 is the service user itself, which is also what leaving `owner` out means. An existing directory's mode is never re-permissioned: images chown their data tree on every start, so enforcing a mode would report changed forever and take the running service's access away. Its _owner_ is adopted, once — one `chown -R`, and only when `owner` is declared and the directory's own owner differs from it. That is what replaced the operator's hand chown when data is migrated in.
+- **`volumes`** — `<name>: { class: pool | fast, owner: <uid> }`, resolved against the host's `storage_roots` (or a `volume_overrides` entry — storagebaby's one so far maps `kopia/repo` to `/pool/backups/devices/StorageBaby/kopia`) to a directory the role creates **only when it is absent**, 0750 and owned by what `owner` names. `owner` is the uid the process has _inside_ the container, which the role maps onto `subuid_start + owner - 1` here; container uid 0 is the service user itself, which is also what leaving `owner` out means. An existing directory's mode is never re-permissioned: images chown their data tree on every start, so enforcing a mode would report changed forever and take the running service's access away. Its _owner_ is adopted, once — one `chown -R`, and only when `owner` is declared and the directory's own owner differs from it. That is what replaced the operator's hand chown when data is migrated in.
 - **`binds`** — `<name>: { host, container, mode, group, owner }`: a pre-existing host tree mounted into the container. The role guarantees the group exists and that `svc-<name>` is in it, and creates the host directory as `<owner or root>:<group> 2775` if missing — an existing one's mode is again never re-permissioned, and its owner only when `owner` is declared, by uid alone so the group that carries everyone else's access stays.
 - **`devices`** — a list of device paths, rendered as `AddDevice=` **only** on a host whose `host.yml` says `gpu: true` (the template reads `devices_enabled`). Test hosts have no GPU and get no device line.
 - **`groups`** — extra host supplementary groups for the service user. Any `groups` or bind group sets `keep_groups`, which is what a template turns into `GroupAdd=keep-groups`. It carries the groups into the container's credentials, and it does **not** survive an image that switches user through s6 — see `hosts/StorageBaby/services/jellyfin/README.md`.
-- **`config`** — free-form, readable in templates as `service.config.*`, and overridable per host through `service_config: { <service>: { ... } }` in `host.yml` (host wins, deep-merged in the playbook). That is how the test host gives kopia a filesystem repository while storagebaby uses S3.
+- **`config`** — free-form, readable in templates as `service.config.*`, and overridable per host through `service_config: { <service>: { ... } }` in `host.yml` (host wins, deep-merged in the playbook). That is how a test host, which has no Backblaze account, sets kopia's `sync` to `none` — the repository itself is `filesystem` on every host now, storagebaby included.
 - **`port`** is optional, and required only when there is a `domain`. The `build-echo` fixture has neither.
 - **`routes`** — `[{domain, port}, ...]` when one service answers on several names (nextcloud: `nextcloud.klees.io` and `collabora.klees.io`); `domain:` + `port:` is the one-route shorthand. A `domain` is **either** a bare label the host's own `domain` completes (`jellyfin` → `jellyfin.home.klees.io`) **or** a full hostname used as it stands (`immich.klees.io`) — the dot tells them apart, because a DNS label cannot contain one. The host has to declare the zone in `cert_zones` or the name gets no certificate, and `tests/static/test_hosts.py` refuses the combination. One Traefik file and one router per entry, `<name>-<domain>`, and every `<name>-*.yml` a converge did not write is removed, so a renamed route stops answering instead of leaving a live router behind. `route:` is a block of backend options for all of them, and a `routes[]` entry may override it: `scheme: https` + `insecure_skip_verify: true` is how Traefik reaches a backend that keeps its own TLS (kopia, because gRPC needs HTTP/2; collabora, because its distroless image has no plain-HTTP probe). `basic_auth: <secret>` puts a `basicAuth` middleware in front of the router, `usersFile` being that podman secret of **traefik** (it opens the file; a rootless user cannot see another user's secrets) — traefik's own dashboard, `dashboard_htpasswd`, is the one consumer. `probe_path:` (default `/`) is the URL the integration verifier requests to prove the route arrives; it is consumed by neither Traefik nor the role, and belongs to the service because `/` is a legitimate 404 on a backend whose root is not a route — the `mcp` hub registers `/:name` and nothing above it, so it declares `/livez`. A 404 is also exactly what Traefik answers when it matches no router, and the two cannot be told apart from a status code.
 - **`tcp_ports`** — `[{port: 21, target: 2121}, {range: [21100, 21109]}]`: plain-TCP ports Traefik listens on and forwards to `127.0.0.1:<target>` (a `range` forwards each port to itself, which is what an FTP passive range needs). Paperless is the only service that declares any. Plain TCP carries no hostname, so a port belongs to exactly one service per host — route ports, entrypoints and targets are one namespace, checked by `tests/static/test_ports.py` — and the pod must publish every target on loopback. See "Networking" below.
@@ -125,7 +125,10 @@ Physical disks                     one rendered .mount unit per entry, What= a s
 
 mergerfs pool
   /pool                            union over the data disks only (parity is not a branch)
-  /pool/apps/<service>/<volume>    pool-class service volumes (storage_roots.pool)
+  /pool/apps/<service>/<volume>    pool-class service volumes (storage_roots.pool) —
+                                    live app state, still IN the array (stage 1)
+  /pool/backups/devices/StorageBaby/kopia   the kopia repository (volume_overrides) —
+                                    outside /apps, so in the array either way
   /pool/shared/media               the media library Jellyfin reads
   /pool/shared/scans, /pool/jlk/backups, …   former Samba trees, now data nothing serves
 
@@ -134,6 +137,7 @@ Snapraid                           /etc/snapraid.conf, rendered from the same bl
   content files on each data disk + /etc/snapraid.content
 ```
 
+- **`/pool/apps` is still in the array, and is meant to leave it in a second stage.** The 2026-10-14 design takes live application state out of snapraid — it cannot parity a file rewritten while it reads it, which is the nightly `exit:warning` on four soft errors — and makes the kopia repository, now on the pool and outside `/apps`, what protects that tree instead. The exclude is held back until the repository actually holds the data: dropping it the same night would leave Immich's 323 GB of photos with neither parity nor a snapshot for about a day. `hosts/StorageBaby/host.yml`'s `excludes` comment and the cutover runbook's "Stage 2" section carry the condition and the procedure.
 - **The role never partitions, formats or wipes.** No `mkfs`, `parted`, `wipefs`, `sgdisk`, ever. A declared device that is not there fails the converge naming the entry, and after mounting it asserts every declared path really is a mount point — the pair that replaced `host_base`'s `mountpoints` list, and what keeps an unmounted `/pool` from being recreated as empty directories on the root filesystem by the nightly deploy timer.
 - **The create policy is `pfrd`** (proportional free random distribution: a branch chosen at random, weighted by free space) — **not** `eplfs`, which this file claimed for a long time and the deployed `pool.mount` never said. The option string is `storage.pool.options` in `host.yml` and is copied into the unit verbatim; that file is the source of truth for it.
 - **A changed `pool.options`, branch or `fstype` remounts the union**, and every container holding a bind mount under it comes back reading an empty directory until it is restarted. The role warns before it does so; `--check --diff` first, then stop the pool-class services.
@@ -141,11 +145,11 @@ Snapraid                           /etc/snapraid.conf, rendered from the same bl
 
 ## Storage maintenance pipeline
 
-`storage-maintenance.timer` (`OnCalendar` from `storage.snapraid.maintenance.on_calendar`, 02:00, `Persistent=true`) runs `storage-maintenance.service`, a oneshot that `Requires=` the pool and execs `/opt/storagebaby/maintenance/storage-maintenance-unattended.sh`. The role installs that whole directory as root: six scripts at 0755 — the wrapper, the orchestrator, `sync.sh`, `scrub.sh`, `balance_disks.sh` and `storage-maintenance-failed.sh`, the notifier `storage-maintenance-failed.service` execs — plus the `plugins/` tree and `maintenance.env`, which is 0644 because it carries no secret by construction.
+`storage-maintenance.timer` (`OnCalendar` from `storage.snapraid.maintenance.on_calendar`, 02:00, `Persistent=true`) runs `storage-maintenance.service`, a oneshot that `Requires=` the pool and execs `/opt/storagebaby/maintenance/storage-maintenance-unattended.sh`. The role installs that whole directory as root: seven scripts at 0755 — the wrapper, the orchestrator, `sync.sh`, `scrub.sh`, `balance_disks.sh`, `report_failed_units.sh` and `storage-maintenance-failed.sh`, the notifier `storage-maintenance-failed.service` execs — plus the `plugins/` tree and `maintenance.env`, which is 0644 because it carries no secret by construction.
 
 The wrapper logs to `/var/log/storage-maintenance/` and mails the log with `mutt`, which is told to send through `msmtp` explicitly — the host runs no MTA. `/etc/msmtprc` (0600 root) is rendered from `storage.mail` plus `smtp_password` out of `hosts/<host>/secrets/mail.sops.yaml`; msmtp logs to the journal, so `journalctl -t msmtp` is where a refused relay shows up. If the pool does not come up, the unit's start job fails before the wrapper runs at all, which is what `storage-maintenance-failed.service` on `OnFailure=` exists to mail.
 
-The orchestrator runs these steps in order, unchanged from the hand-stowed original:
+The orchestrator runs these steps in order; all but step 9 are unchanged from the hand-stowed original:
 
 1. `on-start` hook
 2. Snapraid status print
@@ -154,7 +158,9 @@ The orchestrator runs these steps in order, unchanged from the hand-stowed origi
 5. `on-after-sync` hook
 6. `scrub.sh` (new blocks, then `scrub_percent` of anything older than `scrub_older_days`)
 7. `on-after-scrub` hook
-8. Final status + SMART report + `on-finish` hook
+8. Final status + SMART report
+9. `report_failed_units.sh` (every `svc-*` service manager's failed units, for the mail)
+10. `on-finish` hook
 
 If any step or hook fails, the orchestrator runs the `on-failure` hook before aborting; that one is best-effort, so one broken recovery script does not stop the others. It also fires on SIGINT/SIGTERM (a systemd stop or a timeout mid-run), so a service stopped by `on-before-balance` is never left down.
 

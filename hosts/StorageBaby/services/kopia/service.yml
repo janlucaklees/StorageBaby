@@ -12,12 +12,41 @@ volumes:
   config: { class: pool }
   cache: { class: fast }
   logs: { class: fast }
-  repo: { class: fast }
+  # The repository itself, and the reason this is `pool` and not `fast`: it was an
+  # empty stub while the repository lived in Backblaze, and it is now the primary
+  # copy of every backup on this host. storagebaby overrides the path to
+  # /pool/backups/devices/StorageBaby/kopia; a test host gets its pool root.
+  #
+  # `owner: 0` is the uid kopia runs as inside the container, which is the service
+  # user -- the same thing leaving it out would mean while the directory is
+  # absent. It is declared because the role only adopts an *existing* directory's
+  # owner when `owner` is, and this path is one an operator could plausibly create
+  # by hand: the override names it, and the tree above it already exists. A
+  # root-owned directory left unadopted converges green and leaves kopia unable to
+  # write to its own repository, restart-looping where nobody is looking. Same
+  # reasoning as immich's `upload`.
+  repo: { class: pool, owner: 0 }
 config:
   server_username: jlk
-  repository: s3
+  # `filesystem` on every host. The repository lives on local storage and Backblaze
+  # is a replica fed by config/sync.sh -- which is what took kopia's daily garbage
+  # collection off the metered link. `s3` is still accepted by start.sh and is what
+  # this said until 2026-10-14; see the service README.
+  repository: filesystem
+  # Where the off-site replica goes. These two keys kept their names through the
+  # 2026-10-14 change and changed meaning: they said where the repository *was*,
+  # they now say where it is *copied to*.
   s3_endpoint: s3.eu-central-003.backblazeb2.com
-  s3_bucket: jlks-kopia-backups
+  s3_bucket: GTMyXab9-jlkkb
+  # `s3` or `none`. A host without a Backblaze account sets `none` in its own
+  # `service_config` and the hourly unit becomes a no-op.
+  sync: s3
+  # False for the very first sync into a fresh bucket, which has no repository
+  # format blob yet; true from then on, so a mistyped bucket fails loudly instead
+  # of quietly starting a second, empty repository. Flip it after the first run.
+  # It defaults to false where it is read, so a host that omits it gets no guard
+  # rather than a first sync that cannot succeed.
+  sync_must_exist: false
 secrets:
   - server_password
   - repository_password

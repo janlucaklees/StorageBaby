@@ -19,9 +19,7 @@ it is part of the spec:
 ```yaml
 config:
   server_username: jlk
-  repository: s3
-  s3_endpoint: s3.eu-central-003.backblazeb2.com
-  s3_bucket: storagebaby-kopia
+  repository: filesystem
 ```
 
 `config/start.sh` reads those through the unit's `Environment=` lines and connects the
@@ -29,46 +27,29 @@ repository **once**, before the server starts. `KOPIA_CONFIG_PATH` lives on the 
 volume, so the connection survives a restart and the script is a no-op on every start
 after the first.
 
-A host overrides the backend through `service_config` in its `host.yml`. That is what
-the test VM does — it has no Backblaze account:
+`filesystem` is the default on every host, and as of 2026-10-14 the only backend any
+host actually runs. It was `s3` against a Backblaze bucket until then: kopia's own daily
+garbage collection has to read pack blobs back out of the repository, which over a
+metered link blew the download cap on five mornings out of eight, and the visible damage
+was immich's 323 GB photo library never completing a first snapshot. `filesystem`
+creates the repository under the `repo` volume (`/app/repo` in the container, overridden
+on storagebaby — see [Volumes](#volumes)) on first start and connects to it afterwards.
+`start.sh` still accepts `repository: s3` as well; `s3` and `filesystem` remain the only
+accepted values, and anything else makes the container exit 2 with a named reason rather
+than starting a server with no repository.
 
-```yaml
-service_config:
-  kopia:
-    repository: filesystem
-```
+The two test hosts carry `service_config: { kopia: { sync: none } }` in their
+`host.yml` — not a repository override any more (`filesystem` is the default
+everywhere now), but what keeps the hourly replica push, below, from trying to
+reach a Backblaze account that does not exist on a test host.
 
-`filesystem` creates the repository under the `repo` volume (`/app/repo` in the
-container) on first start and connects to it afterwards. `s3` and `filesystem` are the
-only accepted values; anything else makes the container exit 2 with a named reason
-rather than starting a server with no repository.
+### Connect, then create
 
-### Connect, then create — and what that means for a live bucket
-
-Both backends create the repository if it is not there yet. The filesystem branch tells
-the two cases apart by looking (`/app/repo` non-empty), the S3 branch by trying:
-`kopia repository connect s3` first, `kopia repository create s3` with the same flags
-only when that failed. So the two cases an operator can be in with a real B2 bucket are:
-
-- **The bucket is fresh** (no repository in it). The script creates one, encrypted with
-  the generated `repository_password` from `secrets.sops.yaml`. Nothing else to do —
-  but back that password up (below), because it is now the only key to the snapshots.
-- **The bucket already holds a repository** (the one the old compose stack created).
-  Then the generated password is the wrong one and **must be replaced with the existing
-  repository's password before the first deploy**:
-
-  ```sh
-  mise run sops hosts/StorageBaby/services/kopia/secrets.sops.yaml
-  ```
-
-  Getting this wrong does not quietly make a second repository beside the first: kopia
-  refuses to `create` over a bucket that already holds a repository, so both calls fail,
-  the unit restart-loops, and the journal says so. The failure is loud on purpose.
-
-> **`s3_endpoint` and `s3_bucket` are placeholders.** They were written from the old
-> README's Backblaze instructions, not read off a live account — the bucket may not
-> exist under that name and the region may be wrong. **Confirm both with the operator
-> before the first real deploy**, and fix them in `service.yml`.
+`/app/repo` tells the two cases apart by whether it is already non-empty: `create` on a
+fresh volume, `connect` otherwise. The first start on a fresh host creates the
+repository, encrypted with the generated `repository_password` from
+`secrets.sops.yaml` — back that password up (below), because it is now the only key to
+the snapshots.
 
 ## Secrets
 
@@ -86,15 +67,17 @@ from the host's `kopia-clients` set instead, because the client services need th
 values — the registration section below has the whole mechanism.
 
 > **The two B2 values in `secrets.sops.yaml` are `REPLACE_ME`.** There was no
-> credential to carry over from the old stack. Put the real ones in with
+> credential to carry over from the old stack. `start.sh` itself does not read
+> either one — the repository backend is `filesystem`, not `s3` — but
+> `config/sync.sh` does, every hour, to authenticate the off-site replica push
+> below: a converge does not fail over them, the hourly `kopia-sync.service`
+> does, until they hold real values. Put the real ones in with
 >
 > ```sh
 > mise run sops hosts/StorageBaby/services/kopia/secrets.sops.yaml
 > ```
 >
-> before the first real deploy. Until then a converge on storagebaby brings the
-> container up, both the S3 connect and the S3 create fail on the credentials, and the
-> unit restart-loops — which is the visible failure it should be.
+> before Backblaze is asked to do anything with them.
 
 > **The repository password cannot be recovered.** Kopia derives the repository's
 > encryption keys from it; there is no reset, no escrow and no way back into the
@@ -108,6 +91,93 @@ values — the registration section below has the whole mechanism.
 `kopia.service` with the new value. Rotating `repository_password` is **not** a
 password change — it would make the existing repository unreadable. Use
 `kopia repository change-password` against the running server instead.
+
+## The off-site replica
+
+Now that the repository itself is local, Backblaze holds a replica instead, fed
+hourly by `kopia-sync.timer` running `config/sync.sh` inside the container:
+
+```sh
+kopia repository sync-to s3 --bucket="$KOPIA_S3_BUCKET" --endpoint="$KOPIA_S3_ENDPOINT" \
+	--parallel=8
+```
+
+`sync-to` produces a **complete, connectable repository** in the bucket, not an
+archive. The same `repository_password` that opens the local one opens this
+copy too — restoring from it is `kopia repository connect s3` against the
+bucket, nothing to unpack or reassemble first.
+
+Four config keys drive it, all read by `config/sync.sh` through the unit's
+`Environment=` lines, never as flags:
+
+```yaml
+s3_endpoint: s3.eu-central-003.backblazeb2.com
+s3_bucket: GTMyXab9-jlkkb
+# `s3` or `none`. A host with no Backblaze account sets `none` in its own
+# `service_config`; the unit still installs and runs, and sync.sh exits 0
+# without touching the network.
+sync: s3
+# False until the first real sync has created the bucket's repository format
+# blob, then flipped to true.
+sync_must_exist: false
+```
+
+`sync_must_exist` defaults to `false` on both the template and the script side
+— deliberately the opposite of what reads safer. `true` by default would make
+the very first sync of any new host fail against its own still-empty bucket;
+`false` is what lets that first sync create the bucket's repository, and only
+after that succeeds does flipping it to `true` buy anything — a mistyped
+bucket name failing loudly instead of quietly starting a second, empty
+repository next to the real one.
+
+**Credentials reach `sync-to` through `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`, read from the `b2_key_id` and `b2_application_key`
+podman secrets, never through a flag** — the same reasoning as every other
+secret in this service: argv is visible in this container's `ps` and in the
+host's `/proc/<pid>/cmdline`, where a flag would sit for as long as the command
+runs.
+
+**`--delete` is deliberately not passed, and the growth that costs is accepted
+on purpose.** `sync-to` without it never removes anything from the destination,
+so the replica keeps every blob the local repository's own garbage collection
+has already dropped: a complete superset of the source that only ever grows, and
+is billed for the difference.
+
+The reason is what the replica is _for_. Until the 2026-10-14 change the
+repository **was** Backblaze, and a local fault could not reach it — a degraded
+branch that still mounts, a restore gone wrong, a mistaken `rm` under the
+repository path. Now the local copy is the primary and Backblaze is downstream
+of it, so `--delete` on an hourly timer would carry exactly those faults off-site
+within the hour. Pair that with a bucket set to keep only the last version and
+the last recovery path is gone with no generation left to roll back to: the
+replica becomes a faithful mirror of the damage.
+
+Two things have to exist before the flag comes back, and both of them, not one:
+
+1. **A sanity guard in `config/sync.sh`** that refuses to sync when the local
+   repository looks unexpectedly small against the previous run. `sync-to` cannot
+   tell "maintenance dropped some packs" from "the source is damaged"; something
+   has to, and it has to be on this side.
+2. **A short hidden-version window at Backblaze**, rather than none. A bucket
+   that keeps only the last version makes a propagated delete final the moment it
+   lands; a few days of hidden versions makes it recoverable, at the cost of
+   paying for the hidden bytes for that window.
+
+Until both are in place, paying for a replica that grows is the cheaper mistake.
+Recorded as deliberately deferred in `docs/ownership.md` § 7.
+
+**The bucket's lifecycle rule is therefore not a precondition of the first
+sync.** Backblaze keeps every version of an object by default, and with no
+`--delete` nothing is hidden, so there is nothing for a rule to expire. Leave
+versioning on for now — it is the second half of the condition above — and
+revisit it together with the sanity guard.
+
+**The number to watch is Class C list transactions, not storage.** Uploads are
+free on ingress, and the push itself is usually small — a listing plus
+whatever blobs are new since the last one — but `sync-to` runs a Class C list
+underneath every call, 24 times a day on an hourly timer. If that ever shows
+up as a real cost, the agreed fallback is a longer `OnCalendar=` on
+`kopia-sync.timer`, not a smaller `--parallel`.
 
 ## How it runs
 
@@ -153,16 +223,12 @@ encrypted, 0600. That is the same class of exposure as the podman secret store t
 value already sits in on the same host, and `--no-use-keyring` is not a choice: a
 container has no keyring to store it in.
 
-`repository.config` itself is the second copy of a credential, and on storagebaby it is
-the more interesting one: with the S3 backend the connect writes the **B2 key id and
-application key** into it, because that is how kopia reaches the bucket on every later
-start without being handed the keys again. So the `config` volume on the pool — not
-just the `.kopia-password` file beside it — holds Backblaze credentials in the clear.
-Two consequences: it is not a directory to copy off the host casually, and rotating the
-B2 key is **not** done by editing `secrets.sops.yaml` alone. The start script only
-connects when `repository.config` is absent, so a rotation is: new value in the secret,
-delete `repository.config`, restart. The repository is unchanged by that, so `cache`
-stays valid — unlike the case at the end of this file.
+`repository.config` itself used to be a second copy of a credential: under the old S3
+backend, the connect wrote the **B2 key id and application key** into it, because that
+is how kopia reached the bucket on every later start without being handed the keys
+again. Under `filesystem` it holds a path and nothing else — no Backblaze credentials in
+it, no credential of any kind, so the `config` volume on the pool carries no exposure
+beyond the password file already covered above.
 
 ### TLS inside, because the repository protocol is gRPC
 
@@ -338,17 +404,26 @@ A running server rereads its user list within 5–10 minutes, or immediately on
 
 ## Volumes
 
-| Volume   | Class  | Container path | What it holds                                        |
-| -------- | ------ | -------------- | ---------------------------------------------------- |
-| `config` | `pool` | `/app/config`  | `repository.config` — the repository connection      |
-| `cache`  | `fast` | `/app/cache`   | content cache, rebuildable                           |
-| `logs`   | `fast` | `/app/logs`    | kopia's own logs                                     |
-| `repo`   | `fast` | `/app/repo`    | the repository itself, **only** in `filesystem` mode |
+| Volume   | Class  | Container path | What it holds                                   |
+| -------- | ------ | -------------- | ----------------------------------------------- |
+| `config` | `pool` | `/app/config`  | `repository.config` — the repository connection |
+| `cache`  | `fast` | `/app/cache`   | content cache, rebuildable                      |
+| `logs`   | `fast` | `/app/logs`    | kopia's own logs                                |
+| `repo`   | `pool` | `/app/repo`    | the repository itself                           |
 
-`repo` is mounted on every host but stays empty under `repository: s3`; on storagebaby
-the repository lives in Backblaze. The unit states `KOPIA_CONFIG_PATH`,
-`KOPIA_CACHE_DIRECTORY` and `KOPIA_LOG_DIR` explicitly even though the image sets the
-same three, so the four mounts above are guaranteed to be the paths kopia really uses.
+`repo` holds the repository on every host now, which is why it moved from `fast` to
+`pool`: it was an empty stub while the repository lived in Backblaze, and it is now the
+primary copy of every backup this platform holds. On storagebaby `volume_overrides` in
+`host.yml` points it at `/pool/backups/devices/StorageBaby/kopia`, deliberately outside
+`storage_roots.pool` (`/pool/apps`) — `/apps` is what leaves the snapraid array in
+stage 2 of the 2026-10-14 rollout (it is still in it today), and the repository must not
+go with it, or parity stops covering the one thing that makes excluding the rest of
+`/apps` acceptable; a static test holds that invariant whichever stage the host is on.
+A test
+host declares no override and gets the plain pool root, `/pool/apps/kopia/repo`. The unit
+states `KOPIA_CONFIG_PATH`, `KOPIA_CACHE_DIRECTORY` and `KOPIA_LOG_DIR` explicitly even
+though the image sets the same three, so the four mounts above are guaranteed to be the
+paths kopia really uses.
 
 > **`cache` belongs to whichever repository `config` points at.** Starting over —
 > wiping `repo` and `config` to create a fresh repository, or repointing the

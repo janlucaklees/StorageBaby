@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from conftest import run_as
 
 HOSTS = Path("/repo/hosts")
 
@@ -240,6 +241,11 @@ def test_a_maintenance_run_is_clean(host):
         "=== Scrubbing ===",
         "=== Final Snapraid Status ===",
         "=== SMART Report ===",
+        # The failed-unit report's own section. Asserted here and not only in the case
+        # below it, because this is the one that proves the section reaches the *mail
+        # body*: the wrapper mails this log, so a step that runs but prints outside it
+        # tells nobody, which is the whole failure mode the report exists to close.
+        "=== Failed service units ===",
         "=== Job Finished with Status: SUCCESS ===",
     ]:
         assert section in log, log[-6000:]
@@ -312,3 +318,37 @@ def test_a_run_that_cannot_start_still_mails(host):
     # The report is about a named unit and carries its state, not just a subject line.
     assert "storage-maintenance.service could not start." in body, body[:4000]
     assert "systemctl status storage-maintenance.service" in body, body[:4000]
+
+
+def test_the_failed_unit_report_is_installed_and_runs(host):
+    """Service units live in each service user's own systemd, which has no path to
+    the host's mail relay (/etc/msmtprc is 0600 root). Without this step an hourly
+    kopia sync -- or any failed dump, or a crashed pod -- fails into a journal
+    nobody reads. Root can reach those managers; that is what storagebaby-svc does.
+
+    Provokes a real failure rather than trusting the clean-VM fallback line: "No
+    failed units in any service manager." reads identically whether the discovery
+    loop checked every svc-* user and found nothing wrong, or matched no svc-* user
+    at all. Only a unit that actually failed, named back in the script's own output,
+    proves the discovery loop works. svc-traefik is the one service every host
+    places (`hosts/shared/services/traefik`), so it is always there to provoke.
+    """
+    script = host.file("/opt/storagebaby/maintenance/report_failed_units.sh")
+    assert script.exists and script.mode == 0o755
+
+    user = "svc-traefik"
+    unit = "report-failed-units-probe.service"
+    try:
+        provoke = run_as(host, user, f"systemd-run --user --unit={unit} --wait /bin/false")
+        assert provoke.rc != 0, f"the probe unit did not fail as expected: {provoke.stdout}{provoke.stderr}"
+
+        run = host.run("bash /opt/storagebaby/maintenance/report_failed_units.sh")
+        # It reports; it never gates -- not even with a failed unit sitting right there.
+        assert run.rc == 0, run.stdout + run.stderr
+        assert f"{user}:" in run.stdout, run.stdout
+        assert unit in run.stdout, run.stdout
+    finally:
+        # Best-effort: a failed unit left behind by this test is exactly the kind of
+        # thing this script exists to surface, on every later run of it -- on this
+        # VM's own later tests, and for real on a host's nightly mail.
+        run_as(host, user, f"systemctl --user reset-failed {unit}")
