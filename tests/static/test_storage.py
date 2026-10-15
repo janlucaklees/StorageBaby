@@ -385,24 +385,44 @@ def test_the_kopia_repository_is_not_excluded_from_the_array(host):
     what makes that acceptable, so putting it under an excluded tree would
     silently remove the only protection `/apps` has left. The assertion held
     before the exclude landed and holds after it, and vacuously in neither: it
-    is the guard that had to be in place *before* the exclude, not after. Written
-    against `volume_overrides` rather than a literal path: the path is a host's
-    decision and may move, the invariant may not.
+    is the guard that had to be in place *before* the exclude, not after.
+
+    The path is resolved the way the role resolves it
+    (`ansible/roles/service/tasks/main.yml`): `volume_overrides['kopia/repo']`
+    when the host declares one, and otherwise `storage_roots[<the volume's
+    class>]/kopia/repo`. Reading only the override used to make this skip on
+    exactly the hosts that need it most -- a test host overrides nothing, so its
+    repository lands in `storage_roots.pool`, which on every host here is inside
+    `/apps`. A placement that is one `/apps/` away from losing its parity is the
+    case this test exists for, and it was the one case it did not look at.
 
     Snapraid's excludes are relative to a *disk's* root, not to the pool mount --
     but every branch of this pool is a disk root, so a path under `/pool` is the
     same path under each branch. That is why comparing against `pool.mount` here
     is correct and not an approximation.
     """
-    repo = host_cfg(host).get("volume_overrides", {}).get("kopia/repo")
-    if repo is None:
-        pytest.skip(f"{host} does not override kopia's repo volume")
+    placed = [p for p in placements() if p.host == host and p.name == "kopia"]
+    if not placed:
+        pytest.skip(f"{host} does not place kopia")
+    volume = placed[0].spec["volumes"]["repo"]
+    cfg = host_cfg(host)
+    repo = cfg.get("volume_overrides", {}).get("kopia/repo") or (
+        f"{cfg['storage_roots'][volume['class']]}/kopia/repo"
+    )
     storage = storage_of(host)
     pool = storage["pool"]["mount"]
     assert repo.startswith(pool + "/"), f"{host}: {repo} is not under {pool}"
     relative = repo[len(pool) :]
     for exclude in storage["snapraid"]["excludes"]:
-        # Only an anchored directory rule can swallow a whole tree; the glob rules
-        # (`*.bak`, `*.log`) match single files and cannot hide the repository.
-        if exclude.startswith("/") and exclude.endswith("/"):
-            assert not relative.startswith(exclude), f"{host}: {repo} is under exclude {exclude}"
+        # Only an anchored rule can swallow a whole tree; the glob rules (`*.bak`,
+        # `*.log`) match single files and cannot hide the repository. The trailing
+        # slash is not part of that: snapraid takes `/backups` for the same tree as
+        # `/backups/`, so the rule is compared without it and on a segment boundary
+        # -- otherwise `/backup` would look like it covers `/backups/...` and, worse,
+        # a real `/backups` rule would be skipped for not ending in a slash.
+        if not exclude.startswith("/"):
+            continue
+        rule = exclude.rstrip("/")
+        assert relative != rule and not relative.startswith(rule + "/"), (
+            f"{host}: {repo} is under exclude {exclude}"
+        )
