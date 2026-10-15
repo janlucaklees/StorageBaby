@@ -35,8 +35,8 @@ UNIT="${1:-storage-maintenance.service}"
 {
 	echo "${UNIT} could not start."
 	echo
-	echo "So the storage maintenance did not run: no balance, no sync, no"
-	echo "scrub, and the array's parity is not up to date."
+	echo "So the storage maintenance did not run: no sync, no scrub,"
+	echo "and the array's parity is not up to date."
 	echo
 	echo "The usual cause is a branch or the parity disk that is not"
 	echo "mounted. The unit Requires= the pool on purpose -- a sync over an"

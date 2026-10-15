@@ -27,8 +27,10 @@ aur_build_home: /var/lib/aurbuild
 snapraid_aur_commit: 94c51545d0ce36dee0402dc19c1b3cc4336b3ae9
 snapraid_version: 14.9-1
 
-# `mergerfs.balance`, which the maintenance run's balance step calls, ships in
-# mergerfs-tools -- in neither Arch's repositories nor Chaotic-AUR either, so it is built
+# `mergerfs.balance`, which the operator runs by hand when the branches have drifted
+# too far apart -- the nightly run has no balance step any more, because the pool's
+# `category.create=pfrd` spreads new files over the branches by free space on its own.
+# It ships in mergerfs-tools -- in neither Arch's repositories nor Chaotic-AUR either, so it is built
 # from the AUR by the same task file. The AUR package is a `-git` one: its `pkgver()` runs
 # at build time and produces a version from whatever upstream commit it checked out, so the
 # version cannot be declared in advance. `aur_version: ''` says so, and the build is then

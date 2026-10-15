@@ -272,10 +272,11 @@ the rest of the list.
     the name that should make it the exception, and the default that should make the
     class optional — § 4.1.
 13. **`mergerfs.balance` moves live application files under running containers.**
-    Excluding `/apps` from the snapraid array does not touch it: only Jellyfin is
-    stopped for the balance pass, and Nextcloud's and Immich's live trees are already
-    moved while running today. Pre-existing, unrelated to the 2026-10-14 change, worth
-    its own look.
+    Smaller than it was: the nightly balance was removed on 2026-10-15 (the pool's
+    `category.create=pfrd` spreads new files by free space on its own), so this is now
+    only true while an operator runs the command by hand — and then with every service
+    up, since no hook stops anything for it. The exposure is unchanged in kind and the
+    fix is unwritten: stop the pool-class services, or run it while they are down.
 14. **Jellyfin's metadata is protected by nothing.** Its 32 GB of artwork, metadata
     and watch state sits in `/pool/apps` with no `backup:` block, and `/apps` left the
     snapraid array with the 2026-10-14 rollout's stage 2 (committed 2026-10-15), so it
@@ -290,8 +291,8 @@ the rest of the list.
     the source looks unexpectedly small, _and_ the bucket keeps hidden versions for a
     short window instead of none. Until then, watch the bucket's stored bytes.
 16. **`mergerfs.balance` now has ~500 GB more to move.** The kopia repository lives on
-    the pool, so the nightly balance shuffles it between branches whenever they drift
-    further apart than `balance_threshold: 5`, and whatever it moves the next
-    `snapraid sync` has to re-parity. Runtime and disk churn, not correctness — the
-    repository is append-and-delete and a moved blob is the same blob. Worth measuring
-    once the repository has reached full size; the lever is `balance_threshold`.
+    the pool, so a balance shuffles it between branches and whatever it moves the next
+    `snapraid sync` has to re-parity. No longer nightly — the balance step is gone as of
+    2026-10-15 and the command is the operator's — so this is the cost of a decision he
+    takes, when he takes it, rather than an unattended one. Runtime and disk churn, not
+    correctness: the repository is append-and-delete and a moved blob is the same blob.

@@ -276,7 +276,10 @@ reason to abort parity.
   moves files between branches and is unaffected by snapraid's filters, so excluding
   `/apps` does not touch it. It is a separate, pre-existing exposure — Nextcloud's and
   Immich's live trees are already moved under running containers today — and it is out of
-  scope here. Recorded in § 6.
+  scope here. Recorded in § 6. **Superseded 2026-10-15, by a separate change:** the
+  nightly balance step is gone (`category.create=pfrd` already spreads new files by free
+  space) and `stop_services` is empty on storagebaby, because with `/apps` out of the
+  array nothing the run touches is Jellyfin's.
 - **The sidecars.** No change to `kopia-client.sh`, the generated sidecar unit, any
   service's `backup:` block, any schedule or any retention.
 - **Kopia's internal maintenance cycles.** Hourly quick, daily full, unchanged — they
@@ -383,6 +386,8 @@ bucket still holds the old repository until step 9, which is why step 9 is last.
 
 - `mergerfs.balance` still moves live application files under running containers. Only
   Jellyfin is stopped for it. Unchanged by this work, and worth its own look.
+  **Resolved 2026-10-15, partly:** the nightly balance is removed, so this is only true
+  for a balance the operator runs by hand — and then with every service up.
 - Jellyfin's 32 GB is protected by nothing. Accepted; revisit with the mount restructure.
 - The hourly interval is a starting point, to be judged against the Backblaze Class C
   figure after a week.

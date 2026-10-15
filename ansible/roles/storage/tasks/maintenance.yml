@@ -31,7 +31,6 @@
     - storage-maintenance-failed.sh
     - sync.sh
     - scrub.sh
-    - balance_disks.sh
     - report_failed_units.sh
 
 - name: The maintenance parameters, rendered from host.yml
@@ -64,7 +63,7 @@
     mode: '0755'
   loop: >-
     {{ storage.snapraid.maintenance.stop_services | product([
-         {'src': 'stop-service.sh', 'name': 'on-before-balance.sh'},
+         {'src': 'stop-service.sh', 'name': 'on-before-sync.sh'},
          {'src': 'start-service.sh', 'name': 'on-after-scrub.sh'},
          {'src': 'start-service.sh', 'name': 'on-failure.sh'}]) | list }}
   loop_control:

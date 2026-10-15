@@ -95,7 +95,6 @@ storage:
       - '*.db-wal'
     maintenance:
       on_calendar: '02:00'
-      balance_threshold: 5
       scrub_percent: 8
       scrub_older_days: 12
       # Services stopped before the balance moves their files between branches and started

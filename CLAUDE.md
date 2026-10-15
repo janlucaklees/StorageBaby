@@ -145,35 +145,36 @@ Snapraid                           /etc/snapraid.conf, rendered from the same bl
 
 ## Storage maintenance pipeline
 
-`storage-maintenance.timer` (`OnCalendar` from `storage.snapraid.maintenance.on_calendar`, 02:00, `Persistent=true`) runs `storage-maintenance.service`, a oneshot that `Requires=` the pool and execs `/opt/storagebaby/maintenance/storage-maintenance-unattended.sh`. The role installs that whole directory as root: seven scripts at 0755 — the wrapper, the orchestrator, `sync.sh`, `scrub.sh`, `balance_disks.sh`, `report_failed_units.sh` and `storage-maintenance-failed.sh`, the notifier `storage-maintenance-failed.service` execs — plus the `plugins/` tree and `maintenance.env`, which is 0644 because it carries no secret by construction.
+`storage-maintenance.timer` (`OnCalendar` from `storage.snapraid.maintenance.on_calendar`, 02:00, `Persistent=true`) runs `storage-maintenance.service`, a oneshot that `Requires=` the pool and execs `/opt/storagebaby/maintenance/storage-maintenance-unattended.sh`. The role installs that whole directory as root: six scripts at 0755 — the wrapper, the orchestrator, `sync.sh`, `scrub.sh`, `report_failed_units.sh` and `storage-maintenance-failed.sh`, the notifier `storage-maintenance-failed.service` execs — plus the `plugins/` tree and `maintenance.env`, which is 0644 because it carries no secret by construction.
 
 The wrapper logs to `/var/log/storage-maintenance/` and mails the log with `mutt`, which is told to send through `msmtp` explicitly — the host runs no MTA. `/etc/msmtprc` (0600 root) is rendered from `storage.mail` plus `smtp_password` out of `hosts/<host>/secrets/mail.sops.yaml`; msmtp logs to the journal, so `journalctl -t msmtp` is where a refused relay shows up. If the pool does not come up, the unit's start job fails before the wrapper runs at all, which is what `storage-maintenance-failed.service` on `OnFailure=` exists to mail.
 
-The orchestrator runs these steps in order; all but step 9 are unchanged from the hand-stowed original:
+The orchestrator runs these steps in order:
 
 1. `on-start` hook
 2. Snapraid status print
-3. `on-before-balance` hook → `balance_disks.sh` (mergerfs.balance, `balance_threshold`)
-4. `on-before-sync` hook → `sync.sh` (snapraid touch + sync)
-5. `on-after-sync` hook
-6. `scrub.sh` (new blocks, then `scrub_percent` of anything older than `scrub_older_days`)
-7. `on-after-scrub` hook
-8. Final status + SMART report
-9. `report_failed_units.sh` (every `svc-*` service manager's failed units, for the mail)
-10. `on-finish` hook
+3. `on-before-sync` hook → `sync.sh` (snapraid touch + sync)
+4. `on-after-sync` hook
+5. `scrub.sh` (new blocks, then `scrub_percent` of anything older than `scrub_older_days`)
+6. `on-after-scrub` hook
+7. Final status + SMART report
+8. `report_failed_units.sh` (every `svc-*` service manager's failed units, for the mail)
+9. `on-finish` hook
 
-If any step or hook fails, the orchestrator runs the `on-failure` hook before aborting; that one is best-effort, so one broken recovery script does not stop the others. It also fires on SIGINT/SIGTERM (a systemd stop or a timeout mid-run), so a service stopped by `on-before-balance` is never left down.
+**There is no balance step and no `on-before-balance` hook** — both were removed on 2026-10-15. The pool's create policy is `category.create=pfrd`, which already spreads new files over the branches by free space, so the packing the nightly `mergerfs.balance` existed to undo does not happen. The tool is still installed and is the operator's to run by hand.
 
-**The hook contract is still `plugins/<name>/<hook>.sh`, but nothing hand-writes one any more.** `storage.snapraid.maintenance.stop_services` is the list (storagebaby: `[jellyfin]`); the role creates one directory per name and drops the same three scripts in — `on-before-balance.sh` (stop), `on-after-scrub.sh` and `on-failure.sh` (start) — which read the service name off their own directory, so they are byte-identical on every host, and resolve `<name>-pod.service` against `<name>.service` the way `storagebaby-svc` does. A directory for a name no longer in the list is removed. The old `samba` and `snapshot-*` plugins are gone with the tree that held them: Samba is retired and Kopia is the only backup path.
+If any step or hook fails, the orchestrator runs the `on-failure` hook before aborting; that one is best-effort, so one broken recovery script does not stop the others. It also fires on SIGINT/SIGTERM (a systemd stop or a timeout mid-run), so a service stopped by `on-before-sync` is never left down.
+
+**The hook contract is still `plugins/<name>/<hook>.sh`, but nothing hand-writes one any more.** `storage.snapraid.maintenance.stop_services` is the list (storagebaby: `[jellyfin]`); the role creates one directory per name and drops the same three scripts in — `on-before-sync.sh` (stop), `on-after-scrub.sh` and `on-failure.sh` (start) — which read the service name off their own directory, so they are byte-identical on every host, and resolve `<name>-pod.service` against `<name>.service` the way `storagebaby-svc` does. A directory for a name no longer in the list is removed. The old `samba` and `snapshot-*` plugins are gone with the tree that held them: Samba is retired and Kopia is the only backup path.
 
 **No parameter is rendered into a script.** They all come from `/opt/storagebaby/maintenance/maintenance.env`, which every script sources, so a threshold changes in git and a hand-run script behaves exactly like the timer's. To run maintenance manually, on the host:
 
 ```bash
-doas systemctl start storage-maintenance.service           # the real nightly run, blocking
-bash /opt/storagebaby/maintenance/storage-maintenance.sh   # the same, without wrapper or mail
-bash /opt/storagebaby/maintenance/sync.sh                  # sync only
-bash /opt/storagebaby/maintenance/scrub.sh                 # scrub only
-bash /opt/storagebaby/maintenance/balance_disks.sh [0-100] # balance only
+doas systemctl start storage-maintenance.service         # the real nightly run, blocking
+bash /opt/storagebaby/maintenance/storage-maintenance.sh # the same, without wrapper or mail
+bash /opt/storagebaby/maintenance/sync.sh                # sync only
+bash /opt/storagebaby/maintenance/scrub.sh               # scrub only
+mergerfs.balance -p 5 /pool                              # by hand; never nightly
 ```
 
 ## Networking

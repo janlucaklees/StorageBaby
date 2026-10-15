@@ -115,19 +115,22 @@
 #
 # rsync is here and not left to the AUR recipe on purpose: `mergerfs-tools-git` declares
 # it `optdepends = rsync: for mergerfs.balance and mergerfs.dup`, and an optional
-# dependency is never installed. `mergerfs.balance` is precisely what the balance step
-# runs, and it needs rsync only when it really has files to move -- so without this the
-# nightly run succeeds for as long as the branches happen to be even and fails the first
-# night one of them fills up, which is the night it mattered.
+# dependency is never installed. `mergerfs.balance` needs rsync only when it really has
+# files to move -- so without this, the command the operator reaches for precisely
+# because the branches have gone uneven is the one that fails, on the host, at the
+# moment it is wanted.
 - name: Packages the maintenance run needs
   community.general.pacman:
     name: [smartmontools, msmtp, mutt, rsync]
     state: present
 
-# `mergerfs.balance`, which the balance step calls. Not in Chaotic-AUR either, so it is
-# built by the same task file -- and it is a `-git` recipe, so the pin is the AUR commit
-# and `aur_version` is empty; see `aur_build.yml` for why that changes the guard.
-- name: Build mergerfs-tools from the AUR (mergerfs.balance)
+# `mergerfs.balance`, for the operator to run by hand: no step of the nightly run calls
+# it any more. It is installed all the same, because a tool that is wanted only once the
+# pool has already gone uneven is not one to go and build at that moment. Not in
+# Chaotic-AUR either, so it is built by the same task file -- and it is a `-git` recipe,
+# so the pin is the AUR commit and `aur_version` is empty; see `aur_build.yml` for why
+# that changes the guard.
+- name: Build mergerfs-tools from the AUR (mergerfs.balance, for manual runs)
   ansible.builtin.include_tasks: aur_build.yml
   vars:
     aur_package: mergerfs-tools-git

@@ -157,13 +157,11 @@ def test_the_maintenance_scripts_are_installed_with_their_parameters(host):
         "storage-maintenance-failed.sh",
         "sync.sh",
         "scrub.sh",
-        "balance_disks.sh",
     ]:
         f = host.file(f"/opt/storagebaby/maintenance/{script}")
         assert f.exists and f.mode == 0o755 and f.user == "root", f"{script}: {f.mode}"
     env = host.file("/opt/storagebaby/maintenance/maintenance.env").content_string
     assert f"STORAGE_POOL={s['pool']['mount']}" in env, env
-    assert f"BALANCE_TARGET_PERCENTAGE={m['balance_threshold']}" in env, env
     assert f"SCRUB_PERCENT={m['scrub_percent']}" in env, env
     assert f"SCRUB_OLDER_DAYS={m['scrub_older_days']}" in env, env
     assert f"MAINTENANCE_MAIL_TO={s['mail']['to']}" in env, env
@@ -174,7 +172,7 @@ def test_the_maintenance_scripts_are_installed_with_their_parameters(host):
     present = sorted(host.run("ls -1 /opt/storagebaby/maintenance/plugins").stdout.split())
     assert present == sorted(m["stop_services"]), present
     for service in m["stop_services"]:
-        for hook in ("on-before-balance.sh", "on-after-scrub.sh", "on-failure.sh"):
+        for hook in ("on-before-sync.sh", "on-after-scrub.sh", "on-failure.sh"):
             f = host.file(f"/opt/storagebaby/maintenance/plugins/{service}/{hook}")
             assert f.exists and f.mode == 0o755, f"{service}/{hook}"
 
@@ -216,7 +214,7 @@ def test_maintenance_timer_is_enabled(host):
 
 
 def test_a_maintenance_run_is_clean(host):
-    """One real run, end to end: balance, sync, scrub, status, SMART, and the mail.
+    """One real run, end to end: sync, scrub, status, SMART, the failed units and the mail.
 
     A few files go into the pool first, because an array with nothing in it proves nothing
     about a sync -- and they are what the content and parity files below are evidence of.
@@ -236,7 +234,6 @@ def test_a_maintenance_run_is_clean(host):
     assert host.check_output("systemctl show storage-maintenance.service -p Result --value") == "success", journal
     log = host.file("/var/log/storage-maintenance/storage-maintenance.log").content_string
     for section in [
-        "=== Balancing disks ===",
         "=== Syncing ===",
         "=== Scrubbing ===",
         "=== Final Snapraid Status ===",
@@ -254,7 +251,7 @@ def test_a_maintenance_run_is_clean(host):
     assert host.file("/etc/snapraid.content").exists
     assert host.file(f"{s['parity'][0]['mount']}/snapraid.parity").exists
 
-    # Stopped before the balance and started again after the scrub: what must not survive the
+    # Stopped before the sync and started again after the scrub: what must not survive the
     # run is a service left down, which is the whole reason the hooks exist. Both test hosts
     # declare one, so neither loop is vacuous -- jellyfin on test-a, yuzukam on test-ci, both
     # single containers. The pod branch of `top_unit` is exercised on no host today.

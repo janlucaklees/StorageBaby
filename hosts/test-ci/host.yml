@@ -79,13 +79,12 @@ storage:
       - '*.db-wal'
     maintenance:
       on_calendar: '02:00'
-      balance_threshold: 5
       scrub_percent: 8
       scrub_older_days: 12
       # The list is the placement, not a copy of storagebaby's: this host has no jellyfin,
       # and a plugin for a service that is not here would fail every maintenance run. It is
       # not empty either, because `stable` is promoted on this host's run alone -- an empty
-      # list makes the whole stop-before-balance path, the hook scripts the role generates
+      # list makes the whole stop-before-sync path, the hook scripts the role generates
       # and the pod-or-container unit resolution behind them, vacuous on CI. `yuzukam` is a
       # single-container service that is placed here and costs nothing to stop and start.
       # test-a stops jellyfin, also a single container; no test host exercises the pod

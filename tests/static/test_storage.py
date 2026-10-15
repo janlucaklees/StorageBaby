@@ -130,7 +130,7 @@ def test_disk_units_name_the_declared_device(rendered, host):
 
 
 SNAPRAID_KEYS = {"block_size", "excludes", "maintenance"}
-MAINTENANCE_KEYS = {"on_calendar", "balance_threshold", "scrub_percent", "scrub_older_days", "stop_services"}
+MAINTENANCE_KEYS = {"on_calendar", "scrub_percent", "scrub_older_days", "stop_services"}
 MAIL_REQUIRED = {"to", "from", "smtp_host", "smtp_port", "smtp_user"}
 # Optional, and defaulted by the msmtprc template to the production values (`tls on`,
 # `auth on`). A host whose relay is a sink on its own loopback says so.
@@ -145,7 +145,6 @@ def test_snapraid_block_shape(host):
     assert all(isinstance(e, str) and e for e in snapraid["excludes"]), f"{host}: {snapraid['excludes']}"
     m = snapraid["maintenance"]
     assert set(m) == MAINTENANCE_KEYS, f"{host}: {set(m) ^ MAINTENANCE_KEYS}"
-    assert 0 <= m["balance_threshold"] <= 100, f"{host}: balance_threshold {m['balance_threshold']}"
     assert 0 <= m["scrub_percent"] <= 100, f"{host}: scrub_percent {m['scrub_percent']}"
     assert isinstance(m["scrub_older_days"], int), f"{host}: scrub_older_days must be an integer"
     # Handed to systemd itself: an unparseable schedule is a timer that never fires, and
@@ -299,7 +298,6 @@ def test_maintenance_parameters_are_rendered_and_not_baked_into_the_scripts(rend
         if "=" in line
     )
     assert env["STORAGE_POOL"] == storage["pool"]["mount"]
-    assert env["BALANCE_TARGET_PERCENTAGE"] == str(m["balance_threshold"])
     assert env["SCRUB_PERCENT"] == str(m["scrub_percent"])
     assert env["SCRUB_OLDER_DAYS"] == str(m["scrub_older_days"])
     assert env["MAINTENANCE_MAIL_TO"] == storage["mail"]["to"]
