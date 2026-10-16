@@ -51,9 +51,9 @@ to the host by an ordinary merge and converge.
         replica", and in `docs/ownership.md` § 7.
 
         **Superseded 2026-10-16.** Neither condition above was met, and the operator
-            enabled `--delete` anyway, the trade stated plainly first: the bucket now keeps
-            only the last version, so a propagated delete is immediately final rather than
-            recoverable. Current instruction is `docs/ownership.md` § 7.
+                    enabled `--delete` anyway, the trade stated plainly first: the bucket now keeps
+                    only the last version, so a propagated delete is immediately final rather than
+                    recoverable. Current instruction is `docs/ownership.md` § 7.
 
 - [ ] **3. Rotate `repository_password` — optional.** Not required: a fresh repository
       derives fresh keys from whatever password it is given, and the bucket the current
