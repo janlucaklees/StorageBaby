@@ -13,6 +13,17 @@ would have left 323 GB of photos with neither parity nor a snapshot for about a 
 Stage 2 is the last section of this document; it was committed on 2026-10-15 and goes
 to the host by an ordinary merge and converge.
 
+**`--delete` is on as of 2026-10-16, which step 2 below predates.** At cutover the
+hourly replica push deliberately omitted it, on the reasoning that a replica should
+survive a local mistake. That reasoning was wrong about what this replica is: kopia
+owns the version history, and the bucket is a byte-for-byte copy of that repository
+rather than a second history of it, so withholding the flag bought no undo and cost
+unbounded growth — every pack blob local garbage collection drops would stay at
+Backblaze forever. The operator enabled it with the trade stated: the bucket keeps
+only the last version, so a propagated delete is final. The current position lives in
+`hosts/StorageBaby/services/kopia/config/sync.sh` and `docs/ownership.md` § 7; step 2
+below is kept as the record of what was decided on the night.
+
 > **The wipe must land between the merge and the next converge, and nothing may
 > converge in that window.** `start.sh` connects a repository only when
 > `repository.config` is absent, and that file exists today, pointing at the old
@@ -38,8 +49,9 @@ to the host by an ordinary merge and converge.
 - [x] **2. The bucket and its credentials — done.**
   - [x] `b2_key_id` and `b2_application_key` for bucket `GTMyXab9-jlkkb` are committed
         in `hosts/StorageBaby/services/kopia/secrets.sops.yaml`.
-  - [x] **The bucket's lifecycle rule is no longer a precondition, and the bucket
-        should keep versions for now.** `config/sync.sh` does not pass `--delete`:
+  - [x] **Superseded 2026-10-16 — see the note under the title. What follows was the
+        position at cutover: the lifecycle rule is no longer a precondition, and the
+        bucket should keep versions for now.** `config/sync.sh` does not pass `--delete`:
         the replica is downstream of a local primary, and propagating removals hourly
         would carry a local fault — a degraded branch, a bad restore, a mistaken `rm`
         — off-site inside the hour, which is exactly what a replica is supposed to
@@ -49,11 +61,6 @@ to the host by an ordinary merge and converge.
         dropped, and grows faster than the source — the accepted trade until a sanity
         guard exists on this side. Full argument in the service README, "The off-site
         replica", and in `docs/ownership.md` § 7.
-
-        **Superseded 2026-10-16.** Neither condition above was met, and the operator
-                    enabled `--delete` anyway, the trade stated plainly first: the bucket now keeps
-                    only the last version, so a propagated delete is immediately final rather than
-                    recoverable. Current instruction is `docs/ownership.md` § 7.
 
 - [ ] **3. Rotate `repository_password` — optional.** Not required: a fresh repository
       derives fresh keys from whatever password it is given, and the bucket the current
