@@ -282,14 +282,19 @@ the rest of the list.
     snapraid array with the 2026-10-14 rollout's stage 2 (committed 2026-10-15), so it
     has neither parity nor a kopia snapshot behind it. Accepted as disposable — a
     library re-scan rebuilds it; revisit when the mount structure is reworked.
-15. **The off-site replica never deletes.** `config/sync.sh` deliberately omits
-    `--delete` from `kopia repository sync-to`, so Backblaze keeps every blob the local
-    repository's garbage collection has dropped — a complete superset of the source
-    that only grows, and is billed for the difference. Deferred rather than wrong: the
-    repository is local now, so propagating removals hourly would carry a local fault
-    off-site within the hour. The flag returns once `sync.sh` can refuse a sync when
-    the source looks unexpectedly small, _and_ the bucket keeps hidden versions for a
-    short window instead of none. Until then, watch the bucket's stored bytes.
+15. **The off-site replica now deletes.** `--delete` was added to `config/sync.sh` on
+    2026-10-16, the operator's own decision. Before that it was deliberately withheld:
+    without it Backblaze kept every blob the local repository's garbage collection had
+    dropped — a complete superset of the source that only grew, and was billed for the
+    difference — deferred rather than wrong, pending two things: a sanity guard here
+    that refuses to sync when the source looks unexpectedly small, and a short
+    hidden-version window at Backblaze instead of none. Neither was built. The operator
+    enabled the flag anyway, the trade stated plainly first: the bucket keeps only the
+    last version, so a local fault now reaches Backblaze within the hour with the
+    previous blob gone, and the replica defends against losing the machine rather than
+    against a mistake made on it. The sanity guard remains unwritten and is the one
+    thing that would narrow that window from this side; the hidden-version window is
+    still available as a bucket setting if the trade is revisited.
 16. **`mergerfs.balance` now has ~500 GB more to move.** The kopia repository lives on
     the pool, so a balance shuffles it between branches and whatever it moves the next
     `snapraid sync` has to re-parity. No longer nightly — the balance step is gone as of

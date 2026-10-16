@@ -45,28 +45,28 @@ export AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/b2_application_key)"
 export AWS_SECRET_ACCESS_KEY
 
-# --delete: DELIBERATELY ABSENT. Do not re-add it without reading this.
-#   It propagates removals, and that is the whole problem: until this change the
-#   repository *was* Backblaze, so a local fault -- a degraded branch that still
-#   mounts, a bad restore, a mistaken `rm` under the repository path -- could not
-#   reach the off-site copy. With `--delete` on an hourly timer it reaches it
-#   within the hour, and if the bucket also keeps only the last version there is
-#   no generation left to roll back to. The replica would then be a mirror of the
-#   damage rather than a way out of it.
+# --delete: added 2026-10-16, the operator's call, with the trade below stated and
+#   accepted. Kopia already holds every version of every snapshot; this bucket is a
+#   copy of that repository, not a second history of it, which is why bounded growth
+#   won over an off-site undo.
 #
-#   What its absence costs: the replica keeps every blob the local repository's
-#   garbage collection has already dropped, so it is a complete superset of the
-#   source that only ever grows, and it is billed for the difference.
+#   What it buys: the replica tracks the source instead of accumulating every blob
+#   the local repository's garbage collection has already dropped, so it stops
+#   being a superset of the source that only ever grows and is billed for the
+#   difference.
 #
-#   What has to exist before it comes back, both of them and not one:
-#     1. a sanity guard in this script that refuses to sync when the local
-#        repository looks unexpectedly small against the last run -- the signal
-#        that distinguishes "maintenance dropped some packs" from "the source is
-#        damaged", which `sync-to` itself cannot tell apart;
-#     2. a short hidden-version window at Backblaze rather than none, so a
-#        propagated delete is recoverable for a few days instead of immediately
-#        final.
-#   Until then the growth is the cheaper mistake. See the README, "The off-site
+#   What it costs: the bucket keeps only the last version, so a local fault -- a
+#   degraded branch that still mounts, a bad restore, a mistaken `rm` under the
+#   repository path -- reaches Backblaze within the hour and the previous blob is
+#   gone with it. The replica now mirrors damage as faithfully as it mirrors data:
+#   it defends against losing the machine, not against a mistake made on it.
+#
+#   Neither precondition that would have narrowed that window exists. The
+#   sanity guard -- refusing to sync when the local repository looks unexpectedly
+#   smaller than the last run, the signal `sync-to` itself cannot tell apart from
+#   ordinary garbage collection -- is still unwritten. A hidden-version window at
+#   Backblaze, instead of none, is a bucket setting rather than a change here, and
+#   stays available if this trade is revisited. See the README, "The off-site
 #   replica", and docs/ownership.md section 7.
 # --parallel: the flag defaults to 1, which would make the first ~500 GB push
 #   take days.
@@ -83,6 +83,7 @@ export AWS_SECRET_ACCESS_KEY
 set -- kopia repository sync-to s3 \
 	--bucket="$KOPIA_S3_BUCKET" \
 	--endpoint="$KOPIA_S3_ENDPOINT" \
+	--delete \
 	--parallel=8
 if [ "${KOPIA_SYNC_MUST_EXIST:-false}" = "true" ]; then
 	set -- "$@" --must-exist

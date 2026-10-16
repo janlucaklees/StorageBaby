@@ -316,6 +316,10 @@ follows.
    `docs/ownership.md` § 7 carry the current instruction and the conditions for
    bringing the flag back.
 
+   **Superseded 2026-10-16.** Neither condition was met; the operator enabled
+   `--delete` anyway, with the trade stated plainly first, and set the bucket to keep
+   only the last version. `docs/ownership.md` § 7 is the current instruction.
+
 3. **Optionally rotate `repository_password`.** Not required: a fresh repository derives
    fresh keys from whatever password it is given, and the bucket that the current value
    opens is being deleted anyway. Rotate it if the operator prefers a clean break.

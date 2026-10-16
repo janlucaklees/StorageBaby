@@ -50,6 +50,11 @@ to the host by an ordinary merge and converge.
         guard exists on this side. Full argument in the service README, "The off-site
         replica", and in `docs/ownership.md` § 7.
 
+        **Superseded 2026-10-16.** Neither condition above was met, and the operator
+            enabled `--delete` anyway, the trade stated plainly first: the bucket now keeps
+            only the last version, so a propagated delete is immediately final rather than
+            recoverable. Current instruction is `docs/ownership.md` § 7.
+
 - [ ] **3. Rotate `repository_password` — optional.** Not required: a fresh repository
       derives fresh keys from whatever password it is given, and the bucket the current
       value opens is being deleted in step 11 anyway. Rotate it only for a clean break.
