@@ -45,8 +45,10 @@ export AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY="$(cat /run/secrets/b2_application_key)"
 export AWS_SECRET_ACCESS_KEY
 
-# --delete: added 2026-10-16, the operator's own call, after this trade was put to
-#   him plainly and he took it anyway.
+# --delete: added 2026-10-16, the operator's call, with the trade below stated and
+#   accepted. Kopia already holds every version of every snapshot; this bucket is a
+#   copy of that repository, not a second history of it, which is why bounded growth
+#   won over an off-site undo.
 #
 #   What it buys: the replica tracks the source instead of accumulating every blob
 #   the local repository's garbage collection has already dropped, so it stops
