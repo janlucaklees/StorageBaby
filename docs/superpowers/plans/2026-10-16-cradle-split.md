@@ -1136,6 +1136,47 @@ Expected: `static` and `integration` green on the runner, `promote` fast-forward
 
 ---
 
+### Task 10b: StorageBaby's Traefik template stops naming the engine's path
+
+Found in Task 6: `hosts/shared/services/traefik/quadlet/traefik.container.j2` hardcodes
+`/etc/storagebaby/traefik/dynamic.d` and `/etc/storagebaby/traefik/certs`. After
+bootstrap's adoption those paths are gone and Cradle writes routes under
+`/etc/cradle/traefik`, so Traefik would come up with no routes at cutover. The role hands
+every service its config directory as `config_dir` (`/etc/<engine>/<name>`), which renders
+to the same text under the old engine and to the right path under Cradle — so this commit
+is engine-agnostic and must be on StorageBaby's `stable` **before Task 14**.
+
+**Files (StorageBaby, on `master`, not the split worktree):**
+
+- Modify: `hosts/shared/services/traefik/quadlet/traefik.container.j2:52,58`, `hosts/shared/services/traefik/README.md` (the two paths, if named)
+
+- [ ] **Step 1: The template reads `config_dir`**
+
+```
+Volume={{ config_dir }}/dynamic.d:/etc/traefik/dynamic.d:ro
+Volume={{ config_dir }}/certs:/etc/traefik/certs:ro
+```
+
+with a comment above the first: the directory is the platform's, handed down as
+`config_dir`; a service folder never names the engine's path (`docs/ownership.md` § 1.1).
+
+- [ ] **Step 2: Prove the render is unchanged under the old engine**
+
+Run from StorageBaby master: the Task 1 baseline command into a second directory
+(`$B/render-10b`) and `diff -r $B/render $B/render-10b` — empty.
+
+- [ ] **Step 3: Commit on master, push, let CI promote `stable`**
+
+Commit via the `commit` skill: `fix: traefik reads its config directory from the role, not from a path`.
+`git push origin master`, `gh run watch --exit-status`; `stable` moves (the push touches only
+`hosts/shared/`, so the `changes` job skips the VM). On the NAS the next tick re-renders an
+identical unit: `ssh root@192.168.178.2 'journalctl -u storagebaby-deploy.service -n 30 --no-pager'`
+shows a converge with no Traefik restart.
+
+Cradle's fixture copy of the template uses `{{ config_dir }}` the same way (Task 6 review).
+
+---
+
 ### Task 11: StorageBaby becomes a host repository
 
 **Files (in the `cradle-split` worktree):**
