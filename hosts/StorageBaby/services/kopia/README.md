@@ -99,7 +99,7 @@ hourly by `kopia-sync.timer` running `config/sync.sh` inside the container:
 
 ```sh
 kopia repository sync-to s3 --bucket="$KOPIA_S3_BUCKET" --endpoint="$KOPIA_S3_ENDPOINT" \
-	--parallel=8
+	--delete --parallel=8
 ```
 
 `sync-to` produces a **complete, connectable repository** in the bucket, not an
@@ -137,40 +137,31 @@ secret in this service: argv is visible in this container's `ps` and in the
 host's `/proc/<pid>/cmdline`, where a flag would sit for as long as the command
 runs.
 
-**`--delete` is deliberately not passed, and the growth that costs is accepted
-on purpose.** `sync-to` without it never removes anything from the destination,
-so the replica keeps every blob the local repository's own garbage collection
-has already dropped: a complete superset of the source that only ever grows, and
-is billed for the difference.
+**`--delete` is passed, since 2026-10-16, on the operator's own decision.**
+`sync-to` with it removes from the destination whatever the source no longer
+has, so the replica tracks the local repository instead of accumulating every
+blob its garbage collection has already dropped — it stops being a complete
+superset of the source that only ever grows, and stops being billed for the
+difference.
 
-The reason is what the replica is _for_. Until the 2026-10-14 change the
-repository **was** Backblaze, and a local fault could not reach it — a degraded
-branch that still mounts, a restore gone wrong, a mistaken `rm` under the
-repository path. Now the local copy is the primary and Backblaze is downstream
-of it, so `--delete` on an hourly timer would carry exactly those faults off-site
-within the hour. Pair that with a bucket set to keep only the last version and
-the last recovery path is gone with no generation left to roll back to: the
-replica becomes a faithful mirror of the damage.
+That was decided with the cost stated, not around it. The bucket keeps only
+the last version, so a local fault — a degraded branch that still mounts, a
+restore gone wrong, a mistaken `rm` under the repository path — now reaches
+Backblaze within the hour and takes the previous blob with it: no generation
+left to roll back to. The replica mirrors damage exactly as faithfully as it
+mirrors data; it is no longer a defence against a local mistake, only against
+losing the machine itself.
 
-Two things have to exist before the flag comes back, and both of them, not one:
+Neither of the two things that would have narrowed that window exists.
+**A sanity guard in `config/sync.sh`** that refuses to sync when the
+local repository looks unexpectedly smaller than the previous run is still
+unwritten — `sync-to` cannot tell "maintenance dropped some packs" from "the
+source is damaged"; something has to, and it would have to be here. **A short
+hidden-version window at Backblaze**, instead of none, is the other lever — a
+bucket setting, not a change to this script — and stays available if the
+trade is ever revisited.
 
-1. **A sanity guard in `config/sync.sh`** that refuses to sync when the local
-   repository looks unexpectedly small against the previous run. `sync-to` cannot
-   tell "maintenance dropped some packs" from "the source is damaged"; something
-   has to, and it has to be on this side.
-2. **A short hidden-version window at Backblaze**, rather than none. A bucket
-   that keeps only the last version makes a propagated delete final the moment it
-   lands; a few days of hidden versions makes it recoverable, at the cost of
-   paying for the hidden bytes for that window.
-
-Until both are in place, paying for a replica that grows is the cheaper mistake.
-Recorded as deliberately deferred in `docs/ownership.md` § 7.
-
-**The bucket's lifecycle rule is therefore not a precondition of the first
-sync.** Backblaze keeps every version of an object by default, and with no
-`--delete` nothing is hidden, so there is nothing for a rule to expire. Leave
-versioning on for now — it is the second half of the condition above — and
-revisit it together with the sanity guard.
+Recorded in `docs/ownership.md` § 7.
 
 **The number to watch is Class C list transactions, not storage.** Uploads are
 free on ingress, and the push itself is usually small — a listing plus
