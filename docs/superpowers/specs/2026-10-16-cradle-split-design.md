@@ -261,19 +261,25 @@ proven on the live host, not only in `render_only`. `docs/runbooks/2026-10-17-cr
 
 Surfaced by the cutover, 2026-10-17:
 
-- **No `flock` in `cradle-deploy`.** A hand-run tick (or a hand-run `--check`) can race
-  the timer's own tick — the same tree is fetched and converged from twice at once, and
-  `sync_checkout`'s `git reset --hard` + `git clean -fdx` on one run can land mid-way
-  through the other run's `ansible-playbook`. This cutover's converge took 11 min 19 s
-  against the timer's 5 min interval, so the margin an overlap needs is thin by
-  construction even between two ordinary ticks.
-- **Bootstrap leaves `/etc/cradle` at `0700`** until the first converge sets it to
-  `0711`; between adoption and that converge the platform root is not traversable by the
-  `svc-*` users.
-- **Bootstrap's `$(hostname)` fails on a host without `inetutils`** — cosmetic, the
-  generated key's comment is `cradle@` instead of `cradle@<host>`.
-- **The converge-via-timer rule.** The first converge after bootstrap must be the
-  timer's own tick, never a hand-run `cradle-deploy` — `host_base`'s own "Deploy timer
-  state" task starts the timer as part of that same converge, and a hand-run converge
-  started before the timer is enabled leaves that task to enable and start it mid-run,
-  firing a second, concurrent tick.
+All four were closed by the review's fix wave, 2026-10-17:
+
+- **No mutual exclusion in `cradle-deploy`.** Two ticks of the _timer_ cannot overlap:
+  the unit is a oneshot, systemd merges a start job that elapses while it runs into the
+  running one, and that merged job re-elapses when it finishes — this cutover's 11 min 19 s
+  converge is exactly what the journal shows (the 17:04:23 timer merged, re-elapsed at
+  17:10:42). The real exposure is a **hand-run `cradle-deploy` or `--check` beside the
+  timer's tick**, and a hand converge on a `deploy_timer: true` host whose timer is still
+  disabled — the converge's own "Deploy timer state" task then starts it mid-run.
+  `sync_checkout`'s `git reset --hard` + `git clean -fdx` landing in the middle of the
+  other run's `ansible-playbook` is the damage. Closed by a `flock -w 900` on fd 9 against
+  `/run/cradle-deploy.lock` at the top of the script, before the first fetch: it **waits**
+  rather than fails, so a pre-flight blocks behind a tick and a tick fired mid-hand-converge
+  waits and afterwards no-ops on the state file. The `--check` path `exec`s
+  ansible-playbook, which inherits fd 9, so the lock covers the whole pre-flight.
+- **Bootstrap left `/etc/cradle` at `0700`** until the first converge set it to `0711`,
+  and `install -d -m` re-applied that on every re-run of a documented-idempotent script
+  with no converge behind it. Closed: bootstrap creates it `0711`, held equal to the
+  role's mode by `tests/static/test_bootstrap.py`.
+- **Bootstrap's `$(hostname)` fails on a host without `inetutils`** — closed, `$(uname -n)`.
+- **The converge-via-timer rule** stands as the operating rule, and the lock is what now
+  makes a breach of it safe rather than merely documented.

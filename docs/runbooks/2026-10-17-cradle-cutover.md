@@ -334,22 +334,30 @@ restarted.
 
 ## Follow-ups
 
-- **The timer/converge race is real and still unfixed in Cradle.** It did not bite here
-  because the converge was carried by the timer's own tick, but a future hand-run
-  `cradle-deploy` on a host whose `deploy_timer: true` while the timer is disabled hits
-  it again, and two ordinary ticks can still overlap whenever a converge runs longer
-  than the timer's 5-minute interval — this one took 11 min 19 s, so the margin is thin
-  by construction even between two scheduled ticks. Follow-up: an exclusive `flock` in
-  `cradle-deploy` covering the fetch and the converge, plus a test host with
-  `deploy_timer: true` to exercise the enable-at-converge path in CI.
-- **Bootstrap leaves `/etc/cradle` at `0700`** until the first converge sets it to
-  `0711`; between adoption and that converge the platform root is not traversable by the
-  `svc-*` users, which makes "restart nothing before the converge" load-bearing for a
-  second reason it doesn't state.
+All three Cradle-side ones were closed by the review's fix wave the same day.
+
+- **The timer/converge race is hand-run against tick, not tick against tick.** Two ticks
+  of the timer cannot overlap: `cradle-deploy.service` is a oneshot, so the start job the
+  timer elapsed at 17:04:23 — in the middle of this 11 min 19 s converge — was merged into
+  the running one and re-elapsed three seconds after it finished, at 17:10:42, which is
+  exactly what the journal above shows. The real exposure is a hand-run `cradle-deploy`
+  or `--check` pre-flight beside the timer's tick, and a hand converge on a host whose
+  `deploy_timer: true` while the timer is still disabled — this cutover's own case, where
+  the converge's "Deploy timer state" task would have started the timer mid-run. It did
+  not bite here because the converge was carried by the timer's own tick. Closed in
+  Cradle: `exec 9> /run/cradle-deploy.lock` + `flock -w 900 9` before the first fetch,
+  waiting rather than failing, so a pre-flight blocks behind a tick and a tick fired mid
+  hand-converge waits and then no-ops on the state file.
+- **Bootstrap left `/etc/cradle` at `0700`** until the first converge set it to `0711`;
+  between adoption and that converge the platform root is not traversable by the `svc-*`
+  users, which made "restart nothing before the converge" load-bearing for a second reason
+  it doesn't state. Closed: bootstrap creates it `0711`, held equal to the role's mode by
+  a static test.
 - **Bootstrap's `$(hostname)` fails on a host without `inetutils`** — cosmetic, the
-  generated key's comment is `cradle@` instead of `cradle@StorageBaby`.
-- **The converge-via-timer rule**, as decided above: the first converge after bootstrap
-  must be the timer's own tick, never a hand-run `cradle-deploy`, or `host_base`'s own
-  "Deploy timer state" task fires a second tick mid-run.
+  generated key's comment was `cradle@` instead of `cradle@StorageBaby`. Closed:
+  `$(uname -n)`.
+- **The converge-via-timer rule** stands as the operating rule — the first converge after
+  bootstrap is the timer's own tick, never a hand-run `cradle-deploy` — and the lock is
+  what now makes a breach of it safe rather than merely documented.
 - The known drift `paperless: touch /tmp/.hook-ran` ran as an after-change hook on the
   live host, same as it does in CI — recorded here, not a new finding.
