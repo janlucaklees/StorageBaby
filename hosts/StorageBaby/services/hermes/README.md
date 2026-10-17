@@ -24,7 +24,7 @@ Upstream's compose runs two containers, both with `network_mode: host`. Neither 
 
 `gateway run` is the command. Inside the image that process is a `sleep infinity` heartbeat
 and s6 supervises the real gateway, so a crash is restarted in seconds without the
-container exiting — and `storagebaby-svc restart hermes` still stops everything cleanly.
+container exiting — and `cradle-svc restart hermes` still stops everything cleanly.
 
 ## The dashboard's login is mandatory, and three secrets are what start it
 

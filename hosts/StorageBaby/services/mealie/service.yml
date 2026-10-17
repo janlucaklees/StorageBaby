@@ -7,7 +7,7 @@ volumes:
   # 911, not 1000: the image's own `useradd -u 911 -U -d /app -s /bin/bash abc`, and
   # `PUID`/`PGID` both default to 911, which this service leaves alone. Verify once on the
   # running container -- `podman exec mealie-app id -u` -- rather than trusting this
-  # comment; `docs/quickstart.md` § 5 has the host-uid arithmetic.
+  # comment; Cradle's `docs/quickstart.md` § 5 has the host-uid arithmetic.
   data: { class: pool, owner: 911 }
   database: { class: fast, owner: 70 }
   # No `owner`: written by the dump timer's `podman exec` with no `-u`, i.e. container

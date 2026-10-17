@@ -17,5 +17,5 @@ Type=oneshot
    meaningful at dump time in this format -- in an archive format they would be pg_restore
    flags and the dump would carry none of them. Restore with
    `psql --single-transaction --set ON_ERROR_STOP=on`, not `pg_restore`.
-   `ansible/roles/service/README.md`, "The dump form", has the reasoning. #}
+   Cradle's `ansible/roles/service/README.md`, "The dump form", has the reasoning. #}
 ExecStart=/usr/bin/podman exec openarchiver-database sh -c 'pg_dump --clean --if-exists --no-owner --username={{ service.config.database_user }} --dbname={{ service.config.database_name }} > /backups/{{ service.config.database_name }}.sql.tmp && mv /backups/{{ service.config.database_name }}.sql.tmp /backups/{{ service.config.database_name }}.sql'

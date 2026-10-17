@@ -3,7 +3,6 @@ mounts/
 **/volumes/
 .git/
 *.sops.yaml
-hosts/test-*/secrets/
 
 # npm owns these two and rewrites them on every install
 devtools/package.json

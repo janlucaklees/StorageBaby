@@ -11,6 +11,6 @@ Requisite=mealie-database.service
 Type=oneshot
 {# Plain SQL and uncompressed, and the reasoning is paperless's: the sidecar snapshots this
    file into a deduplicating repository, and a compressed dump differs in every byte from
-   one night to the next. `ansible/roles/service/README.md`, "The dump form". Restore with
+   one night to the next. Cradle's `ansible/roles/service/README.md`, "The dump form". Restore with
    `psql --single-transaction --set ON_ERROR_STOP=on`, not `pg_restore`. #}
 ExecStart=/usr/bin/podman exec mealie-database sh -c 'pg_dump --clean --if-exists --no-owner --username={{ service.config.database_user }} --dbname={{ service.config.database_name }} > /backups/{{ service.config.database_name }}.sql.tmp && mv /backups/{{ service.config.database_name }}.sql.tmp /backups/{{ service.config.database_name }}.sql'

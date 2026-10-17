@@ -69,7 +69,7 @@ the TLS it serves itself — and that is what the per-entry `scheme` and
 Nothing in `quadlet/` writes these lines; the `service` role does, into a Quadlet
 drop-in on the pod, for **every** route name placed on the host — so this pod gets
 `kopia.<domain>`, `nextcloud.<domain>` and `collabora.<domain>` along with everything
-else the host serves. `ansible/roles/service/README.md`, "Reaching another service
+else the host serves. Cradle's `ansible/roles/service/README.md`, "Reaching another service
 through Traefik", has the mechanism.
 
 Nextcloud is why that became the role's job. Collabora is a two-way server-to-server
@@ -94,7 +94,7 @@ inside a container to the host's own LAN address is refused.
 
 ## `config/`
 
-Three files, copied to `/etc/storagebaby/nextcloud/` by the role and mounted
+Three files, copied to `/etc/cradle/nextcloud/` by the role and mounted
 read-only where the compose stack mounted them:
 
 | File          | Mounted at                              | In    |
@@ -444,7 +444,7 @@ the sidecar to pick up — `mv` within one volume is atomic.
 It is **plain SQL and uncompressed**, which is the form all four of the platform's dump
 timers use: the sidecar snapshots this file into a deduplicating repository, and a
 compressed dump differs in every byte from one night to the next so none of it dedups
-against yesterday's. `ansible/roles/service/README.md`, "The dump form", has the whole
+against yesterday's. Cradle's `ansible/roles/service/README.md`, "The dump form", has the whole
 argument — including why `--clean --if-exists --no-owner` sit on the dump here and would
 have to sit on the restore in any archive format.
 
@@ -473,7 +473,7 @@ carries on, leaving a half-restored database behind. The dump already carries
 so it does not insist on roles this cluster may not have.
 
 Restoring **into** the live database wants Nextcloud stopped first
-(`storagebaby-svc stop nextcloud`). The file itself is either
+(`cradle-svc stop nextcloud`). The file itself is either
 `/pool/apps/nextcloud/backups/nextcloud.sql` on the host or one
 restored out of a Kopia snapshot of the `backups` volume. What plain SQL costs is
 `pg_restore`'s selective and parallel restore; for a 100 MB dump on this host that is
@@ -566,7 +566,7 @@ backup:
 The role generates `nextcloud-backup.container` from this, mounts the three volumes
 read-only at `/data/<volume>`, connects to the Kopia server as
 `nextcloud@<host>` and leaves a scheduler running, so the snapshots happen at
-03:00 without a timer of their own. `ansible/roles/service/README.md` has the
+03:00 without a timer of their own. Cradle's `ansible/roles/service/README.md` has the
 sidecar's mechanics.
 
 `html` is the installation, `data` the user files, `backups` carries the nightly
@@ -629,7 +629,7 @@ pod:
 ```sh
 sed -i "s/'dbhost' => 'database'/'dbhost' => '127.0.0.1'/" \
 	/var/lib/storagebaby/fast/nextcloud/html/config/config.php
-storagebaby-svc restart nextcloud
+cradle-svc restart nextcloud
 ```
 
 Redis needs no such edit: the image's `redis.config.php` reads `REDIS_HOST` at
@@ -641,7 +641,7 @@ belong to `svc-nextcloud`'s podman, so they are reached through the role's helpe
 rather than root's own podman:
 
 ```sh
-storagebaby-svc ps nextcloud
+cradle-svc ps nextcloud
 /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
 	php occ status
 /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app \
@@ -673,11 +673,11 @@ as documents failing to open with a perfectly healthy coolwsd, which is check 3.
 **3. Open a document in Collabora, and watch the log while it opens.**
 
 ```sh
-storagebaby-svc logs nextcloud                               # the pod
+cradle-svc logs nextcloud                                    # the pod
 journalctl _SYSTEMD_USER_UNIT=nextcloud-collabora.service -f # coolwsd itself
 ```
 
-`storagebaby-svc logs nextcloud` resolves to the pod unit, which is the right place
+`cradle-svc logs nextcloud` resolves to the pod unit, which is the right place
 to see the pod come and go; the jail errors below are coolwsd's own, so the second
 line is the one to have open while the document loads. (`journalctl` has no
 `--user -M` form, which is why it addresses the unit by name and runs as root.)

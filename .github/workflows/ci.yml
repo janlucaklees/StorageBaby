@@ -1,57 +1,14 @@
 name: CI
-
 on:
   push:
-    branches: [master, podman-platform]
+    branches: [master]
   pull_request:
-
-# Never two runs of the same ref at once: they would fight over the runner's
-# libvirt state. Queue instead of cancelling, so `stable` is not left behind.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: false
-
-# mise refuses a config it has not been told to trust, and it is a hard error rather than a
-# warning: without this every `mise run` below fails with "Config files in ... are not
-# trusted". A workstation answers `mise trust` once; a runner is a fresh checkout every time,
-# so the checkout directory is declared trusted here instead.
 env:
   MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
-
 jobs:
-  # Which suite a push needs. A pointer folder, the host's registry list, its secret
-  # files and the docs are checked by `static` and resolved on the real host; nothing in
-  # the Molecule scenario reads them (the test hosts symlink service *folders*, never a
-  # pointer). So a push that touches only those skips `integration`. The decision is a
-  # plain diff, not a workflow path filter: a second workflow with the complementary
-  # `paths` would also run on a mixed push and promote `stable` past an untested commit.
-  # Anything that is not a clean diff -- the first push of a branch, a pull request, a
-  # `before` the checkout does not hold -- counts as "everything changed".
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      integration: ${{ steps.detect.outputs.integration }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - id: detect
-        run: |
-          set -euo pipefail
-          integration=true
-          before='${{ github.event.before }}'
-          if [ "${{ github.event_name }}" = push ] && [ -n "$before" ] \
-             && [ "$before" != 0000000000000000000000000000000000000000 ] \
-             && git cat-file -e "$before^{commit}" 2>/dev/null; then
-            changed=$(git diff --name-only "$before" "${{ github.sha }}")
-            printf 'changed:\n%s\n' "$changed"
-            skippable='^(docs/|hosts/StorageBaby/host\.yml$|hosts/StorageBaby/secrets/|hosts/StorageBaby/services/[^/]+/source\.yml$)|\.md$'
-            if [ -n "$changed" ] && ! printf '%s\n' "$changed" | grep -Ev "$skippable" | grep -q .; then
-              integration=false
-            fi
-          fi
-          echo "integration=$integration" | tee -a "$GITHUB_OUTPUT"
-
   static:
     runs-on: ubuntu-latest
     steps:
@@ -59,102 +16,16 @@ jobs:
       - uses: jdx/mise-action@v2
       - run: mise run devtools
       - run: mise run fmt-check
-      - run: mise run test-static
-
-  integration:
-    runs-on: ubuntu-latest
-    needs: [changes, static]
-    if: needs.changes.outputs.integration == 'true'
-    # 90, because 45 was a fit nothing had measured. What is measured is the workstation at
-    # the scenario's own defaults (12288 MiB / 4 vCPU): 26 minutes for this scenario, 46 for
-    # `test-a`. A runner does the same work on 5120 MiB and 2 vCPU, after a second cold
-    # `mise run devtools` that shares no layer cache with the `static` job, and inside it two AUR
-    # compiles, the paperless pod's images, a real snapraid sync and scrub over four 4 GB
-    # disks and a 120 s poll for the FTP ingest. One harness flake in `create` -- 25 minutes
-    # waiting for SSH, recorded once -- would have eaten the old budget on its own. A
-    # timed-out job is fail-safe: `promote` is skipped and `stable` does not move, so the cost
-    # of this number being too small is a red build and a wrong diagnosis. The next push that
-    # runs green here is what measures the real figure; if it swaps instead, the lever is
-    # MOLECULE_VM_MEMORY_MIB and not this line.
-    timeout-minutes: 90
-    # A GitHub-hosted runner has ~7 GB of RAM, less than the 12288 MiB the scenario
-    # asks for locally. The scenario reads all three from the environment and falls
-    # back to the local sizes and to `test-a` when they are unset.
-    env:
-      MOLECULE_VM_MEMORY_MIB: '5120'
-      MOLECULE_VM_VCPUS: '2'
-      # `test-a` places every service and needs a 12 GiB VM; `test-ci` is the subset
-      # that still exercises every mechanism once and fits the runner.
-      MOLECULE_HOST: test-ci
-    steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
-      # Test hosts are KVM VMs driven through the runner's libvirt socket, which
-      # the devtools container mounts. GitHub-hosted Ubuntu runners expose /dev/kvm.
-      - name: Install libvirt and KVM
-        run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y qemu-kvm libvirt-daemon-system dnsmasq-base
-          # The runner also runs Docker, whose nftables rules drop the VM network's
-          # traffic unless libvirt uses the iptables backend.
-          echo 'firewall_backend = "iptables"' | sudo tee -a /etc/libvirt/network.conf
-          sudo systemctl start libvirtd
-          for i in $(seq 1 30); do [ -S /var/run/libvirt/libvirt-sock ] && break; sleep 1; done
-          sudo virsh net-start default || true
-          sudo chmod 666 /dev/kvm
-      # The stock cloud image and the pre-upgraded one the VMs overlay
-      # (tests/integration/molecule/test-ci/tasks/base-image-stage.yml). Restore and save
-      # as two explicit steps rather than `actions/cache`, whose single step saves only
-      # when the job succeeds -- and the job that times out is the one that most needs
-      # its image kept for the next run. Keyed on the ISO week so the weekly rebuild
-      # happens once per key; the prefix fallback hands a new week last week's images,
-      # which the seven-day rule then rebuilds from the cached stock image instead of
-      # from the network. The directory is made runner-owned first so the restore can
-      # write into it; the devtools container runs as root and leaves world-readable
-      # files, which is what the save needs.
-      - name: Images directory, writable for the cache
-        run: sudo install -d -m 0755 -o "$USER" -g "$USER" /var/lib/libvirt/images/storagebaby
-      - id: week
-        run: echo "week=$(date +%G-W%V)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@v4
-        id: images
-        with:
-          path: /var/lib/libvirt/images/storagebaby/arch-cloudimg*.qcow2
-          key: base-images-${{ steps.week.outputs.week }}-${{ hashFiles('tests/integration/molecule/test-ci/tasks/base-image-stage.yml', 'tests/integration/molecule/templates/base-image-user-data.j2') }}
-          restore-keys: base-images-
-      - run: mise run devtools
-      - run: mise run test-integration
-      - uses: actions/cache/save@v4
-        if: always() && steps.images.outputs.cache-hit != 'true'
-        with:
-          path: /var/lib/libvirt/images/storagebaby/arch-cloudimg*.qcow2
-          key: base-images-${{ steps.week.outputs.week }}-${{ hashFiles('tests/integration/molecule/test-ci/tasks/base-image-stage.yml', 'tests/integration/molecule/templates/base-image-user-data.j2') }}
-
   promote:
     runs-on: ubuntu-latest
-    # Spelled out in full, because a job whose `needs` was skipped is itself skipped
-    # unless its `if` says otherwise -- and the one thing this job must never do is move
-    # `stable` past a red or cancelled run. Two ways in: both suites green, or the
-    # `changes` job said integration was not needed and it really was skipped while
-    # static passed. A failed `static` skips `integration`, and that pair matches
-    # neither branch.
-    needs: [changes, static, integration]
-    if: >-
-      !cancelled()
-      && github.ref == 'refs/heads/master' && github.event_name == 'push'
-      && (
-        (needs.static.result == 'success' && needs.integration.result == 'success')
-        || (needs.changes.outputs.integration == 'false'
-            && needs.static.result == 'success'
-            && needs.integration.result == 'skipped')
-      )
+    needs: [static]
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      # Hosts track `stable`, so only a commit that passed both jobs can land there.
-      - name: Fast-forward stable to the tested commit
-        run: git push origin HEAD:refs/heads/stable
+      # The host tracks `stable`. Formatting is the whole gate here: a placement mistake is
+      # refused by Cradle at converge, on the host, loudly -- not by a pipeline.
+      - run: git push origin HEAD:refs/heads/stable

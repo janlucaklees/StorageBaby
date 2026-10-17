@@ -161,7 +161,7 @@ hidden-version window at Backblaze**, instead of none, is the other lever — a
 bucket setting, not a change to this script — and stays available if the
 trade is ever revisited.
 
-Recorded in `docs/ownership.md` § 7.
+Recorded in Cradle's `docs/ownership.md` § 7.
 
 **The number to watch is Class C list transactions, not storage.** Uploads are
 free on ingress, and the push itself is usually small — a listing plus
@@ -182,7 +182,7 @@ Exec={{ config_dir }}/start.sh
 
 Both lines are needed: the image's own entrypoint is `/bin/kopia`, so pointing `Exec=`
 at the script alone would have kopia try to run it as a subcommand. The script is
-deployed with the rest of `config/` to `/etc/storagebaby/kopia/` and bind-mounted into
+deployed with the rest of `config/` to `/etc/cradle/kopia/` and bind-mounted into
 the container at the same path, read-only — so editing it in git is all it takes to
 change how the container starts, and the role's config copy restarts the unit.
 

@@ -17,5 +17,5 @@ Type=oneshot
    are meaningful at dump time in this format and would be pg_restore flags in any
    other. Uncompressed on purpose: a gzipped dump differs in every byte from one night
    to the next and dedups against nothing, which is the whole reason the app's own
-   backup job is excluded from `upload`. See `ansible/roles/service/README.md`. #}
+   backup job is excluded from `upload`. See Cradle's `ansible/roles/service/README.md`. #}
 ExecStart=/usr/bin/podman exec immich-database sh -c 'pg_dump --clean --if-exists --no-owner --username={{ service.config.database_user }} --dbname={{ service.config.database_name }} > /backups/{{ service.config.database_name }}.sql.tmp && mv /backups/{{ service.config.database_name }}.sql.tmp /backups/{{ service.config.database_name }}.sql'
