@@ -3,7 +3,7 @@
 Rootless Traefik v3 on the host network under `svc-traefik`. It is the only
 process on 80/443. Every other service binds `127.0.0.1:<port>` and gets a
 route file rendered by the `service` role into
-`/etc/storagebaby/traefik/dynamic.d/<name>-<domain>.yml` from its `service.yml`
+`dynamic.d/<name>-<domain>.yml` under this service's config directory, from its `service.yml`
 — one per entry of `routes`, or one for the `domain` + `port` shorthand, each
 with its own router and service named `<name>-<domain>`.
 
@@ -107,8 +107,8 @@ certificate for everything. Not the one it invents, though: left to itself Traef
 generates a **fresh** self-signed certificate on every start, and a Kopia backup
 sidecar pins the fingerprint it saw when it connected — so one Traefik restart would
 lock it out of the repository. So `host_base` generates one self-signed certificate
-into `/etc/storagebaby/traefik/certs` (once, ten years, `CN=<domain>` with a wildcard
-SAN), the unit mounts that directory read-only at `/etc/traefik/certs`, and a
+into `certs/` under this service's config directory (once, ten years, `CN=<domain>` with
+a wildcard SAN), the unit mounts that directory read-only at `/etc/traefik/certs`, and a
 `00-default-certificate.yml` in `dynamic.d` installs it through `tls.stores.default`.
 Stable across restarts is the whole point, and
 `tests/.../test_host_base.py::test_traefik_serves_the_default_certificate_across_a_restart`

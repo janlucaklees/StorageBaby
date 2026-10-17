@@ -49,13 +49,15 @@ Secret=dashboard_htpasswd
 HealthCmd=wget --spider -q http://127.0.0.1:{{ service.port }}/ping || exit 1
 HealthOnFailure=kill
 Volume={{ volumes.letsencrypt }}:/letsencrypt
-Volume=/etc/storagebaby/traefik/dynamic.d:/etc/traefik/dynamic.d:ro
+{# The directory is the platform's, handed down as `config_dir` -- a service folder
+   never names the engine's path (`docs/ownership.md` § 1.1). #}
+Volume={{ config_dir }}/dynamic.d:/etc/traefik/dynamic.d:ro
 {# Only where there is no ACME: `host_base` makes one stable self-signed default
    certificate there and points `tls.stores.default` at these paths, so Traefik stops
    inventing a new one on every start. On an ACME host the directory does not exist,
    and a bind mount of a missing path is one rootless podman cannot create. #}
 {% if not (acme | bool) %}
-Volume=/etc/storagebaby/traefik/certs:/etc/traefik/certs:ro
+Volume={{ config_dir }}/certs:/etc/traefik/certs:ro
 {% endif %}
 
 [Service]
