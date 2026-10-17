@@ -1,6 +1,6 @@
 # Cradle: the split
 
-Status: design, approved in conversation 2026-10-16
+Status: stage 1 implemented 2026-10-17; stages 2–4 open
 Date: 2026-10-16
 Builds on: `docs/ownership.md` (the authority for every decision here), `docs/architecture.md` (the platform as it is), `2026-10-02-external-services-design.md` (the pointer shape this design generalises)
 
@@ -162,12 +162,16 @@ old names.
 
 Two moves cannot wait for Ansible, because the tick needs the age key and the deploy
 config before the playbook runs: `/etc/storagebaby` → `/etc/cradle`, and
-`/var/lib/storagebaby/{sources,deploy.state}` → `/var/lib/cradle/` with
+`/var/lib/storagebaby/sources` → `/var/lib/cradle/sources`, with
 `/var/lib/storagebaby/repo` (this repository's checkout) becoming `/var/lib/cradle/host`
-and Cradle's own checkout appearing beside it as `/var/lib/cradle/cradle`. **Bootstrap does
-those**, as its one adoption step: run on a host that has `/etc/storagebaby` and no
-`/etc/cradle`, it moves the two trees before writing the new deploy config and disables
-the old timer. On a fresh host the step is a no-op.
+and Cradle's own checkout appearing beside it as `/var/lib/cradle/cradle`.
+`/var/lib/storagebaby/deploy.state` is **deleted**, not moved — this sentence had it
+moving beside `sources`, which was wrong; the code was right at cutover, and deleting it
+is what makes the first Cradle tick find no prior state and converge unconditionally.
+**Bootstrap does those**, as its one adoption step: run on a host that has
+`/etc/storagebaby` and no `/etc/cradle`, it moves the trees, deletes the old deploy
+state, writes the new deploy config and disables the old timer. On a fresh host the step
+is a no-op.
 
 ## 6. Bootstrap
 
@@ -228,6 +232,16 @@ The stage 1 rollout is one runbook, written with the plan:
 4. Verify: every service answers, `cradle-svc ps <name>` for each, the nightly maintenance
    unit still points at `/opt/cradle/maintenance`, the old names are gone from the host.
 
+**What happened, 2026-10-17:** bootstrap ran `--local` (step 2 above did not start the
+timer itself), and the converge that mattered — one `ansible-playbook` run, not two — was
+carried by `cradle-deploy.timer`'s own first tick, started by the operator at 16:59:23
+CEST, after a concurrency hazard between a hand-run converge and that same tick was found
+and ruled on. The tick converged `changed=88 failed=0`, the next tick five minutes later
+was a no-op, and the StorageBaby split merge's own converge, picked up by the host about
+sixteen minutes after the merge, was `changed=0` — the render-parity bullet below,
+proven on the live host, not only in `render_only`. `docs/runbooks/2026-10-17-cradle-cutover.md` is the full record: every
+`--check` and converge recap, the blocker and the ruling, and the verification list.
+
 ## 10. Acceptance
 
 - **Render parity.** `render_only` output for `hosts/StorageBaby`, produced by this
@@ -244,3 +258,22 @@ The stage 1 rollout is one runbook, written with the plan:
 - Whether Cradle's fixture host repository places all of test-a or trims it: trimming is
   stage 4's job, but a service that costs nothing to drop may go earlier.
 - The exact argument syntax of `bootstrap.sh`.
+
+Surfaced by the cutover, 2026-10-17:
+
+- **No `flock` in `cradle-deploy`.** A hand-run tick (or a hand-run `--check`) can race
+  the timer's own tick — the same tree is fetched and converged from twice at once, and
+  `sync_checkout`'s `git reset --hard` + `git clean -fdx` on one run can land mid-way
+  through the other run's `ansible-playbook`. This cutover's converge took 11 min 19 s
+  against the timer's 5 min interval, so the margin an overlap needs is thin by
+  construction even between two ordinary ticks.
+- **Bootstrap leaves `/etc/cradle` at `0700`** until the first converge sets it to
+  `0711`; between adoption and that converge the platform root is not traversable by the
+  `svc-*` users.
+- **Bootstrap's `$(hostname)` fails on a host without `inetutils`** — cosmetic, the
+  generated key's comment is `cradle@` instead of `cradle@<host>`.
+- **The converge-via-timer rule.** The first converge after bootstrap must be the
+  timer's own tick, never a hand-run `cradle-deploy` — `host_base`'s own "Deploy timer
+  state" task starts the timer as part of that same converge, and a hand-run converge
+  started before the timer is enabled leaves that task to enable and start it mid-run,
+  firing a second, concurrent tick.
