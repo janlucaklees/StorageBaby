@@ -90,7 +90,42 @@ run = "docker run --rm -t $DEVTOOLS_OPTS $DEVTOOLS_IMAGE pytest tests/static -v"
 
 [tasks.test-integration]
 description = "The Molecule scenario end to end in a KVM VM (needs libvirt + KVM)"
-run = 'docker run --rm -t $DEVTOOLS_OPTS_VM $DEVTOOLS_IMAGE sh -c "cd tests/integration && molecule test -s $SCENARIO"'
+# Refuse to start while another test VM is up. `molecule test` begins with `destroy`,
+# which destroys *this* run's host and nothing else -- so a VM left behind by a run for
+# the other host survives it and the two then compete for the workstation's memory. On
+# 2026-10-16 that is what happened: test-a was up, a MOLECULE_HOST=test-ci run started a
+# second VM beside it, and together with a browser and a pile of agents they overcommitted
+# 60 GB of RAM and all 16 GB of swap. The kernel OOM-killed a process inside the
+# compositor's cgroup and the whole Hyprland session was torn down with it.
+#
+# Only on this task, which always creates a VM. `mise run molecule converge` is the
+# iterate loop and *wants* the VM it finds; molecule-login, molecule-exec and test-clean
+# need a running one to talk to.
+#
+# `pgrep` and not `virsh`: the names are on the qemu command line already, so the check
+# needs nothing installed on the workstation and nothing mounted into the container. It
+# matches the domains this repository creates -- `test-*` is every test host (the VM's
+# name *is* the host folder under `hosts/`, see tests/integration/molecule/test-ci/molecule.yml)
+# plus the base-image builder -- and leaves any unrelated VM alone. Matching by prefix is
+# also what keeps MOLECULE_HOST's default out of this file; it lives in molecule.yml --
+# at the cost of depending on the convention rather than on a declaration, so a test host
+# that is not named `test-*` needs this pattern widened or the guard stops seeing it.
+#
+# `-af` and not `-a`: a process name is truncated to 15 characters in /proc/<pid>/comm,
+# which pgrep matches by default, so `qemu-system-x86_64` never matches without `-f`.
+run = [
+	'''
+	vms=$(pgrep -af qemu-system-x86_64 2>/dev/null \
+		| grep -oE 'guest=(test-[a-z0-9-]+|storagebaby-base-builder)' \
+		| cut -d= -f2 | sort -u | tr '\n' ' ')
+	if [ -n "$vms" ]; then
+		echo "mise: a test VM is already running: $vms" >&2
+		echo "mise: one Molecule run at a time -- 'mise run test-clean' frees it." >&2
+		exit 1
+	fi
+	''',
+	'docker run --rm -t $DEVTOOLS_OPTS_VM $DEVTOOLS_IMAGE sh -c "cd tests/integration && molecule test -s $SCENARIO"'
+]
 
 [tasks.molecule]
 description = "One Molecule step in that scenario: mise run molecule converge"
