@@ -1,5 +1,9 @@
 # Cutover runbook: kopia's repository moves onto the pool
 
+_Historic: written under the pre-Cradle engine that still lived here. Its command and
+path names were renamed to Cradle's with the split, and its links to `docs/ownership.md`,
+`docs/quickstart.md` and `ansible/roles/...` resolve in Cradle now._
+
 The change in `docs/superpowers/specs/2026-10-14-kopia-local-repository-design.md` is
 inert until an operator runs this. The repository is new, so this is a clean start, not
 a migration — but one step below cannot move, and reordering it makes the whole change

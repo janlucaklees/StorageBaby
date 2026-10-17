@@ -295,12 +295,9 @@ and the rest of its § 7 is about the engine, which is no longer this repository
 
 ## Operator steps before and right after the first storagebaby deploy
 
-_Historic. This section records the first storagebaby deploy of 2026-09/10, carried out
-under the pre-Cradle engine that still lived in this repository, and is kept as a record.
-Its command and path names were renamed with the split — `cradle-svc`, `cradle-deploy`,
-`/etc/cradle`, `/opt/cradle`, `/var/lib/cradle` — and at the time they read `storagebaby-*`,
-`/etc/storagebaby` and `/var/lib/storagebaby`; the `ansible-playbook` invocations ran out of this repository's own
-`ansible/`, which is Cradle's now._
+_Historic: the first storagebaby deploy of 2026-09/10, under the pre-Cradle engine that
+still lived here, kept as a record. Its command and path names were renamed to Cradle's
+with the split, and the `ansible/` it invokes is Cradle's now._
 
 Everything in this section is a secret, a piece of data, a permission or a check — the
 things that cannot live in git or in a role. Steps 1–8 have to be done **before**

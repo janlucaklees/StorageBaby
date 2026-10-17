@@ -67,7 +67,7 @@ export AWS_SECRET_ACCESS_KEY
 #   ordinary garbage collection -- is still unwritten. A hidden-version window at
 #   Backblaze, instead of none, is a bucket setting rather than a change here, and
 #   stays available if this trade is revisited. See the README, "The off-site
-#   replica", and Cradle's docs/ownership.md section 7.
+#   replica", and docs/ownership.md section 7.
 # --parallel: the flag defaults to 1, which would make the first ~500 GB push
 #   take days.
 # --must-exist: off for the very first sync, because the destination has no

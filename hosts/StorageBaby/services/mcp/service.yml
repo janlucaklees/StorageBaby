@@ -16,7 +16,7 @@ volumes:
   # 1000: the hub image drops to the node base image's unprivileged `node` user.
   data: { class: fast, owner: 1000 }
 config:
-  # Copied verbatim into /etc/cradle/mcp/ -- `config/` is `ansible.builtin.copy`, not
+  # Copied verbatim into /etc/storagebaby/mcp/ -- `config/` is `ansible.builtin.copy`, not
   # a template, so these values are duplicated in config/hub/mcp.json by hand. They agree
   # because the three applications declare full `klees.io` names of their own, which are
   # the same on every host this service is placed on.

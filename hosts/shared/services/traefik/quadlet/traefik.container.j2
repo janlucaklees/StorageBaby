@@ -50,7 +50,7 @@ HealthCmd=wget --spider -q http://127.0.0.1:{{ service.port }}/ping || exit 1
 HealthOnFailure=kill
 Volume={{ volumes.letsencrypt }}:/letsencrypt
 {# The directory is the platform's, handed down as `config_dir` -- a service folder
-   never names the engine's path (Cradle's `docs/ownership.md` § 1.1). #}
+   never names the engine's path (`docs/ownership.md` § 1.1). #}
 Volume={{ config_dir }}/dynamic.d:/etc/traefik/dynamic.d:ro
 {# Only where there is no ACME: `host_base` makes one stable self-signed default
    certificate there and points `tls.stores.default` at these paths, so Traefik stops

@@ -10,5 +10,5 @@ PublishPort=127.0.0.1:2121:2121
 {# The passive range, one line for the whole of it, port-to-port because the server
    advertises the port it listens on. These coexist with Traefik's entrypoints on the
    same numbers only because those bind `tcp_bind_address` and not the wildcard --
-   Cradle's `ansible/roles/service/README.md`, "Why the entrypoint binds one address". #}
+   `ansible/roles/service/README.md`, "Why the entrypoint binds one address". #}
 PublishPort=127.0.0.1:21100-21109:21100-21109
