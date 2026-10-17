@@ -77,7 +77,7 @@ renders the same bytes and restarts nothing.
 
 The routers behind those entrypoints are dynamic and belong to the services: the
 `service` role renders `dynamic.d/<name>-tcp.yml`. See
-`ansible/roles/service/README.md`, "TCP ports".
+Cradle's `ansible/roles/service/README.md`, "TCP ports".
 
 ## Certificates
 
@@ -96,9 +96,9 @@ those. Both zones sit in the same Porkbun account, so the one resolver on this u
 serves both — a zone at a different provider would need a second resolver, and
 Traefik takes provider credentials from process environment variables rather than
 per resolver, so two accounts at the _same_ provider could not coexist in one
-Traefik. The list is also an allowlist: `tests/static/test_hosts.py` refuses a route
+Traefik. The list is also an allowlist: Cradle's `tests/static/test_hosts.py` refuses a route
 whose name is not under any declared zone, because the alternative is a certificate
-that silently does not cover it. `docs/ownership.md` § 4.2 has where this is going —
+that silently does not cover it. Cradle's `docs/ownership.md` § 4.2 has where this is going —
 the method and the credentials belong per domain, with the host, and today they are
 still one resolver and one `acme` boolean for the whole machine.
 
@@ -111,7 +111,7 @@ into `certs/` under this service's config directory (once, ten years, `CN=<domai
 a wildcard SAN), the unit mounts that directory read-only at `/etc/traefik/certs`, and a
 `00-default-certificate.yml` in `dynamic.d` installs it through `tls.stores.default`.
 Stable across restarts is the whole point, and
-`tests/.../test_host_base.py::test_traefik_serves_the_default_certificate_across_a_restart`
+Cradle's `tests/.../test_host_base.py::test_traefik_serves_the_default_certificate_across_a_restart`
 is what holds it: the fingerprint served on :443 is the file's, before and after a
 restart. On an `acme: true` host none of it exists — `host_base` removes the dynamic
 file and the directory, and the unit does not mount it.

@@ -38,7 +38,7 @@ here. All three have supported escape hatches, so none of this needs a patched c
   clients cannot reach MailFlow's ports except through it", because otherwise a client
   connecting directly chooses the address it is rate-limited and logged under. On this
   platform that condition is structural: the pod publishes `127.0.0.1:3003` and
-  `tests/static/test_quadlet_conventions.py` refuses any other bind.
+  Cradle's `tests/static/test_quadlet_conventions.py` refuses any other bind.
 
 Neither image ships `curl`, so upstream's own compose healthchecks cannot be working. Both
 health checks here use busybox `wget`, which is in `nginx:alpine` and `node:22-alpine` alike.

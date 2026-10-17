@@ -1,6 +1,6 @@
 # Cradle: the split
 
-Status: design, approved in conversation 2026-10-16
+Status: stage 1 implemented 2026-10-17; stages 2–4 open
 Date: 2026-10-16
 Builds on: `docs/ownership.md` (the authority for every decision here), `docs/architecture.md` (the platform as it is), `2026-10-02-external-services-design.md` (the pointer shape this design generalises)
 
@@ -162,12 +162,16 @@ old names.
 
 Two moves cannot wait for Ansible, because the tick needs the age key and the deploy
 config before the playbook runs: `/etc/storagebaby` → `/etc/cradle`, and
-`/var/lib/storagebaby/{sources,deploy.state}` → `/var/lib/cradle/` with
+`/var/lib/storagebaby/sources` → `/var/lib/cradle/sources`, with
 `/var/lib/storagebaby/repo` (this repository's checkout) becoming `/var/lib/cradle/host`
-and Cradle's own checkout appearing beside it as `/var/lib/cradle/cradle`. **Bootstrap does
-those**, as its one adoption step: run on a host that has `/etc/storagebaby` and no
-`/etc/cradle`, it moves the two trees before writing the new deploy config and disables
-the old timer. On a fresh host the step is a no-op.
+and Cradle's own checkout appearing beside it as `/var/lib/cradle/cradle`.
+`/var/lib/storagebaby/deploy.state` is **deleted**, not moved — this sentence had it
+moving beside `sources`, which was wrong; the code was right at cutover, and deleting it
+is what makes the first Cradle tick find no prior state and converge unconditionally.
+**Bootstrap does those**, as its one adoption step: run on a host that has
+`/etc/storagebaby` and no `/etc/cradle`, it moves the trees, deletes the old deploy
+state, writes the new deploy config and disables the old timer. On a fresh host the step
+is a no-op.
 
 ## 6. Bootstrap
 
@@ -228,6 +232,16 @@ The stage 1 rollout is one runbook, written with the plan:
 4. Verify: every service answers, `cradle-svc ps <name>` for each, the nightly maintenance
    unit still points at `/opt/cradle/maintenance`, the old names are gone from the host.
 
+**What happened, 2026-10-17:** bootstrap ran `--local` (step 2 above did not start the
+timer itself), and the converge that mattered — one `ansible-playbook` run, not two — was
+carried by `cradle-deploy.timer`'s own first tick, started by the operator at 16:59:23
+CEST, after a concurrency hazard between a hand-run converge and that same tick was found
+and ruled on. The tick converged `changed=88 failed=0`, the next tick five minutes later
+was a no-op, and the StorageBaby split merge's own converge, picked up by the host about
+sixteen minutes after the merge, was `changed=0` — the render-parity bullet below,
+proven on the live host, not only in `render_only`. `docs/runbooks/2026-10-17-cradle-cutover.md` is the full record: every
+`--check` and converge recap, the blocker and the ruling, and the verification list.
+
 ## 10. Acceptance
 
 - **Render parity.** `render_only` output for `hosts/StorageBaby`, produced by this
@@ -244,3 +258,28 @@ The stage 1 rollout is one runbook, written with the plan:
 - Whether Cradle's fixture host repository places all of test-a or trims it: trimming is
   stage 4's job, but a service that costs nothing to drop may go earlier.
 - The exact argument syntax of `bootstrap.sh`.
+
+Surfaced by the cutover, 2026-10-17:
+
+All four were closed by the review's fix wave, 2026-10-17:
+
+- **No mutual exclusion in `cradle-deploy`.** Two ticks of the _timer_ cannot overlap:
+  the unit is a oneshot, systemd merges a start job that elapses while it runs into the
+  running one, and that merged job re-elapses when it finishes — this cutover's 11 min 19 s
+  converge is exactly what the journal shows (the 17:04:23 timer merged, re-elapsed at
+  17:10:42). The real exposure is a **hand-run `cradle-deploy` or `--check` beside the
+  timer's tick**, and a hand converge on a `deploy_timer: true` host whose timer is still
+  disabled — the converge's own "Deploy timer state" task then starts it mid-run.
+  `sync_checkout`'s `git reset --hard` + `git clean -fdx` landing in the middle of the
+  other run's `ansible-playbook` is the damage. Closed by a `flock -w 900` on fd 9 against
+  `/run/cradle-deploy.lock` at the top of the script, before the first fetch: it **waits**
+  rather than fails, so a pre-flight blocks behind a tick and a tick fired mid-hand-converge
+  waits and afterwards no-ops on the state file. The `--check` path `exec`s
+  ansible-playbook, which inherits fd 9, so the lock covers the whole pre-flight.
+- **Bootstrap left `/etc/cradle` at `0700`** until the first converge set it to `0711`,
+  and `install -d -m` re-applied that on every re-run of a documented-idempotent script
+  with no converge behind it. Closed: bootstrap creates it `0711`, held equal to the
+  role's mode by `tests/static/test_bootstrap.py`.
+- **Bootstrap's `$(hostname)` fails on a host without `inetutils`** — closed, `$(uname -n)`.
+- **The converge-via-timer rule** stands as the operating rule, and the lock is what now
+  makes a breach of it safe rather than merely documented.

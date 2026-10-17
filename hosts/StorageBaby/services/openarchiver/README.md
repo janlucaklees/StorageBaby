@@ -47,7 +47,7 @@ the only place the two numbers meet.
 Nothing in `quadlet/` writes these lines; the `service` role does, into a Quadlet
 drop-in on the pod, for **every** route name placed on the host — `kopia.<domain>`,
 which the backup sidecar connects to, along with everything else the host serves.
-`ansible/roles/service/README.md`, "Reaching another service through Traefik", has the
+Cradle's `ansible/roles/service/README.md`, "Reaching another service through Traefik", has the
 mechanism.
 
 ## Secrets, and why three of them are shaped differently
@@ -176,7 +176,7 @@ Two of them have a **shape**, not just a length: `ENCRYPTION_KEY` and
 `STORAGE_ENCRYPTION_KEY` must be 64 hex characters (32 bytes) or the app's
 workers throw on startup and crash-loop while the pod itself looks healthy. That
 is why the integration scenario generates 64-character hex for every test secret
-rather than base64 — `tests/integration/molecule/test-ci/prepare.yml` says so at
+rather than base64 — Cradle's `tests/integration/molecule/test-ci/prepare.yml` says so at
 the generator.
 
 ## Health checks
@@ -245,7 +245,7 @@ It is **plain SQL and uncompressed**, the same form all four of the platform's d
 timers use: the sidecar snapshots it into a deduplicating repository, and a compressed
 dump differs in every byte from one night to the next so none of it dedups against
 yesterday's. Restore it with `psql --single-transaction --set ON_ERROR_STOP=on`, not
-`pg_restore`. `ansible/roles/service/README.md`, "The dump form", has the reasoning.
+`pg_restore`. Cradle's `ansible/roles/service/README.md`, "The dump form", has the reasoning.
 
 The unit is ordered `After=openarchiver-database.service` and, more importantly,
 `Requisite=` it. Without that, a dump attempted while the pod is down would fail
@@ -272,7 +272,7 @@ backup:
 The role generates `openarchiver-backup.container` from this, mounts the two
 volumes read-only at `/data/<volume>`, connects to the Kopia server as
 `openarchiver@<host>` and leaves a scheduler running, so the snapshots happen at
-03:00 without a timer of their own. `ansible/roles/service/README.md` has the
+03:00 without a timer of their own. Cradle's `ansible/roles/service/README.md` has the
 sidecar's mechanics, and the server lists
 
 ```

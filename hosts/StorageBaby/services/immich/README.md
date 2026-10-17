@@ -43,7 +43,7 @@ platform is for not doing.
 Nothing in `quadlet/` writes these lines; the `service` role does, into a Quadlet
 drop-in on the pod, for **every** route name placed on the host — `kopia.<domain>`,
 which the backup sidecar connects to, along with everything else the host serves.
-`ansible/roles/service/README.md`, "Reaching another service through Traefik", has the
+Cradle's `ansible/roles/service/README.md`, "Reaching another service through Traefik", has the
 mechanism.
 
 ## Secrets
@@ -173,7 +173,7 @@ The dump is `backups/postgres.sql` — named after the database, which this stac
 `postgres` and not `immich`; `config.database_name` in `service.yml` has the why.
 
 ```sh
-storagebaby-svc stop immich # the server; leave the database up
+cradle-svc stop immich # the server; leave the database up
 sed "s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g" \
 	/pool/apps/immich/backups/postgres.sql \
 	| /usr/local/sbin/podman-as svc-immich podman exec -i immich-database \
