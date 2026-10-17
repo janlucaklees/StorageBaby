@@ -1,8 +1,0 @@
-# A test-only pointer, placed on the test hosts and nowhere else. The repository is the
-# throwaway git HTTP server `prepare.yml` runs on the VM, and the token the host presents to
-# it is the `ext-echo` entry of the generated, gitignored hosts/<host>/secrets/sources.sops.yaml.
-# The tree it serves is tests/fixtures/sources/ext-echo. A real pointer names a GitHub
-# repository over https.
-repo: http://127.0.0.1:8418/ext-echo.git
-ref: main
-path: deploy/storagebaby

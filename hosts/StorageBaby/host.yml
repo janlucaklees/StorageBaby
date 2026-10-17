@@ -62,14 +62,14 @@ storage:
     # errors, every one of them a SQLite or appdata file under a running service. What
     # protects that tree instead is the kopia repository at
     # /pool/backups/devices/StorageBaby/kopia -- it sits outside /apps, so it stays in
-    # the array, and a static test holds it out of every anchored exclude here.
+    # the array, and it must stay out of every anchored exclude here.
     #
     # The design is 2026-10-14, section 3.1; this is its stage 2, carried out 2026-10-15
     # once `kopia snapshot list --all` showed immich@storagebaby:/data/upload complete.
     # What it costs: a dead disk now means restoring application state from last night's
     # snapshot rather than repairing it in place, and whatever under /apps has no
     # `backup:` block -- jellyfin's metadata above all -- is protected by nothing at all
-    # (docs/ownership.md section 7, item 14). Reverting is one line and one converge: the
+    # (Cradle's docs/ownership.md section 7, item 14). Reverting is one line and one converge: the
     # next sync re-parities /apps, long once.
     excludes:
       - '*.bak'
@@ -131,11 +131,11 @@ storage:
     smtp_user: storagebaby@klees.io
 # The kopia repository, deliberately outside `storage_roots.pool` (= /pool/apps):
 # /apps has left the snapraid array and the repository must not go with it -- it is
-# what protects that tree now, which is why a static test asserts this path is under
+# what protects that tree now, which is why this path must stay under
 # no anchored exclude. The path follows the operator's existing structure -- /pool/backups/devices/ already
 # holds CloudBaby, KAIZN-vps and StorageBaby. A filesystem path on this machine is
 # a host fact, which is why it is here and not in the service folder
-# (docs/ownership.md section 4).
+# (Cradle's docs/ownership.md section 4).
 volume_overrides:
   kopia/repo: /pool/backups/devices/StorageBaby/kopia
 # The LAN address, explicitly: this host also has a VPN interface and Docker's leftover

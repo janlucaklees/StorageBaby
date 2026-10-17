@@ -33,10 +33,10 @@ health check before running it — which is precisely "the migration has finishe
 Upstream's compose does it differently, and the difference is worth recording rather than
 rediscovering. It ships a separate `seeder` service that runs `migrate` then `db:seed` and
 exits, with web, worker and cron depending on it. **That shape cannot be expressed here:**
-`tests/static/test_quadlet_conventions.py` requires `Restart=always` and `HealthCmd=` of
+Cradle's `tests/static/test_quadlet_conventions.py` requires `Restart=always` and `HealthCmd=` of
 every container unit, so a process that runs once and exits cannot be one — and a plain
 `*.service.j2` beside it would be rendered but never started, because
-`ansible/roles/service/tasks/timers.yml` builds its enable list from `*.timer.j2` alone.
+Cradle's `ansible/roles/service/tasks/timers.yml` builds its enable list from `*.timer.j2` alone.
 It could be pulled in by `Requires=` from web, which works; the flag is simply less
 machinery for the same result, and it is the vendor's own code path rather than this
 repository's invention.
@@ -95,7 +95,7 @@ produce a different connection.
 
 `config/app.env` holds the environment all four processes share, read by the containers as
 `EnvironmentFile=` and by the seeder as `podman run --env-file`. It carries no secret by
-construction — it is world-readable under `/etc/storagebaby/openproject/`.
+construction — it is world-readable under `/etc/cradle/openproject/`.
 
 `config/` is copied verbatim and never templated, so `OPENPROJECT_HOST__NAME` is written out.
 That is correct rather than a compromise: this service declares a full `klees.io` name, so the

@@ -1,5 +1,9 @@
 # Cutover runbook: kopia's repository moves onto the pool
 
+_Historic: written under the pre-Cradle engine that still lived here. Its command and
+path names were renamed to Cradle's with the split, and its links to `docs/ownership.md`,
+`docs/quickstart.md` and `ansible/roles/...` resolve in Cradle now._
+
 The change in `docs/superpowers/specs/2026-10-14-kopia-local-repository-design.md` is
 inert until an operator runs this. The repository is new, so this is a clean start, not
 a migration — but one step below cannot move, and reordering it makes the whole change
@@ -71,8 +75,8 @@ below is kept as the record of what was decided on the night.
 - [ ] **4. Stop the deploy timer.** As root on the host:
 
   ```
-  doas systemctl stop storagebaby-deploy.timer
-  doas systemctl is-active storagebaby-deploy.service
+  doas systemctl stop cradle-deploy.timer
+  doas systemctl is-active cradle-deploy.service
   ```
 
   This is first, before the merge and long before the wipe. The timer fires every five
@@ -88,7 +92,7 @@ below is kept as the record of what was decided on the night.
   Read its answer: `inactive` means nothing is in flight, go on. `active` or
   `activating` means a converge is running — wait for it. `failed` means the last one
   failed and waiting will not help; read
-  `journalctl -u storagebaby-deploy.service` before going any further, because a host
+  `journalctl -u cradle-deploy.service` before going any further, because a host
   that cannot converge the old commit will not converge the new one either, and step 6
   would leave the nine services down with no converge to bring them back.
 
@@ -113,21 +117,21 @@ below is kept as the record of what was decided on the night.
       short step: from here until step 7 completes, the nine services are offline.
 
   Stop the server and every service that carries a backup sidecar.
-  `storagebaby-svc stop <name>` is pod-aware: for kopia itself, a single-container
+  `cradle-svc stop <name>` is pod-aware: for kopia itself, a single-container
   service with no `.pod` unit, it stops `kopia.service`; for each of the nine clients
   below it stops the whole pod.
 
   ```
-  storagebaby-svc stop kopia
-  storagebaby-svc stop hermes
-  storagebaby-svc stop immich
-  storagebaby-svc stop mailflow
-  storagebaby-svc stop mcp
-  storagebaby-svc stop mealie
-  storagebaby-svc stop nextcloud
-  storagebaby-svc stop openarchiver
-  storagebaby-svc stop openproject
-  storagebaby-svc stop paperless
+  cradle-svc stop kopia
+  cradle-svc stop hermes
+  cradle-svc stop immich
+  cradle-svc stop mailflow
+  cradle-svc stop mcp
+  cradle-svc stop mealie
+  cradle-svc stop nextcloud
+  cradle-svc stop openarchiver
+  cradle-svc stop openproject
+  cradle-svc stop paperless
   ```
 
   The window is the wipe plus one converge, because step 5 already absorbed the CI
@@ -180,8 +184,8 @@ failed`, which reads like a wrong password and is not one.
       wait:
 
   ```
-  doas systemctl start storagebaby-deploy.service
-  journalctl -u storagebaby-deploy.service -n 50
+  doas systemctl start cradle-deploy.service
+  journalctl -u cradle-deploy.service -n 50
   ```
 
   Safe to run by hand: it's the same plain `Type=oneshot` the timer fires, fetching
@@ -189,7 +193,7 @@ failed`, which reads like a wrong password and is not one.
   the last successful run — a no-op on an unchanged checkout, so running it more than
   once costs nothing (`docs/quickstart.md`, `docs/external-service.md`). It also puts
   the deploy timer back, so nothing from step 4 has to be undone by hand; confirm with
-  `systemctl is-active storagebaby-deploy.timer` once the run is through.
+  `systemctl is-active cradle-deploy.timer` once the run is through.
 
   The role creates `/pool/backups/devices/StorageBaby/kopia` — it does not exist yet —
   owned by `svc-kopia`. `start.sh` then finds `repository.config` absent, takes the

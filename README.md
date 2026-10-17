@@ -1,31 +1,41 @@
 # StorageBaby
 
-Git-driven configuration for my self-hosted services and the Arch hosts they
-run on. Design: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design.md`,
-whose §2, §4 and §9 describe the pre-Phase-4 world and carry a pointer to
-`2026-09-25-phase-4-storage-and-ftp-design.md`, which is where the storage half is.
+The host repository for StorageBaby, my self-hosted NAS and media server: what the machine
+is made of, and what runs on it. The engine that turns this repository into a running host
+is **Cradle** — `github.com/janlucaklees/cradle`, checked out at
+`/home/jlk/Projects/cradle` on the workstation. Cradle reads this repository and never
+writes to it, and nothing here converges anything.
+
+Design: `docs/superpowers/specs/2026-09-21-gitops-podman-platform-design.md`, whose §2, §4
+and §9 describe the pre-Phase-4 world and carry a pointer to
+`2026-09-25-phase-4-storage-and-ftp-design.md`, which is where the storage half is. The
+split that made this a host repository is
+`docs/superpowers/specs/2026-10-16-cradle-split-design.md`.
 
 ## Layout
 
-- `hosts/<host>/host.yml` — everything specific to one host: domain, storage
-  roots, and the `storage` block that declares the filesystems the host is made
-  of (disks, parity, the mergerfs pool, the snapraid array and its nightly run).
-- `hosts/<host>/services/<name>/` — a service placed on that host.
-- `hosts/shared/services/<name>/` — a service that runs on every host.
-- `hosts/<host>/services/<name>/source.yml` — a service whose definition lives in its own
-  repository: the pointer names the repository, the branch and the folder, and the host
-  fetches it on every deploy tick ("External services" below).
-- `ansible/` — the site playbook and roles that turn the above into a running host.
-- `tests/` — static checks and the Molecule integration scenario.
+- `hosts/StorageBaby/host.yml` — everything specific to this machine: domain, certificate
+  zones, storage roots, the registries it offers, and the `storage` block that declares the
+  filesystems it is made of (disks, parity, the mergerfs pool, the snapraid array and its
+  nightly run).
+- `hosts/StorageBaby/secrets/` — the host's own sops+age secrets: the maintenance mail
+  password, the registry logins, and the git token of every pointed repository.
+- `hosts/StorageBaby/services/<name>/` — a service placed on this host: the whole contract
+  in a folder, or a folder holding only `source.yml`, a pointer to the repository that
+  carries it.
+- `hosts/shared/services/<name>/` — a service placed on every host this repository
+  describes (traefik).
+- `.sops.yaml` — public keys only: the operator's workstation key and the host's.
+- `docs/runbooks/` — what was actually done on the machine; `docs/superpowers/` the specs
+  and plans behind it.
 
-Each service folder holds `service.yml` (routes, volumes, binds, secrets, shared
-host secrets, after-change hooks, backup policy), `quadlet/*.j2` (Podman Quadlet
-units, plus plain systemd `*.timer`/`*.service` units for scheduled commands),
-optional `config/`, and `secrets.sops.yaml`. Host-level secrets that belong to no
-service — the maintenance mail password — live in `hosts/<host>/secrets/<set>.sops.yaml`;
-services never share a secret file (kopia and each backup client each hold their own copy
-of the client password). `ansible/roles/service/README.md` is the full reference, and
-`docs/quickstart.md` is the short path from a clean workstation to a first converge.
+Each service folder holds `service.yml` (routes, volumes, binds, secrets, after-change
+hooks, backup policy), `quadlet/*.j2` (Podman Quadlet units, plus plain systemd
+`*.timer`/`*.service` units for scheduled commands), optional `config/`, and
+`secrets.sops.yaml`. The contract they answer to is Cradle's: its
+`ansible/roles/service/README.md` is the full reference, its `docs/quickstart.md` the short
+path from a clean workstation to a first converge, and its `adding-a-service` skill is the
+one to use when writing a folder.
 
 ## Services
 
@@ -49,18 +59,10 @@ Traefik.
 | immich (pod)                         | `immich.*` → 2283                          | server and machine learning `v3.2.0` pinned together, the vectorchord postgres pinned by digest beside them; redis auto | `upload` (minus its own `backups/`), `backups` (nightly dump) | 3     |
 | nextcloud (pod)                      | `nextcloud.*` → 8280, `collabora.*` → 9980 | app `33-fpm-alpine` pinned; nginx, postgres, redis and Collabora auto                                                   | `html`, `data`, `backups` (nightly dump)                      | 3     |
 
-Everything but traefik is placed on storagebaby; `test-a` places all eight folders by
-symlink, `test-ci` the smaller subset a GitHub runner can carry. Both test hosts also place
-three test-only fixtures, in no table here because they are not NAS services: `tcp-echo`,
-which echoes a payload back so the `tcp_ports` path can be measured end to end,
-`build-echo`, which runs the image its own `.build` unit produces so the host-build path
-stays covered, and `ext-echo`, a service that lives in its own repository
-(`tests/fixtures/sources/ext-echo`) and is placed by a pointer, fetched by the VM from a
-throwaway basic-auth git server and pulling its image from a throwaway private registry,
-so the external path and the private-image path both run for real. They are the only
-placements that are a real folder per host rather than a symlink — there is nothing to
-link to, and none belongs on the NAS — and a static test keeps each one's two copies
-byte-identical.
+Everything but traefik is placed on storagebaby. There are no test hosts in this
+repository: Cradle carries the fixture host repository its own tests render and converge,
+and the three test-only fixtures (`tcp-echo`, `build-echo` and the pointed `ext-echo`)
+went with it.
 
 Kopia is pinned on purpose — a kopia upgrade can carry a repository format upgrade,
 which is not a decision for a nightly timer. The pods pin on the same rule: whatever
@@ -80,17 +82,16 @@ dumps, never as data directories: a `<name>-dump.timer` writes a plain, uncompre
 what the sidecar carries. All four pods do it the same way and **no service's backup
 depends on the application being configured for it**. `backup.exclude` is how a service
 refuses to carry a backup the application writes for itself; Immich's admin-UI backup
-job is the one case. `ansible/roles/service/README.md` has both.
+job is the one case. Cradle's `ansible/roles/service/README.md` has both.
 
 No directory of the old repository is left. `samba/` and `snapraid/` were the last two
 at the root, and both are retired: the mounts, the pool, the array and the nightly
-maintenance run are the `storage` role below, and Samba is dropped entirely rather than
-migrated (a static test refuses either name coming back). A new service goes under
-`hosts/`. What still sits at the root of it is `compress-subfolders.sh`, a standalone
-helper nothing in this repository calls; the `pull`/`push` targets that used to rsync the
-live server's tree into the checkout, and the `.rsyncignore` beside them, are gone —
-keeping them would have meant one command away from re-importing the trees this phase
-retired.
+maintenance run are declared in `host.yml` and executed by Cradle's `storage` role, and
+Samba is dropped entirely rather than migrated. A new service goes under `hosts/`. What
+still sits at the root is `compress-subfolders.sh`, a standalone helper nothing in this
+repository calls; the `pull`/`push` targets that used to rsync the live server's tree into
+the checkout, and the `.rsyncignore` beside them, are gone — keeping them would have meant
+one command away from re-importing the trees this phase retired.
 
 ## Storage
 
@@ -150,7 +151,7 @@ storage:
   `-git` recipe versions itself at build time. Both are bumped like an image tag. The role
   never runs `pacman -Syu` and never reboots — upgrading a host is the operator's job.
 
-`ansible/roles/storage/README.md` is the full reference, including **"Adding a disk"**:
+Cradle's `ansible/roles/storage/README.md` is the full reference, including **"Adding a disk"**:
 partition and `mkfs.ext4` it by hand, read its `PARTUUID` off `lsblk`, add the entry to
 `host.yml`, push. The role does the rest, and the next nightly `snapraid sync` folds the
 disk into the array.
@@ -158,7 +159,7 @@ disk into the array.
 ### The nightly maintenance run
 
 `storage-maintenance.timer` fires at 02:00 (`Persistent=true`, so a host that was off
-catches up) and runs the orchestrator in `/opt/storagebaby/maintenance/`: snapraid status,
+catches up) and runs the orchestrator in `/opt/cradle/maintenance/`: snapraid status,
 `snapraid touch` + `sync`, a scrub of the new blocks and 8 % of anything older than 12
 days, then a final status, a SMART report and the failed units of every service manager.
 It does **not** balance the pool: `category.create=pfrd` already spreads new files over
@@ -177,7 +178,7 @@ runs and nothing would be sent; `storage-maintenance-failed.service`, hooked on
 
 Every parameter above is `storage.snapraid.maintenance` in `host.yml`, rendered into one
 file (`maintenance.env`) that every script sources — so a threshold is changed in git, and
-running `bash /opt/storagebaby/maintenance/sync.sh` by hand behaves exactly like the
+running `bash /opt/cradle/maintenance/sync.sh` by hand behaves exactly like the
 timer's run.
 
 ## Networking
@@ -211,7 +212,92 @@ loopback port. Three consequences worth knowing before the first converge:
   the LAN in the clear. That is the exposure, and it is bounded by it being one account
   that can only write into paperless's consume directory.
 
+## Operating and working on this repository
+
+On the host, service control is `cradle-svc`, run as root. Five actions, each taking a
+service name:
+
+    cradle-svc ps traefik
+    cradle-svc start traefik
+    cradle-svc stop traefik
+    cradle-svc restart traefik
+    cradle-svc logs nextcloud    # the pod; one part of it is
+                                 # systemctl --user -M svc-nextcloud@ status nextcloud-collabora.service
+
+It is a program Cradle's `host_base` role installs to `/usr/local/sbin`, not a task in this
+repository's runner: mise is a development tool and a host is not a checkout anybody runs
+tasks from. Nothing is ever changed on a host by hand — this is for looking, and for the
+occasional restart. The fix belongs in git.
+
+Here on the workstation `mise.toml` is the single entry point, and formatting and secrets
+are all it carries — the two formatting tasks, the two secret tasks, the image build, a
+shell in that image, and the hooks task:
+
+    mise run devtools        # build the prettier image (once)
+    mise run format          # prettier over the whole repo
+    mise run fmt-check       # check only, no writes
+    mise run sops hosts/StorageBaby/services/kopia/secrets.sops.yaml
+    mise run updatekeys      # re-encrypt every secret file for the recipients in .sops.yaml
+    mise run install-hooks   # once per clone: lefthook's formatting hook
+
+The two secret tasks run the distribution's own `sops` and `age` (pacman: `sops age`),
+because the key that opens the files lives on this machine; the others run in the devtools
+image, so nothing formatter-related is installed on the workstation besides lefthook. CI is
+those same formatting steps plus the promotion of `stable`, which the host tracks.
+
+Everything else is Cradle's README: bootstrapping a host, the deploy loop, the service
+contract, the secret model, the tests. A placement mistake here is caught by no pipeline —
+it is refused at converge on the host, loudly — and `mise run render` inside Cradle is how
+to see what this host would get before pushing.
+
+## Known drift
+
+What is known to be wrong or unprotected here. The first four are `docs/ownership.md` § 7
+items 13–16 as they stood before the Cradle split, verbatim; that document is Cradle's now
+and the rest of its § 7 is about the engine, which is no longer this repository's business.
+
+1. **`mergerfs.balance` moves live application files under running containers.**
+   Smaller than it was: the nightly balance was removed on 2026-10-15 (the pool's
+   `category.create=pfrd` spreads new files by free space on its own), so this is now
+   only true while an operator runs the command by hand — and then with every service
+   up, since no hook stops anything for it. The exposure is unchanged in kind and the
+   fix is unwritten: stop the pool-class services, or run it while they are down.
+2. **Jellyfin's metadata is protected by nothing.** Its 32 GB of artwork, metadata
+   and watch state sits in `/pool/apps` with no `backup:` block, and `/apps` left the
+   snapraid array with the 2026-10-14 rollout's stage 2 (committed 2026-10-15), so it
+   has neither parity nor a kopia snapshot behind it. Accepted as disposable — a
+   library re-scan rebuilds it; revisit when the mount structure is reworked.
+3. **The off-site replica now deletes.** `--delete` was added to `config/sync.sh` on
+   2026-10-16, the operator's own decision. Before that it was deliberately withheld:
+   without it Backblaze kept every blob the local repository's garbage collection had
+   dropped — a complete superset of the source that only grew, and was billed for the
+   difference — deferred rather than wrong, pending two things: a sanity guard here
+   that refuses to sync when the source looks unexpectedly small, and a short
+   hidden-version window at Backblaze instead of none. Neither was built. The operator
+   enabled the flag anyway, the trade stated plainly first: the bucket keeps only the
+   last version, so a local fault now reaches Backblaze within the hour with the
+   previous blob gone, and the replica defends against losing the machine rather than
+   against a mistake made on it. The sanity guard remains unwritten and is the one
+   thing that would narrow that window from this side; the hidden-version window is
+   still available as a bucket setting if the trade is revisited.
+4. **`mergerfs.balance` now has ~500 GB more to move.** The kopia repository lives on
+   the pool, so a balance shuffles it between branches and whatever it moves the next
+   `snapraid sync` has to re-parity. No longer nightly — the balance step is gone as of
+   2026-10-15 and the command is the operator's — so this is the cost of a decision he
+   takes, when he takes it, rather than an unattended one. Runtime and disk churn, not
+   correctness: the repository is append-and-delete and a moved blob is the same blob.
+5. **Paperless carries a hook that only a test ever wanted.**
+   `hosts/StorageBaby/services/paperless/service.yml` declares a
+   `touch /tmp/.hook-ran` after-change hook that existed only for
+   `test_deploy_runs_after_change_hooks`. That test is Cradle's now and runs against
+   Cradle's own fixtures, so the hook is dead weight on this host and runs on every
+   deploy that restarts the pod.
+
 ## Operator steps before and right after the first storagebaby deploy
+
+_Historic: the first storagebaby deploy of 2026-09/10, under the pre-Cradle engine that
+still lived here, kept as a record. Its command and path names were renamed to Cradle's
+with the split, and the `ansible/` it invokes is Cradle's now._
 
 Everything in this section is a secret, a piece of data, a permission or a check — the
 things that cannot live in git or in a role. Steps 1–8 have to be done **before**
@@ -277,7 +363,7 @@ secret sync reports changed and restarts the unit — but after any edit that di
 go through a deploy:
 
 ```bash
-storagebaby-svc restart kopia
+cradle-svc restart kopia
 ```
 
 before expecting a sidecar to connect. A sidecar whose account does not exist yet
@@ -421,7 +507,7 @@ doas pacman -Q mergerfs mergerfs-tools-git snapraid base-devel
 Stop the timer **before** the placing commit reaches `stable`:
 
 ```sh
-doas systemctl stop storagebaby-deploy.timer
+doas systemctl stop cradle-deploy.timer
 ```
 
 The checkout the deploy unit converges from does not exist yet — the deploy script clones it
@@ -429,11 +515,11 @@ on its first run, and there must be no first unattended run before this one. Mak
 hand, at the commit CI promoted, with the host's own deploy key:
 
 ```sh
-doas install -d -m 0755 /var/lib/storagebaby
-doas sh -c '. /etc/storagebaby/deploy.conf
-	export GIT_SSH_COMMAND="ssh -i /etc/storagebaby/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-	git clone --branch "$BRANCH" "$REPO_URL" /var/lib/storagebaby/repo'
-cd /var/lib/storagebaby/repo
+doas install -d -m 0755 /var/lib/cradle
+doas sh -c '. /etc/cradle/deploy.conf
+	export GIT_SSH_COMMAND="ssh -i /etc/cradle/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+	git clone --branch "$BRANCH" "$REPO_URL" /var/lib/cradle/host'
+cd /var/lib/cradle/host
 doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
 	--check --diff ansible/playbook.yml
 ```
@@ -459,7 +545,7 @@ fault:
 
 **If it aborts in `storage/tasks/mail.yml` with a sops error**, that is the one thing this
 run is a real test of: the host cannot decrypt what the push carries. Either
-`/etc/storagebaby/age.key` is missing (bootstrap writes it) or this host's age recipient is
+`/etc/cradle/age.key` is missing (bootstrap writes it) or this host's age recipient is
 not in `.sops.yaml` yet — "New host" below has that half. It surfaces in the storage role
 rather than in the first service, because storage runs first.
 
@@ -478,15 +564,15 @@ doas systemctl stop smb nmb
 #    A login shell sitting in /pool counts, and so does anything not in the list above.
 doas fuser -vm /pool      # has to come back empty
 # 4. converge for real, reading the same diff again
-cd /var/lib/storagebaby/repo
+cd /var/lib/cradle/host
 doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
 	--diff ansible/playbook.yml
 # 5. only once that ended failed=0
-doas systemctl start storagebaby-deploy.timer
+doas systemctl start cradle-deploy.timer
 ```
 
 **If the converge aborts, re-run that same command — or start the deploy unit.**
-`storagebaby-deploy` writes `/var/lib/storagebaby/deploy.state` only after a converge that
+`cradle-deploy` writes `/var/lib/cradle/deploy.state` only after a converge that
 ended `failed=0`, so a tick after a failed run finds the state stale and runs the playbook
 again. (`ansible-pull --only-if-changed`, which the unit used to run, compared the checkout
 before and after its own fetch and would have sat idle until the next push.)
@@ -503,18 +589,18 @@ Every container with a pool-class volume comes back reading an empty directory u
 restarted, so that converge is also run by hand:
 
 ```sh
-doas systemctl stop storagebaby-deploy.timer
-cd /var/lib/storagebaby/repo # for the ansible-playbook below
+doas systemctl stop cradle-deploy.timer
+cd /var/lib/cradle/host # for the ansible-playbook below
 for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
-	doas storagebaby-svc stop $s
+	doas cradle-svc stop $s
 done
 doas fuser -vm /pool
 doas ansible-playbook -i ansible/inventory/hosts.yml --limit "$(uname -n)" \
 	--diff ansible/playbook.yml
 for s in jellyfin kopia stirling-pdf paperless openarchiver immich nextcloud; do
-	doas storagebaby-svc start $s
+	doas cradle-svc start $s
 done
-doas systemctl start storagebaby-deploy.timer
+doas systemctl start cradle-deploy.timer
 ```
 
 Every service but `yuzukam` has a pool-class volume; Traefik's `letsencrypt` volume is
@@ -544,7 +630,7 @@ Verify first that the unit really is the new one:
 
 ```sh
 systemctl cat storage-maintenance.service | grep ExecStart
-# ExecStart=/opt/storagebaby/maintenance/storage-maintenance-unattended.sh
+# ExecStart=/opt/cradle/maintenance/storage-maintenance-unattended.sh
 ```
 
 Once it says that, the old wrapper and its checkout are dead weight and can go:
@@ -647,7 +733,7 @@ echo | openssl s_client -connect 127.0.0.1:443 -servername kopia.home.klees.io 2
 ```
 
 The issuer has to be Let's Encrypt, not `CN=TRAEFIK DEFAULT CERT`. If it is the
-default, read `storagebaby-svc logs traefik` for the Porkbun DNS challenge.
+default, read `cradle-svc logs traefik` for the Porkbun DNS challenge.
 
 **Did each sidecar connect, and did a snapshot land?** Per pod
 (`paperless`, `openarchiver`, `immich`, `nextcloud`):
@@ -691,7 +777,7 @@ Two more things are not steps but expectations about that first converge:
   skipped and every other service still converges. The failure is raised as the very
   last task of the play, naming the services and the containers — so the message is the
   list of what to look at, not the point where the converge stopped. Read those
-  services' journals from the top (`storagebaby-svc logs <name>`): on the first converge
+  services' journals from the top (`cradle-svc logs <name>`): on the first converge
   this is what a `database_password` that does not match the migrated cluster looks
   like. The next converge runs the skipped hooks, once the container is healthy.
 
@@ -772,7 +858,7 @@ file in it has not been ingested yet.
 
 1. Stop the old stack (`cd <old dir> && docker compose down`, or the old Quadlet
    unit for stirling-pdf) and stop the new unit if it already ran:
-   `storagebaby-svc stop <svc>`.
+   `cradle-svc stop <svc>`.
 2. Move each old tree onto its new path. Where both sides are on the same
    filesystem — pool to pool, or a Docker named volume under `/var/lib` to the
    `fast` root under `/var/lib` — `mv` is a rename, costs nothing and leaves no
@@ -827,7 +913,7 @@ Order on the real host: copy the data in, then deploy. A tree whose `owner` is d
 no longer costs the service a failed health wait — the adoption runs before the units
 are started. A tree the operator has to own by hand, because no `owner` is declared for
 it, still does: `podman unshare chown -R <uid>:<gid>` as the service user, then
-`doas storagebaby-svc restart <svc>`.
+`doas cradle-svc restart <svc>`.
 
 ### Databases: the directory or a dump, not both
 
@@ -875,199 +961,3 @@ Two service-specific notes:
   skips the connect whenever that file is present — which is the point, the
   connection is already made. To force a fresh connect from `service.yml` and the
   secrets instead, delete `repository.config` before starting.
-
-## External services
-
-A repository of your own can carry its whole service definition and be deployed by this
-platform. The repository holds the contract in a folder — `service.yml`, `quadlet/`,
-`config/`, `secrets.sops.yaml`, a README — exactly as a folder under `hosts/` would. This
-repository holds the pointer, and the host holds the credentials to reach the repository
-and its images:
-
-    hosts/StorageBaby/services/<name>/source.yml
-      repo: https://github.com/<you>/<repository>
-      ref: main
-      path: deploy/storagebaby
-    hosts/StorageBaby/secrets/sources.sops.yaml          # <name>: { token }   -- the host's git token for that repository
-    hosts/StorageBaby/secrets/registries.sops.yaml       # ghcr.io: { user, token }, for every registry host.yml offers
-
-Placement is still the folder. The deploy tick (`/usr/local/sbin/storagebaby-deploy`)
-fetches every pointed repository into `/var/lib/storagebaby/sources/<name>` beside the
-platform checkout and converges when any of them moved; the playbook treats the fetched
-folder like a service folder. Nothing external passes through this repository's CI — the
-external repository tests itself, and the host asserts two things at converge time: the
-fetched `service.yml` names the service its folder names, and no two services on the host
-claim one loopback port.
-
-The external repository's `secrets.sops.yaml` is encrypted to your operator key **and the
-host's age key** (the `&storagebaby` recipient in `.sops.yaml` here), so the external
-repository needs a `.sops.yaml` of its own listing both. `docs/external-service.md` is the
-page to read from that repository's side.
-
-Credentials are the host's, like storage classes and certifiable domains
-(`docs/ownership.md`). One fine-grained GitHub token per repository (Contents: read-only,
-only that repository) goes into `hosts/<host>/secrets/sources.sops.yaml` under the pointer's
-name, with `mise run sops`. The host presents it over HTTPS through `GIT_ASKPASS`; it is
-never written to disk in the clear. A public repository needs no entry. A private image
-needs `registries: [ghcr.io]` in the external `service.yml`, the same registry in the host's
-`registries` list in `host.yml`, and a login for it in
-`hosts/<host>/secrets/registries.sops.yaml`; the role writes the service user's `auth.json`
-from that before the pull, and refuses a service that names a registry the host does not
-offer. Check when you create the registry token whether a fine-grained token can read
-packages on GitHub as it is then; if not, it is a classic token with `read:packages`, which
-is account-wide — the one place where the per-repository isolation does not hold.
-
-Unplacing is deleting the pointer folder: the next tick removes the fetched checkout. The
-service's units stay, as for any unplaced service.
-
-## Secrets, in one minute
-
-- Secrets live in git, encrypted: `hosts/<host>/services/<svc>/secrets.sops.yaml` and
-  `hosts/<host>/secrets/<set>.sops.yaml`. Deploy turns them into `podman secret`s.
-- `.sops.yaml` lists **public** keys only: yours (`&jlk`, the workstation key) and one
-  per host (`&storagebaby`), each host in its own rule **and** the `hosts/shared/**`
-  rule. No private key is ever in the repo.
-- No secret is shared between services. Kopia keeps a `client_<service>` per backup
-  client in its own file, and each service keeps the same value as its own
-  `kopia_password`; redundant on purpose, so a service folder stands alone.
-- sops encrypts each value with a random data key (AES-256-GCM) and wraps that data key
-  once per listed public key. Any one listed private key opens the file.
-- The host decrypts with `/etc/storagebaby/age.key` (written by bootstrap). You decrypt
-  with `~/.config/sops/age/keys.txt`. Encrypting needs no private key; **editing and
-  adding a recipient do**, which is why your key exists. **Back it up**; without it,
-  secrets can only be edited on the host.
-- Edit a secret: `mise run sops <path>` (decrypts into nvim, re-encrypts on save; the
-  editor is fixed in `mise.toml` so a GUI editor returning early cannot lose the edit).
-- Add a host: put its public key into `.sops.yaml` (its own rule and `hosts/shared/**`),
-  then `mise run updatekeys`. Only the data key is re-wrapped; the values are untouched.
-- Replace your own key: `age-keygen >> ~/.config/sops/age/keys.txt`, swap your public key
-  in `.sops.yaml`, `mise run updatekeys` (the old identity still in `keys.txt` opens the
-  files), then delete the old identity from `keys.txt`.
-- The test VM never sees these files or keys; `prepare.yml` generates throwaway secrets.
-  The static tests only compare each file's recipient list against `.sops.yaml`.
-
-## New host
-
-Copy the script to the fresh Arch install and run it as root. Where it sits does not
-matter; it is a one-shot script that nothing reads afterwards:
-
-    scp bootstrap.sh root@<host>:/root/ && ssh root@<host> 'bash /root/bootstrap.sh --repo git@github.com:janlucaklees/StorageBaby.git'
-
-`--branch <name>` makes the host track another branch than `stable` (a rollout branch
-while testing); `--local` installs everything but leaves the deploy timer disabled, so
-nothing converges until you run `systemctl start storagebaby-deploy.service` yourself.
-It runs `pacman -Syu` once; reboot afterwards if the kernel changed.
-
-`stable` is created by CI on the first green push to master, so push and let CI
-run before bootstrapping the first host.
-
-Protect `stable` on GitHub: no direct pushes, no force pushes, no deletion — it
-is moved by CI alone. GitHub Actions must still be allowed to push to it: the
-`promote` job fast-forwards `stable` with the workflow token, so if "restrict
-who can push" is enabled, add the Actions actor to the allow list or promotion
-stops there.
-
-The host's hostname must equal its folder name under `hosts/` and its entry in
-`ansible/inventory/hosts.yml` **exactly, case included** (`StorageBaby`, not
-`storagebaby`): the deploy unit converges `--limit <hostname>`, Ansible host patterns
-are case-sensitive, and a mismatch converges nothing and fails loudly.
-
-Add the printed deploy key to the repository, then add the printed age recipient
-to `.sops.yaml` in two places: the host's own rule, and the `hosts/shared/**`
-rule — every host runs the shared services and has to decrypt their secrets.
-Then `mise run updatekeys` re-encrypts every tracked secret file for the new recipient
-(`mise run sops ...` opens one for editing); commit and push. The host
-pulls `stable` every 5 minutes.
-
-Until the host's age recipient is in `.sops.yaml` and `mise run updatekeys` has run
-on the secret files it needs, its first converge fails at secret decryption.
-That is expected: the host cannot read anything it was not encrypted to. It
-fails in the `storage` role's mail task rather than in the first service, because
-`storage` runs first and `hosts/<host>/secrets/mail.sops.yaml` is the first secret
-the play reads — and a missing `/etc/storagebaby/age.key` surfaces in the same
-place, which is why that assert names the key before it names `.sops.yaml`.
-
-## Operating a service
-
-Every service runs as its own lingering user `svc-<name>`, so its units belong
-to that user's systemd manager, not the system one. `storagebaby-svc` wraps that —
-run it on the host as root:
-
-    storagebaby-svc ps traefik
-    storagebaby-svc start traefik
-    storagebaby-svc stop traefik
-    storagebaby-svc restart traefik
-    storagebaby-svc logs traefik    # follows (-f); for a tail: journalctl _SYSTEMD_USER_UNIT=traefik.service -n 30
-
-It is a program on the host, `/usr/local/sbin/storagebaby-svc`, installed by the
-`host_base` role from `ansible/roles/host_base/files/storagebaby-svc` — deliberately not a
-task in this repository's runner. mise is a development tool and is not installed on a
-host, and a host is not a checkout anybody runs tasks from. Those five actions are all it
-does.
-
-For a pod service (`paperless`, `openarchiver`, `immich`, `nextcloud`) the name resolves
-to `<name>-pod.service` and for a single-container one to `<name>.service`; which of
-the two a service is cannot be read off its name, so the helper asks the service
-user's manager. Restarting the pod is the only restart its containers need — Quadlet
-binds them to it.
-
-It is a thin wrapper, so the raw forms still work:
-
-    systemctl --user -M svc-traefik@ status traefik.service
-    systemctl --user -M svc-traefik@ restart traefik.service
-
-`journalctl` has no `--user -M` equivalent, so read logs by unit name instead:
-
-    journalctl _SYSTEMD_USER_UNIT=traefik.service -f
-
-Nothing is ever changed on a host by hand — this is for looking, and for the
-occasional restart. The fix belongs in git.
-
-## Working on the repo
-
-`mise.toml` is the single entry point — there is no Makefile. `mise tasks` lists
-these with their arguments:
-
-    mise run devtools               # build the tooling image (once)
-    mise run format                 # prettier over the whole repo
-    mise run fmt-check              # check only, no writes
-    mise run test-static            # contract, secrets, render checks
-    mise run test-integration       # Molecule scenario test-ci in a KVM VM, converging hosts/test-a
-    MOLECULE_HOST=test-ci mise run test-integration   # same scenario, the smaller CI placement
-    mise run molecule converge      # a single Molecule step in that scenario
-    mise run molecule-login         # SSH into the running test VM
-    mise run molecule-exec 'podman ps -a'   # one command on it, no TTY needed
-    mise run test-clean             # destroy the VM and drop the Molecule cache
-    mise run test-base-image        # rebuild the pre-upgraded image the test VMs boot from
-    mise run sops hosts/shared/services/traefik/secrets.sops.yaml
-    mise run updatekeys             # re-encrypt every secret file for the recipients in .sops.yaml
-    mise run install-hooks          # once per clone: lefthook's formatting hook
-
-Arguments are positional rather than `NAME=value`, and a variable override is an
-environment assignment in front of the command — `MOLECULE_HOST=test-ci mise run
-test-integration`, not `make test-integration MOLECULE_HOST=test-ci`.
-`MOLECULE_HOST`, `MOLECULE_VM_MEMORY_MIB` and `MOLECULE_VM_VCPUS` can also be set
-in `.env` (see `.env.example`); their defaults live in the Molecule scenario.
-
-The test VMs boot from two cached files under `/var/lib/libvirt/images/storagebaby/`:
-the stock Arch cloud image (`arch-cloudimg.qcow2`, downloaded once and never
-revalidated) and the same image after one full `pacman -Syu`
-(`arch-cloudimg-prepared.qcow2`), which every VM overlays. `create` rebuilds the
-prepared one when it is older than a week, with a throwaway VM that upgrades, cleans
-cloud-init and the machine-id, and powers off — about two minutes, measured, so the one
-run a week that pays for it is slower by that much and nothing else
-(`tests/integration/molecule/test-ci/tasks/base-image-stage.yml`). The point is that
-bootstrap's own upgrade in `prepare` then finds the kernel current and the
-compare-and-reboot task after it skips — that reboot hung a CI job for 86 minutes on
-2026-10-07. CI caches both files per ISO week. `mise run test-clean` leaves them alone,
-like the stock image before them.
-
-mise, Docker and lefthook are all the workstation needs for everything but the
-integration tests and the secrets: mise comes from the distribution (pacman:
-`mise`), and `mise run sops` and `mise run updatekeys` run the
-distribution's own `sops` and `age` (pacman: `sops age`), because the key that opens
-the files lives on this machine. Those drive real KVM machines through the host's libvirt, so
-they additionally need `qemu-base libvirt dnsmasq iptables-nft`, `libvirtd`
-enabled, and libvirt's `default` network active. On a machine that also runs
-Docker, set `firewall_backend = "iptables"` in `/etc/libvirt/network.conf` —
-with the nftables backend Docker's rules drop the VM network's traffic.

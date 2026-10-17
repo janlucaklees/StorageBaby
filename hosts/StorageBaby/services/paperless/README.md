@@ -50,7 +50,7 @@ that would carry a data directory across a major, which is why it names `17`.
 Nothing in `quadlet/` writes these lines; the `service` role does, into a Quadlet
 drop-in on the pod, for **every** route name placed on the host — `kopia.<domain>`,
 which the backup sidecar connects to, along with everything else the host serves.
-`ansible/roles/service/README.md`, "Reaching another service through Traefik", has the
+Cradle's `ansible/roles/service/README.md`, "Reaching another service through Traefik", has the
 mechanism.
 
 ## Health checks
@@ -123,7 +123,7 @@ volumes:
 ```
 
 Traefik listens on `<tcp_bind_address>:21` and forwards to the pod's `2121`; the ten
-passive ports are forwarded port-to-port. `ansible/roles/service/README.md`, "TCP
+passive ports are forwarded port-to-port. Cradle's `ansible/roles/service/README.md`, "TCP
 ports", has the mechanism and the reason the entrypoints bind one concrete address
 rather than the wildcard.
 
@@ -173,7 +173,7 @@ The passive range is read out of `tcp_ports` in the template rather than written
 twice, so the ports pure-ftpd advertises and the ports Traefik forwards cannot
 drift. Each is forwarded to itself, which a passive range has no choice about.
 
-`tests/integration/molecule/test-ci/tests/test_ftp.py` measures all of this from the
+Cradle's `tests/integration/molecule/test-ci/tests/test_ftp.py` measures all of this from the
 VM with `curl --disable-epsv --no-ftp-skip-pasv-ip`: both flags are load-bearing,
 because curl prefers EPSV (whose `229` reply carries no address) and otherwise
 ignores the address in a `227` anyway — so without them the one thing that can be
@@ -280,7 +280,7 @@ half-written file for the sidecar to pick up — `mv` within one volume is atomi
 It is **plain SQL and uncompressed**, the same form all four of the platform's dump
 timers use: the sidecar snapshots it into a deduplicating repository, and a compressed
 dump differs in every byte from one night to the next so none of it dedups against
-yesterday's. `ansible/roles/service/README.md`, "The dump form", has the reasoning.
+yesterday's. Cradle's `ansible/roles/service/README.md`, "The dump form", has the reasoning.
 
 `Persistent=true` does **not** make the timer fire on the converge that enables it,
 which is the one thing it could have got wrong here: the pod has just started and the
@@ -316,7 +316,7 @@ all-or-nothing — without the pair `psql` reports each failed statement and car
 leaving a half-restored database. The dump itself carries `--clean --if-exists`, so it
 drops what is there before recreating it, and `--no-owner`, so it does not insist on
 roles this cluster may not have. Restore with paperless stopped
-(`storagebaby-svc stop paperless`). The file is
+(`cradle-svc stop paperless`). The file is
 either `/pool/apps/paperless/backups/paperless.sql` on the host or
 one restored out of a Kopia snapshot of the `backups` volume.
 
@@ -332,7 +332,7 @@ backup:
 The role generates `paperless-backup.container` from this, mounts the three
 volumes read-only at `/data/<volume>`, connects to the Kopia server as
 `paperless@<host>` and leaves a scheduler running, so the snapshots happen at
-03:00 without a timer of their own. `ansible/roles/service/README.md` has the
+03:00 without a timer of their own. Cradle's `ansible/roles/service/README.md` has the
 sidecar's mechanics.
 
 `data` and `media` are the archive itself; `backups` carries the nightly dump.
