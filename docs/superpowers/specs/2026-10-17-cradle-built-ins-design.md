@@ -1,6 +1,6 @@
 # Cradle: built-ins (stage 2 of the split)
 
-Status: design, approved in conversation 2026-10-17 (JLK's answers to the six questions below); implementation authorised to run without a chat gate
+Status: implemented in Cradle 2026-10-18 (stable 161e63d and the fix wave after it); StorageBaby PR #4 open, rollout pending with the operator; the two § 7 sentences about `volume_overrides` and the old podman secrets were corrected against the engine on 2026-10-18
 Date: 2026-10-17
 Builds on: `2026-10-16-cradle-split-design.md` (stage 1, implemented), `docs/ownership.md` in Cradle (§ 1 the rule, § 3 platform, § 5 administrator, § 6.1 backups)
 
@@ -148,7 +148,7 @@ from `hosts/StorageBaby/services/kopia/secrets.sops.yaml` and
 The StorageBaby change: delete `hosts/shared/` and `hosts/StorageBaby/services/kopia/`;
 add to `host.yml`
 `backup: { repository: /pool/backups/devices/StorageBaby/kopia, username: jlk, domain: kopia, replica: { s3_endpoint: s3.eu-central-003.backblazeb2.com, s3_bucket: GTMyXab9-jlkkb, must_exist: true } }`
-and drop `volume_overrides` and `service_config`; remove `kopia_password` from the
+and empty `volume_overrides` and `service_config` (both stay as `{}`: the host contract requires the keys); remove `kopia_password` from the
 `secrets:` list of every backed-up service's `service.yml`; drop the `hosts/shared` rule
 from `.sops.yaml`.
 
@@ -157,9 +157,9 @@ once each (same users, same volume paths, same data); every backed-up service's 
 gets a new generated password, so the role restarts those pods once (a secret changed);
 the kopia server registers the new passwords on its restart. Order of the first tick:
 `host_base` generates the passwords before any service is touched, traefik and kopia
-converge before the consumers. The old `client_*` and `kopia_password` podman secrets
-that nothing declares any more are left in place (the role does not prune podman
-secrets; drift item 6).
+converge before the consumers. The generated values land under the same podman
+secret names (`podman secret create --replace`), so nothing is orphaned and a revert
+re-syncs the sops values over them.
 
 Rollout steps: `cradle-deploy --check` first (expected: the two built-ins' units changed,
 the backup-clients files to be created, every backed-up pod's secret to change; no
