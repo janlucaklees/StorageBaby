@@ -43,7 +43,8 @@ throughout; nothing here is left to an unattended tick to discover.
       keys stay in the service `secrets.sops.yaml` files, ignored rather than refused, and
       come out the next time the operator edits one (spec § 10).
 - [ ] **The time is outside 01:30–04:00.** `storage-maintenance.timer` fires at 02:00 and
-      the four `*-dump.timer`s at 02:30; the window leaves both clear on either side.
+      the seven `*-dump.timer`s at 02:30 (immich, mailflow, mealie, nextcloud,
+      openarchiver, openproject, paperless); the window leaves both clear on either side.
 - [ ] **The hourly replica push is not running.**
       `systemctl --user -M svc-kopia@ list-timers` — `kopia-sync.timer` fires at
       `:00`-ish every hour; start inside the first half of an hour so a 10–15 minute
@@ -57,11 +58,15 @@ throughout; nothing here is left to an unattended tick to discover.
 
 ## The pre-flight
 
-`cradle-deploy --check` fetches everything, runs the playbook `--check --diff` and writes
-no state, and since stage 1's follow-up it takes `/run/cradle-deploy.lock` with
-`flock -w 900` — so a tick fired beside it waits rather than running a second playbook over
-the same checkout. That lock is why a hand-run **pre-flight** is safe; a hand-run
-**converge** on this host is still not (see "The converge").
+`cradle-deploy --check` fetches everything, runs the playbook `--check --diff`, and
+converges nothing: it writes no `/var/lib/cradle/deploy.state` and changes nothing the host
+runs. It is not inert on disk, though — it refreshes all three kinds of checkout the same
+way a converge does (`git fetch --prune`, `checkout --detach`, `reset --hard`,
+`clean -fdx`) and removes any `/var/lib/cradle/sources/<name>` no pointer names any more.
+Since stage 1's follow-up it takes `/run/cradle-deploy.lock` with `flock -w 900`, so a tick
+fired beside it waits rather than running a second playbook over the same checkout. That
+lock is why a hand-run **pre-flight** is safe; a hand-run **converge** on this host is
+still not (see "The converge").
 
 **The check has to be able to fail.** `cradle-deploy` reads the ref to converge out of
 `/etc/cradle/deploy.conf` — it has no `--host-ref` flag, `--check` is its only argument —
@@ -85,8 +90,9 @@ doas cradle-deploy --check 2>&1 | tee /root/stage2-check.log
 ```
 
 - [ ] Read the log against the two lists below. **Anything beyond them stops the rollout**:
-      leave the timer stopped, revert the merge (CI moves `stable` back), and nothing on the
-      host has changed, because a `--check` writes no state and no file.
+      leave the timer stopped and revert the merge (CI moves `stable` back). Nothing the
+      host runs has changed — the check wrote no `deploy.state` and no unit, secret or
+      directory — so the revert's own tick is the whole of the undo.
 
 The alternative, if the merge should not happen before the check: point `HOST_REF` in
 `/etc/cradle/deploy.conf` at the branch (`HOST_REF=cradle-built-ins`), run the check, and
@@ -107,28 +113,27 @@ worth it unless the merge itself is the thing in doubt.
       is byte-identical: `KOPIA_SERVER_USERNAME=jlk`, `KOPIA_PUBLIC_HOST=kopia.home.klees.io`,
       `KOPIA_SYNC=s3`, the endpoint, the bucket, `KOPIA_CLIENT_HOSTS=storagebaby`, and the
       nine `Secret=client_*` lines, sorted.
-- [ ] `kopia-sync.service` and `kopia-sync.timer`, and `kopia-dynamic.d/kopia-kopia.yml`:
-      unchanged.
-- [ ] `/var/lib/cradle/backup-clients` reported as a would-be-created directory (0700
-      root) and **nine files** under it, from host_base's "One generated password per
-      backed-up service, created once and never rewritten" — hermes, immich, mailflow,
-      mcp, mealie, nextcloud, openarchiver, openproject, paperless.
-- [ ] One debug line per generated secret, from the `service` role's "What the first
-      converge will sync for this service", reading "`<name>` will be synced from
+- [ ] `kopia-sync.service` and `kopia-sync.timer`, and the route file
+      `/etc/cradle/traefik/dynamic.d/kopia-kopia.yml`: unchanged.
+- [ ] `host_base`: **the backup-clients directory changed** (`/var/lib/cradle/backup-clients`,
+      0700 root) and **nine generator items changed** — "One generated password per
+      backed-up service, created once and never rewritten", one per service: hermes, immich,
+      mailflow, mcp, mealie, nextcloud, openarchiver, openproject, paperless. In check mode
+      a `command` task with a `creates:` that does not exist reports changed without running,
+      so this is "would have run", not nine passwords written.
+- [ ] **Eighteen debug lines** from the `service` role's "What the first converge will sync
+      for this service", reading "`<name>` will be synced from
       `/var/lib/cradle/backup-clients/<service>`, which host_base creates on this same
-      run". Expect eighteen of them — each consumer's own `kopia_password`, plus kopia's
-      nine `client_*`.
-- [ ] **Nine pods' secrets reported as changing**, and therefore nine pod restarts, plus
-      `kopia` once. **Traefik should not restart at all**: its unit is byte-identical, and
-      `podman-secret-sync` inspects a secret's current value before replacing it and reports
-      `UNCHANGED` when it matches — so its three credentials moving from
-      `hosts/shared/services/traefik/secrets.sops.yaml` to the host's `ingress.sops.yaml`,
-      with the same names and the same values, is not a change anything sees. A traefik
-      restart here is not a failure, but it means something in the unit or a value did
-      differ: find out what before converging.
+      run" — each consumer's own `kopia_password`, plus kopia's nine `client_*`.
 - [ ] The nine `<svc>-backup.container` sidecars: **unchanged**. `backup_fqdn` resolves to
       the same `kopia.home.klees.io`, so `KOPIA_SERVER_URL=https://kopia.home.klees.io:443`
       is the line it already was.
+
+**What a check cannot show, and must not:** the generated files do not exist yet, so the
+secret-sync loop has nothing to iterate and **no `podman secret` change and no restart line
+appears anywhere**. The restarts are the converge's to produce, and they are listed under it.
+A `--check` that does report a secret change or a restart is showing something this rollout
+did not ask for.
 
 **What must not appear.** Any one of these stops the rollout — nothing below is a thing
 stage 2 asks for:
@@ -138,7 +143,9 @@ stage 2 asks for:
 - [ ] **No volume-directory creation and no `chown`.** `backup.repository` is the exact
       path `volume_overrides: kopia/repo` named, so the `repo` directory already exists
       with the owner it has; the role creates a volume directory only when it is absent
-      and adopts an owner only when it differs.
+      and adopts an owner only when it differs. A path that differs by one character would
+      show up here as a fresh directory on the pool — and nowhere else, because nothing
+      refuses it.
 - [ ] No route-content change, no new or removed route file, no secret of a service other
       than the ten above.
 - [ ] `failed=0`, `unreachable=0`, `rescued=0`.
@@ -158,8 +165,16 @@ let the deploy loop pick it up.
       A timer that has been stopped past its interval elapses immediately when started, so
       this is the converge, not a wait: `doas systemctl start cradle-deploy.timer`.
 - [ ] **Follow it:** `journalctl -u cradle-deploy.service -f`. Stage 1's comparable
-      converge took 11 min 19 s and restarted sixteen services; this one restarts ten —
-      kopia and the nine consumers.
+      converge took 11 min 19 s and restarted sixteen services; this one restarts ten.
+- [ ] **Ten restarts, and traefik is not among them.** Eighteen `podman secret` changes
+      (the nine consumers' `kopia_password` and kopia's nine `client_*`), then one restart
+      of kopia and one of each of the nine consumer pods. **Traefik does not restart**: its
+      unit is byte-identical, and `podman-secret-sync` inspects a secret's current value
+      before replacing it and prints `UNCHANGED` when it matches — so its three credentials
+      moving from the deleted `hosts/shared/` folder to the host's `ingress.sops.yaml`,
+      under the same names with the same values, is not a change anything sees. A traefik
+      restart is not a failure, but it means a value or a line did differ after all: find
+      out which before trusting the rest of the run.
 
 **The order within the tick, and why each restart happens:**
 
@@ -177,8 +192,11 @@ The server registers the new passwords **on its own restart**: `config/start.sh`
 over `/run/secrets/client_*` and runs `kopia server users add … || … set`, before the
 server binds. A sidecar that comes back holding a password the server has not registered
 yet, or whose stored connection no longer opens, throws `repository.config` away and
-reconnects — `ansible/roles/service/files/kopia-client.sh:84-94` in Cradle does that
-unconditionally on every start, which is what makes the restart order harmless either way.
+reconnects. `ansible/roles/service/files/kopia-client.sh:84-94` in Cradle **verifies** the
+stored connection on every start (`kopia repository status` under a timeout) and reconnects
+**only when that fails** — so a sidecar whose connection still opens is left alone, and one
+holding a password the server has not caught up with repairs itself. That is what makes the
+restart order harmless either way.
 
 ## Verification
 
@@ -222,15 +240,25 @@ converge at all:
 - [ ] **Revert the StorageBaby PR** (`gh pr revert` / `git revert -m 1 <merge sha>`, push,
       let CI move `stable`). That brings `hosts/shared/`, the kopia folder and the nine
       `kopia_password` declarations back.
-- [ ] **Pin Cradle back** to the pre-stage-2 `stable` in `/etc/cradle/deploy.conf` —
-      `CRADLE_REF=63e47a2f1f2726c6d79619cfb19dd521cfe8a384` in place of
-      `CRADLE_REF=stable`.
+- [ ] **Confirm the pre-stage-2 branch exists in Cradle**:
+      `git ls-remote origin pre-built-ins` must print
+      `63e47a2f1f2726c6d79619cfb19dd521cfe8a384`. It was pushed when this runbook was
+      written (`git push origin 63e47a2:refs/heads/pre-built-ins`) and exists for this
+      rollback alone.
+- [ ] **Pin Cradle back** by hand-editing `/etc/cradle/deploy.conf` on the host:
+      `CRADLE_REF=pre-built-ins` in place of `CRADLE_REF=stable`.
+
+**It has to be a branch name, not a SHA.** `cradle-deploy`'s `sync_checkout` fetches
+`+refs/heads/<ref>:refs/remotes/origin/<ref>` and nothing else, so a commit id in
+`CRADLE_REF` makes every single tick fail at the fetch — the host would stop converging
+altogether rather than converge the old engine. Hence the branch.
 
 Pinning Cradle back is necessary, not optional: **the new Cradle refuses a host repository
 that still has `hosts/shared/`**, so the revert's own converge would fail against stage-2
-Cradle. `63e47a2` is the SHA the PR's render baseline was taken against; confirm it is an
-ancestor of Cradle's `stable` before using it. Unpin (`CRADLE_REF=stable`) when stage 2 is
-attempted again.
+Cradle. `deploy.conf` is written once by bootstrap and read by every tick — no role
+rewrites it — so the pin survives converges and has to be taken out by hand:
+`CRADLE_REF=stable` again when stage 2 is attempted a second time. Check it with
+`grep CRADLE_REF /etc/cradle/deploy.conf` before and after.
 
 **What the revert restores, and what it does not.** The nine `client_*` and nine
 `kopia_password` podman secrets were **replaced under the same names**, not added beside

@@ -94,8 +94,9 @@ applies the retention policy from
 `service.yml` and takes its snapshots on its own schedule. Databases are backed up as
 dumps, never as data directories: a `<name>-dump.timer` writes a plain, uncompressed
 `pg_dump` into a `backups` volume half an hour before the snapshot, and that volume is
-what the sidecar carries. All four pods do it the same way and **no service's backup
-depends on the application being configured for it**. `backup.exclude` is how a service
+what the sidecar carries. All seven pods with a database do it the same way — immich,
+mailflow, mealie, nextcloud, openarchiver, openproject, paperless — and **no service's
+backup depends on the application being configured for it**. `backup.exclude` is how a service
 refuses to carry a backup the application writes for itself; Immich's admin-UI backup
 job is the one case. Cradle's `ansible/roles/service/README.md` has both.
 

@@ -154,7 +154,10 @@ backup:
     must_exist: true
 # Empty, and required to be present: a path a service volume is pinned to against its
 # class default. `kopia/repo` was the one entry until stage 2 and is `backup.repository`
-# now -- the engine refuses the old name rather than silently overriding it.
+# now. Nothing would refuse it if it were left here -- Cradle's static suite reads its own
+# fixture host repository and never this one, and on a host the playbook applies
+# `backup.repository` over this map silently -- so a leftover entry would be ignored
+# without a word. It is empty because it has to be kept empty, not because it is guarded.
 volume_overrides: {}
 # The LAN address, explicitly: this host also has a VPN interface and Docker's leftover
 # bridges, and Traefik's TCP entrypoints must bind the one address the scanner reaches.
@@ -173,6 +176,7 @@ packages:
   ]
 # Empty: no service on this host overrides a `config:` value of its own folder. The one
 # entry this ever held was the kopia server's, and the kopia server is a built-in now --
-# `backup.replica` above is where the replica is configured, and `service_config.kopia` is
-# refused.
+# `backup.replica` above is where the replica is configured. A `kopia` entry left here
+# would be overridden silently by the built-in's own config, the same way the retired
+# `volume_overrides` entry would be; only Cradle's own fixtures are checked for it.
 service_config: {}
