@@ -146,8 +146,8 @@ stage 2 asks for:
       and adopts an owner only when it differs. A path that differs by one character would
       show up here as a fresh directory on the pool — and nowhere else, because nothing
       refuses it.
-- [ ] No route-content change, no new or removed route file, no secret of a service other
-      than the ten above.
+- [ ] No route-content change, no new or removed route file, and no `podman secret` change
+      for any service (see above).
 - [ ] `failed=0`, `unreachable=0`, `rescued=0`.
 
 ## The converge
