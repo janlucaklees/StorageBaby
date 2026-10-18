@@ -26,7 +26,7 @@ config:
   # Empty on purpose, and measured: see "Trusted proxies" in the README. A host that
   # really does sit behind a second proxy sets it through `service_config.immich`.
   trusted_proxies: ''
-secrets: [database_password, kopia_password]
+secrets: [database_password]
 backup:
   paths: [upload, backups]
   schedule: '03:00'

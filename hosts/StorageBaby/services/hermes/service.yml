@@ -25,8 +25,7 @@ volumes:
 # The dashboard's own login, and the key that signs its sessions. Not optional: the
 # dashboard refuses to start on a non-loopback bind with no auth provider configured, so
 # these three are what make the service run at all, not just what guards it.
-secrets:
-  [kopia_password, dashboard_user, dashboard_password, dashboard_session_key]
+secrets: [dashboard_user, dashboard_password, dashboard_session_key]
 backup:
   paths: [data]
   schedule: '03:00'

@@ -16,7 +16,7 @@ volumes:
 config:
   database_name: openproject
   database_user: openproject
-secrets: [database_password, secret_key_base, kopia_password]
+secrets: [database_password, secret_key_base]
 # Seeding, which `MIGRATE=true` on the web container does not cover: that flag runs
 # `rake db:migrate` and stops there, and a migrated-but-unseeded OpenProject has no
 # administrator, no work-package types and no statuses. `rake db:seed` is idempotent, so

@@ -17,7 +17,7 @@ volumes:
 config:
   database_name: mealie
   database_user: mealie
-secrets: [database_password, kopia_password]
+secrets: [database_password]
 backup:
   # `database` is absent on purpose: a postgres data directory is never snapshotted, the
   # dump in `backups` is what a restore reads.

@@ -129,15 +129,33 @@ storage:
     smtp_port: 465
     starttls: false
     smtp_user: storagebaby@klees.io
-# The kopia repository, deliberately outside `storage_roots.pool` (= /pool/apps):
-# /apps has left the snapraid array and the repository must not go with it -- it is
-# what protects that tree now, which is why this path must stay under
-# no anchored exclude. The path follows the operator's existing structure -- /pool/backups/devices/ already
-# holds CloudBaby, KAIZN-vps and StorageBaby. A filesystem path on this machine is
-# a host fact, which is why it is here and not in the service folder
-# (Cradle's docs/ownership.md section 4).
-volume_overrides:
-  kopia/repo: /pool/backups/devices/StorageBaby/kopia
+# Backups. The kopia server is a built-in of Cradle and this block is the whole of what
+# this host says about it: where the repository lives -- the same path `volume_overrides:
+# kopia/repo` named until stage 2 --, the UI user the operator logs in as, the route label,
+# and where the hourly off-site replica goes. The client passwords are generated on the
+# host, one per backed-up service, and are in no file here.
+#
+# The repository path is deliberately outside `storage_roots.pool` (= /pool/apps): /apps
+# has left the snapraid array and the repository must not go with it -- it is what protects
+# that tree now, which is why this path must stay under no anchored exclude. The path
+# follows the operator's existing structure -- /pool/backups/devices/ already holds
+# CloudBaby, KAIZN-vps and StorageBaby. A filesystem path on this machine is a host fact,
+# which is why it is here and not in the engine (Cradle's docs/ownership.md section 4).
+backup:
+  repository: /pool/backups/devices/StorageBaby/kopia
+  username: jlk
+  domain: kopia
+  replica:
+    s3_endpoint: s3.eu-central-003.backblazeb2.com
+    s3_bucket: GTMyXab9-jlkkb
+    # On, because the bucket has held the repository since the 2026-10-14 cutover: a
+    # mistyped bucket then fails loudly instead of quietly starting a second, empty
+    # repository. It was false for the first sync only.
+    must_exist: true
+# Empty, and required to be present: a path a service volume is pinned to against its
+# class default. `kopia/repo` was the one entry until stage 2 and is `backup.repository`
+# now -- the engine refuses the old name rather than silently overriding it.
+volume_overrides: {}
 # The LAN address, explicitly: this host also has a VPN interface and Docker's leftover
 # bridges, and Traefik's TCP entrypoints must bind the one address the scanner reaches.
 # It is also what the FTP server advertises in its PASV reply. Give it a DHCP reservation.
@@ -153,4 +171,8 @@ packages:
     vdpauinfo,
     libva-utils
   ]
+# Empty: no service on this host overrides a `config:` value of its own folder. The one
+# entry this ever held was the kopia server's, and the kopia server is a built-in now --
+# `backup.replica` above is where the replica is configured, and `service_config.kopia` is
+# refused.
 service_config: {}
