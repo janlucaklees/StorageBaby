@@ -20,7 +20,7 @@ throughout; nothing here is left to an unattended tick to discover.
 ## Preconditions
 
 - [ ] **Cradle `stable` carries stage 2**, CI green. The SHA at the time of writing is
-      `c454267`; confirm with `git -C /home/jlk/Projects/cradle fetch origin stable` and
+      `161e63d`; confirm with `git -C /home/jlk/Projects/cradle fetch origin stable` and
       `gh api repos/janlucaklees/cradle/branches/stable --jq .commit.sha`, and **write it
       down** — the rollback below pins the one before it.
 - [ ] **`hosts/StorageBaby/secrets/backup.sops.yaml` exists and is committed**, with four
