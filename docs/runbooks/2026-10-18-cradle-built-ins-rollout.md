@@ -57,19 +57,42 @@ throughout; nothing here is left to an unattended tick to discover.
 
 ## The pre-flight
 
-Run **by hand, as root on the host**, against the two repositories' current `stable` —
-which at this point is still the pre-stage-2 state of this repository, so the check shows
-what the merge will do only after `stable` has moved. So: merge first, let CI move
-`stable`, and run the pre-flight before letting a tick converge — `cradle-deploy --check`
-writes no state and converges nothing, and since stage 1's follow-up it takes
-`/run/cradle-deploy.lock` with `flock -w 900`, so a tick fired beside it waits instead of
-running a second playbook over the same checkout. That lock is the reason a hand-run
-pre-flight is safe; a hand-run **converge** on this host is still not (see "The
-converge").
+`cradle-deploy --check` fetches everything, runs the playbook `--check --diff` and writes
+no state, and since stage 1's follow-up it takes `/run/cradle-deploy.lock` with
+`flock -w 900` — so a tick fired beside it waits rather than running a second playbook over
+the same checkout. That lock is why a hand-run **pre-flight** is safe; a hand-run
+**converge** on this host is still not (see "The converge").
+
+**The check has to be able to fail.** `cradle-deploy` reads the ref to converge out of
+`/etc/cradle/deploy.conf` — it has no `--host-ref` flag, `--check` is its only argument —
+so once the PR is merged and CI has moved `stable`, the timer's next tick converges within
+five minutes whatever the check said, and there is nothing left to stop. **Stop the timer
+first**, which is the same ruling stage 1 took for the same reason:
 
 ```sh
-doas cradle-deploy --check 2>&1 | tail -150
+doas systemctl stop cradle-deploy.timer
+doas systemctl is-active cradle-deploy.timer # inactive
 ```
+
+- [ ] Timer stopped, **then** merge the PR and let CI fast-forward `stable`
+      (`git fetch origin stable` and
+      `gh api repos/janlucaklees/StorageBaby/branches/master --jq .commit.sha` agree).
+- [ ] The pre-flight, logged in full — the traefik and kopia diffs come early in the
+      service loop, so a `tail` would cut exactly the part this check exists for:
+
+```sh
+doas cradle-deploy --check 2>&1 | tee /root/stage2-check.log
+```
+
+- [ ] Read the log against the two lists below. **Anything beyond them stops the rollout**:
+      leave the timer stopped, revert the merge (CI moves `stable` back), and nothing on the
+      host has changed, because a `--check` writes no state and no file.
+
+The alternative, if the merge should not happen before the check: point `HOST_REF` in
+`/etc/cradle/deploy.conf` at the branch (`HOST_REF=cradle-built-ins`), run the check, and
+set it back to `stable`. It needs the two new secret files committed **on the branch** as
+well as on master, and the timer stopped just the same, so it buys only the un-merging — not
+worth it unless the merge itself is the thing in doubt.
 
 **What must appear:**
 
@@ -96,7 +119,13 @@ doas cradle-deploy --check 2>&1 | tail -150
       run". Expect eighteen of them — each consumer's own `kopia_password`, plus kopia's
       nine `client_*`.
 - [ ] **Nine pods' secrets reported as changing**, and therefore nine pod restarts, plus
-      `traefik` and `kopia` once each.
+      `kopia` once. **Traefik should not restart at all**: its unit is byte-identical, and
+      `podman-secret-sync` inspects a secret's current value before replacing it and reports
+      `UNCHANGED` when it matches — so its three credentials moving from
+      `hosts/shared/services/traefik/secrets.sops.yaml` to the host's `ingress.sops.yaml`,
+      with the same names and the same values, is not a change anything sees. A traefik
+      restart here is not a failure, but it means something in the unit or a value did
+      differ: find out what before converging.
 - [ ] The nine `<svc>-backup.container` sidecars: **unchanged**. `backup_fqdn` resolves to
       the same `kopia.home.klees.io`, so `KOPIA_SERVER_URL=https://kopia.home.klees.io:443`
       is the line it already was.
@@ -116,22 +145,21 @@ stage 2 asks for:
 
 ## The converge
 
-- [ ] **Merge the PR** and let CI fast-forward `stable` to the merge commit (the `static`
-      job is formatting only on this side; the gate that matters ran in Cradle).
-      `gh api repos/janlucaklees/StorageBaby/branches/master --jq .commit.sha` and
-      `git fetch origin stable` should agree.
-- [ ] **Let `cradle-deploy.timer`'s own tick converge.** Do not run `cradle-deploy` by
-      hand on this host. That is the operating rule stage 1 established and the reason is
-      in `2026-10-17-cradle-cutover.md`, "The blocker: the timer/converge race" and its
+The merge and `stable` are already done — the pre-flight needed them. What is left is to
+let the deploy loop pick it up.
+
+- [ ] **Start the timer again and let its own tick converge.** Do not run `cradle-deploy`
+      by hand on this host. That is the operating rule stage 1 established and the reason
+      is in `2026-10-17-cradle-cutover.md`, "The blocker: the timer/converge race" and its
       follow-ups: a hand converge beside the timer's tick is the real exposure, two
       playbooks restarting the same pods while the second tick's checkout refresh runs
       `git reset --hard` + `git clean -fdx` on the tree the first is executing out of. The
       lock added afterwards makes a breach wait rather than collide, but the rule stands.
-      A tick is at most five minutes away. If waiting is not wanted, the sanctioned form
-      is to start the timer's own unit, which systemd serialises against the tick:
-      `doas systemctl start cradle-deploy.service`.
+      A timer that has been stopped past its interval elapses immediately when started, so
+      this is the converge, not a wait: `doas systemctl start cradle-deploy.timer`.
 - [ ] **Follow it:** `journalctl -u cradle-deploy.service -f`. Stage 1's comparable
-      converge took 11 min 19 s; this one restarts eleven services rather than sixteen.
+      converge took 11 min 19 s and restarted sixteen services; this one restarts ten —
+      kopia and the nine consumers.
 
 **The order within the tick, and why each restart happens:**
 
@@ -139,11 +167,9 @@ stage 2 asks for:
    `openssl rand -base64 32` per backed-up service, written to a temporary name and moved
    into place, guarded by `creates:` so it happens exactly once in the life of the host.
 2. `traefik`, then `kopia`: re-rendered from the built-ins, same users, same volume paths,
-   same data. Traefik restarts because its unit's config path and contents are what they
-   were but its spec now comes from Cradle — if its unit really is byte-identical it is
-   not restarted at all, which is the better outcome and what the pre-flight predicts.
-   Kopia restarts on the two changed `Environment=` lines and on its nine `client_*`
-   secrets changing.
+   same data. **Traefik does not restart** — nothing about it changed, and the role
+   restarts only what did. Kopia restarts on the two changed `Environment=` lines and on
+   its nine `client_*` secrets changing.
 3. The nine consumers, one restart each, because a secret of their pod changed
    (`kopia_password`).
 
@@ -156,8 +182,9 @@ unconditionally on every start, which is what makes the restart order harmless e
 
 ## Verification
 
-- [ ] `cradle-svc ps traefik` and `cradle-svc ps kopia`: `active (running)`, each
-      restarted once inside the converge window.
+- [ ] `cradle-svc ps traefik`: `active (running)`, and its `ActiveEnterTimestamp`
+      **unchanged** — nothing about the ingress changed, so it must not have restarted.
+      `cradle-svc ps kopia`: `active (running)`, restarted once inside the converge window.
 - [ ] Each of the nine pods: `cradle-svc ps <name>` → `active (running)`. And the five
       services with no backup block — calino, jellyfin, renaissance, stirling-pdf, yuzukam
       — untouched: their `ActiveEnterTimestamp` must predate the converge.
