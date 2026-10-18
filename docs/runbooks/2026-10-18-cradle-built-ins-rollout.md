@@ -19,10 +19,13 @@ throughout; nothing here is left to an unattended tick to discover.
 
 ## Preconditions
 
-- [ ] **Cradle `stable` carries stage 2**, CI green. The SHA at the time of writing is
-      `161e63d`; confirm with `git -C /home/jlk/Projects/cradle fetch origin stable` and
+- [ ] **Cradle `stable` carries stage 2**, CI green. Two SHAs are in play: stage 2 itself
+      landed at `161e63d`, and `f8eb03b` is the fix wave after the final review (the
+      refusal message for a missing built-in secrets file, the quickstart, two comments —
+      no behaviour change this runbook depends on). `stable` is whichever of them CI last
+      promoted. Confirm with `git -C /home/jlk/Projects/cradle fetch origin stable` and
       `gh api repos/janlucaklees/cradle/branches/stable --jq .commit.sha`, and **write it
-      down** — the rollback below pins the one before it.
+      down** — the rollback below pins the branch from before stage 2, not either of these.
 - [ ] **`hosts/StorageBaby/secrets/backup.sops.yaml` exists and is committed**, with four
       keys: `repository_password`, `server_password`, `b2_key_id`, `b2_application_key` —
       the same four values `hosts/StorageBaby/services/kopia/secrets.sops.yaml` held.
@@ -115,6 +118,41 @@ worth it unless the merge itself is the thing in doubt.
       nine `Secret=client_*` lines, sorted.
 - [ ] `kopia-sync.service` and `kopia-sync.timer`, and the route file
       `/etc/cradle/traefik/dynamic.d/kopia-kopia.yml`: unchanged.
+
+**Five more diffs the check prints, in the four bullets below, all of them expected.** None
+is a unit and none is a
+line this rollout chose; they are what moving two folders into Cradle does to files the
+roles copy verbatim. The list above would make an operator stop on every one of them, so
+it is here:
+
+- [ ] `/etc/cradle/kopia/start.sh`: **a large diff, and a second reason kopia restarts.**
+      The role copies a service's `config/` tree to `/etc/cradle/<name>/`, and the
+      built-in's `start.sh` is not the folder's: it lost the `s3` _repository_ branch
+      (Backblaze is a replica fed by `sync.sh`, never the repository) and the `REPLACE_ME`
+      guard over `/run/secrets/client_*`, which has nothing left to guard now that those
+      values are generated. Measured against the file leaving this repository: 177 lines
+      down to 124, 69 removed and 16 added. A changed `config/` copy marks **every** unit
+      of the service changed, so this alone would restart kopia even if its two
+      `Environment=` lines had not moved.
+- [ ] `/etc/cradle/kopia/sync.sh`: **three comment lines**, and nothing else — the
+      "every test host" wording became "both test hosts" and the sentence about symlinked
+      service folders became one about a built-in being placed on every host that backs
+      up. Not a behaviour change; it is in the same `config/` copy as `start.sh`, so it
+      changes no restart decision that file has not already made.
+- [ ] `/usr/local/sbin/cradle-deploy`: **the shared-pointer glob removed**, seven lines —
+      the script no longer looks for `hosts/shared/services/*/source.yml`, because there
+      is no `hosts/shared/` any more. `host_base` installs this script, so the converge
+      rewrites the very file it is running from; `copy` writes a temp file and renames it
+      over the old one, so the running tick keeps the inode it opened and finishes on the
+      old script. The next tick is the first to use the new one.
+- [ ] The ciphertext of `/etc/cradle/traefik.secrets.sops.yaml` and
+      `/etc/cradle/kopia.secrets.sops.yaml`: **both replaced wholesale.** The copy's
+      source is a different file now — `hosts/StorageBaby/secrets/ingress.sops.yaml` and
+      `backup.sops.yaml` instead of the two folders' own — and sops ciphertext differs
+      per encryption even for an identical value, so the diff is the whole file both
+      times and says nothing about whether the values match. Neither copy is
+      `register:`ed, so **neither restarts anything**; that is why traefik can take a new
+      secrets file and still not restart.
 - [ ] `host_base`: **the backup-clients directory changed** (`/var/lib/cradle/backup-clients`,
       0700 root) and **nine generator items changed** — "One generated password per
       backed-up service, created once and never rewritten", one per service: hermes, immich,
@@ -135,6 +173,42 @@ appears anywhere**. The restarts are the converge's to produce, and they are lis
 A `--check` that does report a secret change or a restart is showing something this rollout
 did not ask for.
 
+**What the check cannot prove, and the operator has to check another way: the two new
+secret files.** A green pre-flight says nothing about their contents. The copy to
+`/etc/cradle/<name>.secrets.sops.yaml` is a write, so `--check` skips it, and the two
+tasks that read a secrets file — "Decrypt on the host" (`check_mode: false`, because its
+registered output is parsed) and "All declared secrets present" — therefore run against
+the **old** file the last converge left on disk. Traefik's three key names and kopia's
+four are subsets of the two old key sets, so both pass. What a `--check` consequently does
+**not** catch: a wrong value, a file encrypted to the wrong recipient, or a misspelled key
+name in the new file. What it does catch is a **missing** file: all three candidate paths
+fail to exist, and the role refuses the service by name, naming the paths it looked for.
+
+The checks that cover what is coverable without decrypting anything, in the host
+repository's checkout — sops leaves key names and recipients in plaintext:
+
+```sh
+# Two recipients each, and one of them the host's own key (the `storagebaby` anchor
+# in .sops.yaml, age142s7lf…). `2` and `1` for both files.
+grep -c 'recipient: age1' hosts/StorageBaby/secrets/backup.sops.yaml hosts/StorageBaby/secrets/ingress.sops.yaml
+grep -c 'age142s7lfpzjdddrrxkee8gr057u9hqkanu220n4f6hvzmr9n66x4rs9w3zvs' \
+	hosts/StorageBaby/secrets/backup.sops.yaml hosts/StorageBaby/secrets/ingress.sops.yaml
+
+# The key names themselves: 4 and 3.
+grep -cE '^(server_password|repository_password|b2_key_id|b2_application_key):' \
+	hosts/StorageBaby/secrets/backup.sops.yaml
+grep -cE '^(porkbun_api_key|porkbun_secret_api_key|dashboard_htpasswd):' \
+	hosts/StorageBaby/secrets/ingress.sops.yaml
+```
+
+A misspelled key name costs nothing but noise — the converge fails at traefik's or
+kopia's "All declared secrets present" assert — the two built-ins converge first, before
+any consumer, so it fails before any restart. A wrong **value** is the expensive one, and it surfaces late:
+`repository_password` wrong shows as kopia restart-looping (it fails the repository
+connect, and there is no reset and no escrow — see the preconditions), `server_password`
+wrong as every sidecar failing to connect, and a wrong Porkbun key **not until the next
+certificate renewal**, weeks later, in Traefik's log and nowhere else.
+
 **What must not appear.** Any one of these stops the rollout — nothing below is a thing
 stage 2 asks for:
 
@@ -154,6 +228,29 @@ stage 2 asks for:
 
 The merge and `stable` are already done — the pre-flight needed them. What is left is to
 let the deploy loop pick it up.
+
+**The two secret files have to be in the commit `stable` points at.** The merge is what
+moves `stable`, so they must be committed on master, or on the PR branch that the merge
+carries — a file sitting unstaged in the operator's checkout is a converge that fails at
+the first built-in. The precondition above says committed for exactly this reason.
+
+**The server is always converged before its clients, which decides what a half-finished
+run costs.** The playbook places the built-ins first and the host's own services after
+them, sorted, so kopia takes its nine new `client_*` passwords and registers them on its
+restart before any consumer's `kopia_password` is replaced. Two consequences. In the
+normal case there is a short window — one restart apart — in which kopia is already
+serving the new passwords and a consumer's sidecar still holds the old one; the sidecar
+verifies its stored connection on every start and reconnects when it does not open, so it
+repairs itself and the only cost is a snapshot that does not happen in those minutes. If
+the play **dies** between kopia and some consumer — any failing task in a service sorted
+before it will do that, because the role is included once per service from one play and a
+failure stops the play for every service that has not converged yet; the hook health wait
+is the only failure in the role that is deliberately not fatal — that consumer is never
+reached, so it keeps the password the server has already replaced, and
+its sidecar is locked out: it retries the connect under a 120 s timeout with 15 s between
+attempts, logging the failure, until the next tick converges it and replaces the secret.
+That is backups down for minutes on one service. **It is a wait, not a rollback** — the
+next tick fixes it, because a failed converge writes no `deploy.state`.
 
 - [ ] **Start the timer again and let its own tick converge.** Do not run `cradle-deploy`
       by hand on this host. That is the operating rule stage 1 established and the reason
@@ -187,6 +284,14 @@ let the deploy loop pick it up.
    its nine `client_*` secrets changing.
 3. The nine consumers, one restart each, because a secret of their pod changed
    (`kopia_password`).
+4. **The after-change hooks of the three services that declare any.** A changed secret
+   does not mark one unit changed, it marks **every** unit of the service changed — which
+   is also what makes a hook fire. So nextcloud runs its five `unit_changed` `occ`
+   commands (`maintenance:repair --include-expensive` is the slow one) plus its two
+   `when: always` ones, openproject its `bundle exec rake db:seed`, and paperless its
+   `touch`. Each service's hooks wait for their container's own health check first, up to
+   **ten minutes** (60 attempts, 10 s apart), so **multi-minute silences in the journal
+   are expected** at nextcloud and openproject and are not a hung converge.
 
 The server registers the new passwords **on its own restart**: `config/start.sh` loops
 over `/run/secrets/client_*` and runs `kopia server users add … || … set`, before the
@@ -203,6 +308,16 @@ restart order harmless either way.
 - [ ] `cradle-svc ps traefik`: `active (running)`, and its `ActiveEnterTimestamp`
       **unchanged** — nothing about the ingress changed, so it must not have restarted.
       `cradle-svc ps kopia`: `active (running)`, restarted once inside the converge window.
+- [ ] **If Traefik did restart, stop here and find out why before checking anything else.**
+      Its unit and its three secret values are supposed to be byte-identical, so a restart
+      means one of them is not: the three values in `ingress.sops.yaml` differ from the
+      three the deleted `hosts/shared/services/traefik/secrets.sops.yaml` held. Diff them
+      — `mise run sops` each side, on the workstation, from a checkout that still has the
+      old file (`git show <pre-merge sha>:hosts/shared/services/traefik/secrets.sops.yaml`)
+      — and fix the new file before trusting any of the backup verification below. A wrong
+      `dashboard_htpasswd` only locks the operator out of the dashboard; a wrong Porkbun
+      key is silent until the next certificate renewal, which is why this is checked now
+      and not when a certificate expires.
 - [ ] Each of the nine pods: `cradle-svc ps <name>` → `active (running)`. And the five
       services with no backup block — calino, jellyfin, renaissance, stirling-pdf, yuzukam
       — untouched: their `ActiveEnterTimestamp` must predate the converge.
@@ -231,6 +346,20 @@ restart order harmless either way.
 - [ ] One **no-op tick** afterwards: the next `cradle-deploy` run logs "nothing changed
       since the last converge", or converges with `changed=0`. That is render parity, and
       the proof the built-ins converge to a fixed point.
+- [ ] **If the converge ends with "After-change hooks were skipped for: …"**, it is
+      converged but **not finished**, and it is **not a rollback trigger**. A container
+      that did not become healthy within ten minutes makes the role skip that service's
+      hooks all-or-nothing and record it; the playbook fails on the collected list after
+      the last service, so every other service converged and only the named ones are
+      un-finished. **The next tick does not retry them.** The converge failed, so no
+      `deploy.state` was written and the tick does converge again — but by then nothing is
+      re-rendered and no secret changes, `changed_units` is empty, and an empty
+      `changed_units` is exactly what filters the hook list down to the `when: always`
+      ones. So nextcloud's two `config:*:set` calls run again and its five repairs never
+      do. Read the named container's journal from the top, and once it is healthy **run
+      the skipped commands by hand** — they are the ones listed in that service's
+      `service.yml` under `hooks.after_change`, e.g.
+      `doas /usr/local/sbin/podman-as svc-nextcloud podman exec -u www-data nextcloud-app php occ maintenance:repair --include-expensive`.
 
 ## Rollback
 
