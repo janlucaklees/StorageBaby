@@ -64,11 +64,14 @@ suite turns into a named failure.
 ## 3. Derivation
 
 ```
-publish_port = 20000 + (crc32("<service name>/<route domain>") mod 10000)
+publish_port = 10000 + (crc32("<service name>/<route domain>") mod 10000)
 ```
 
-- Range 20000–29999: above every ephemeral-port convention a container image uses and
-  below nothing a service declares; `tcp_ports` are refused inside the range.
+- Range 10000–19999: below Linux's ephemeral range (32768 and up), below the FTP passive
+  range paperless declares (21100–21109) and above every port a container image
+  listens on by convention; `tcp_ports` are refused inside the range. (The first draft
+  said 20000–29999, which the passive range sits inside; corrected 2026-10-19 before
+  implementation.)
 - `crc32` over the UTF-8 bytes of `<name>/<domain>` where `<domain>` is the route's
   declared `domain` string (the label or the full name, as written). It is stable across
   hosts and Cradle versions, needs no library beyond Python's `zlib` in the Ansible filter
@@ -97,7 +100,9 @@ test with known vectors.
 | playbook: "No two placed services claim the same port" over declared ports | the same assert over derived ports plus TCP ports and targets                        |
 
 The role derives `routes[n].publish_port` where it derives `routes[n].fqdn` today, from a
-filter plugin `cradle_publish_port(name, domain)` in `ansible/plugins/filter/`. The
+filter plugin `cradle_publish_port(name, domain)` in `ansible/filter_plugins/` (the one
+directory Ansible loads beside the playbook without configuration; `ansible/ansible.cfg`
+is never the working directory of any entry point). The
 playbook's host-wide collision assert reads the derived values.
 
 ## 5. Tests
