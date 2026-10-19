@@ -34,8 +34,7 @@ secrets:
     mealie_api_token,
     nextcloud_user,
     nextcloud_password,
-    paperless_token,
-    kopia_password
+    paperless_token
   ]
 backup:
   paths: [data]

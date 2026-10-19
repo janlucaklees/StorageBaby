@@ -20,7 +20,7 @@ config:
   # rate-limited and logged under. That holds here by construction: the pod publishes on
   # 127.0.0.1 alone, and a static test refuses any other bind.
   trust_proxy_hops: 2
-secrets: [database_password, session_secret, encryption_key, kopia_password]
+secrets: [database_password, session_secret, encryption_key]
 backup:
   # Only the dump. Every byte of mailflow's state is in Postgres: there is no upload tree,
   # no index and no cache worth carrying.

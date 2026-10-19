@@ -30,8 +30,7 @@ secrets:
     meili_master_key,
     jwt_secret,
     encryption_key,
-    storage_encryption_key,
-    kopia_password
+    storage_encryption_key
   ]
 backup:
   paths: [data, backups]
