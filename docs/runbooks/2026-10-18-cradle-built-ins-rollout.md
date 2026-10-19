@@ -27,7 +27,7 @@ throughout; nothing here is left to an unattended tick to discover.
       promoted. Confirm with `git -C /home/jlk/Projects/cradle fetch origin stable` and
       `gh api repos/janlucaklees/cradle/branches/stable --jq .commit.sha`, and **write it
       down** — the rollback below pins the branch from before stage 2, not either of these.
-- [ ] **`hosts/StorageBaby/secrets/backup.sops.yaml` exists and is committed**, with four
+- [x] **`hosts/StorageBaby/secrets/backup.sops.yaml` exists and is committed**, with four
       keys: `repository_password`, `server_password`, `b2_key_id`, `b2_application_key` —
       the same four values `hosts/StorageBaby/services/kopia/secrets.sops.yaml` held.
       `repository_password` above all: **the repository on disk can only be opened with
@@ -36,7 +36,7 @@ throughout; nothing here is left to an unattended tick to discover.
       connect. Read the old values with
       `mise run sops hosts/StorageBaby/services/kopia/secrets.sops.yaml` **before the PR
       is merged** — the file leaves the tree with the merge.
-- [ ] **`hosts/StorageBaby/secrets/ingress.sops.yaml` exists and is committed**, with
+- [x] **`hosts/StorageBaby/secrets/ingress.sops.yaml` exists and is committed**, with
       three keys: `porkbun_api_key`, `porkbun_secret_api_key`, `dashboard_htpasswd` — the
       three from `hosts/shared/services/traefik/secrets.sops.yaml`, read the same way and
       before the same merge. `dashboard_htpasswd` is Traefik's own basic-auth file and the
