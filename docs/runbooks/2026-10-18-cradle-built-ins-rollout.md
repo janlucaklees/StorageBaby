@@ -19,7 +19,8 @@ throughout; nothing here is left to an unattended tick to discover.
 
 ## Preconditions
 
-- [ ] **Cradle `stable` carries stage 2**, CI green. Two SHAs are in play: stage 2 itself
+- [x] **Cradle `stable` carries stage 2**, CI green. _Confirmed 2026-10-19 before the
+      rollout: `stable` = `f8eb03b7d3b068d5c2328b61b8dd2c9e876a3b80` (the fix wave)._ Two SHAs are in play: stage 2 itself
       landed at `161e63d`, and `f8eb03b` is the fix wave after the final review (the
       refusal message for a missing built-in secrets file, the quickstart, two comments —
       no behaviour change this runbook depends on). `stable` is whichever of them CI last
@@ -41,8 +42,8 @@ throughout; nothing here is left to an unattended tick to discover.
       before the same merge. `dashboard_htpasswd` is Traefik's own basic-auth file and the
       only thing standing in front of the dashboard; a wrong one locks the operator out of
       it and nothing else.
-- [ ] **The nine `client_*` values and the nine `kopia_password` values are not needed and
-      are not carried over.** They are generated on the host from this converge on. The
+- [x] **The nine `client_*` values and the nine `kopia_password` values are not needed and
+      are not carried over.** _Nothing to do: true by construction._ They are generated on the host from this converge on. The
       keys stay in the service `secrets.sops.yaml` files, ignored rather than refused, and
       come out the next time the operator edits one (spec § 10).
 - [ ] **The time is outside 01:30–04:00.** `storage-maintenance.timer` fires at 02:00 and
@@ -57,7 +58,9 @@ throughout; nothing here is left to an unattended tick to discover.
       interrupted mid-converge makes the verification below ambiguous.
 - [ ] **No Molecule run on the workstation**, and no second converge in flight:
       `systemctl is-active cradle-deploy.service` → `inactive`.
-- [ ] **The StorageBaby PR is reviewed and not merged**, and this runbook is in it.
+- [x] **The StorageBaby PR is reviewed and not merged**, and this runbook is in it.
+      _Reviewed 2026-10-18 (task review, final whole-branch review, re-review of the fix
+      wave); open as PR #4; the operator's own read is the last review._
 
 ## The pre-flight
 
