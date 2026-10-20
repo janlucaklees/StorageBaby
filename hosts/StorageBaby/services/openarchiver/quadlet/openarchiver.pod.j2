@@ -1,7 +1,10 @@
 [Pod]
 PodName=openarchiver
-{# Literal, not `{{ service.port }}`: the static check reads this line out of the raw
-   template to compare the published ports against the declared routes. The two numbers
-   differ on purpose -- the app listens on 3000, which yuzukam already publishes on this
-   host, so the route's loopback port is 3001. #}
-PublishPort=127.0.0.1:3001:3000
+{# The loopback port is Cradle's, derived and in no file; `container_port` is this pod's
+   own. The static check reads this line out of the raw template and accepts a `publish_port`
+   expression for a route and a literal only for a `tcp_ports` target.
+
+   The app listens on 3000 inside this pod, which is `container_port`; two services on one
+   host listening on 3000 inside their own pods no longer collide, because what the host
+   sees is the derived port and not this one. #}
+PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}

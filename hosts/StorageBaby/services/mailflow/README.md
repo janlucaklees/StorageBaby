@@ -37,7 +37,8 @@ here. All three have supported escape hatches, so none of this needs a patched c
 - **`TRUST_PROXY_HOPS=2`.** Traefik, then this pod's nginx. Upstream permits 2 only "if
   clients cannot reach MailFlow's ports except through it", because otherwise a client
   connecting directly chooses the address it is rate-limited and logged under. On this
-  platform that condition is structural: the pod publishes `127.0.0.1:3003` and
+  platform that condition is structural: the pod publishes on `127.0.0.1` alone -- the
+  port being the one Cradle derives for the route -- and
   Cradle's `tests/static/test_quadlet_conventions.py` refuses any other bind.
 
 Neither image ships `curl`, so upstream's own compose healthchecks cannot be working. Both

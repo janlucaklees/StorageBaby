@@ -5,7 +5,7 @@ Description=Stirling PDF
 Image=docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest
 ContainerName=stirling-pdf
 AutoUpdate=registry
-PublishPort=127.0.0.1:{{ service.port }}:8080
+PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}
 Environment=TZ={{ tz }}
 Environment=SECURITY_ENABLELOGIN=true
 Volume={{ volumes.configs }}:/configs

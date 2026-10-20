@@ -1,5 +1,5 @@
 name: immich
-port: 2283
+container_port: 2283
 domain: immich.klees.io
 volumes:
   # `owner: 0` on both trees the app writes: immich-server and

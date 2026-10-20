@@ -1,16 +1,16 @@
 name: nextcloud
-# Two hostnames, so the `routes` list rather than the `domain:` + `port:` shorthand:
-# nginx serves Nextcloud itself and Collabora serves the office backend, and the
+# Two hostnames, so the `routes` list rather than the `domain:` + `container_port:`
+# shorthand: nginx serves Nextcloud itself and Collabora serves the office backend, and the
 # browser has to reach both under their own names. They differ in how Traefik reaches
 # them, which is what a per-entry backend option is for: nginx answers plain HTTP,
 # Collabora keeps the TLS the image serves by default -- with a certificate it made
 # for itself, which nothing can verify and nothing has to, the hop being to 127.0.0.1.
 # The collabora unit has the why; kopia is the other service that does this.
 routes:
-  - { domain: nextcloud.klees.io, port: 8280 }
+  - { domain: nextcloud.klees.io, container_port: 80 }
   - {
       domain: collabora.klees.io,
-      port: 9980,
+      container_port: 9980,
       scheme: https,
       insecure_skip_verify: true
     }

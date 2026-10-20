@@ -1,5 +1,5 @@
 name: paperless
-port: 8000
+container_port: 8000
 domain: paperless.klees.io
 volumes:
   data: { class: pool, owner: 1000 }

@@ -1,8 +1,9 @@
 [Pod]
 PodName=immich
-{# Literal, not `{{ service.port }}`: the static check reads this line out of the raw
-   template to compare the published ports against the declared routes. #}
-PublishPort=127.0.0.1:2283:2283
+{# The loopback port is Cradle's, derived and in no file; `container_port` is this pod's
+   own. The static check reads this line out of the raw template and accepts a `publish_port`
+   expression for a route and a literal only for a `tcp_ports` target. #}
+PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}
 {# The machine learning URL is not an environment variable: it is a system setting
    stored in the database, and both a fresh install and the database migrated off the
    compose stack hold the compose service name `immich-machine-learning`. In a pod

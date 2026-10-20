@@ -1,8 +1,10 @@
 [Pod]
 PodName=nextcloud
-{# Literal, not `{{ routes[n].port }}`: the static check reads these lines out of the
-   raw template to compare the published ports against the declared routes. Two of
-   them, because this is the one service with two hostnames -- nginx answers on 80
+{# The loopback port is Cradle's, derived and in no file; `container_port` is this pod's
+   own. The static check reads this line out of the raw template and accepts a `publish_port`
+   expression for a route and a literal only for a `tcp_ports` target.
+
+   Two lines, because this is the one service with two hostnames -- nginx answers on 80
    inside the pod for the `nextcloud` route, collabora on 9980 for its own. #}
-PublishPort=127.0.0.1:8280:80
-PublishPort=127.0.0.1:9980:9980
+PublishPort=127.0.0.1:{{ routes[0].publish_port }}:{{ routes[0].container_port }}
+PublishPort=127.0.0.1:{{ routes[1].publish_port }}:{{ routes[1].container_port }}

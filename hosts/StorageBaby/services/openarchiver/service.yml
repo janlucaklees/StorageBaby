@@ -1,8 +1,9 @@
 name: openarchiver
-# The app listens on 3000 inside the pod; the loopback port is 3001 because yuzukam
-# already occupies 3000 on every host both are placed on. Only the pod's publish line
-# bridges the two -- nothing inside the pod knows about 3001.
-port: 3001
+# The app listens on 3000 inside the pod, and that is the whole of what this service has
+# to say about ports. 3000 inside openarchiver's pod and 3000 inside yuzukam's no longer
+# clash: each pod publishes on the loopback port Cradle derives for its route, and only
+# the pod's publish line bridges the two -- nothing inside the pod knows the derived one.
+container_port: 3000
 domain: openarchiver
 volumes:
   # `owner: 0` on `data`: the open-archiver entrypoint runs `pnpm install` before it

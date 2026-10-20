@@ -2,7 +2,7 @@ name: hermes
 # The dashboard. The gateway's own OpenAI-compatible API listens on 8642 inside the
 # container and is deliberately not published: the dashboard reaches it over the
 # container's loopback, and nothing outside needs it.
-port: 9119
+container_port: 9119
 # Private: it holds the model provider's API key, and the agent it drives has a shell.
 # The pod publishes loopback only and the route is VPN-only on top of the dashboard's own
 # login, which is mandatory rather than chosen -- see the unit.

@@ -21,10 +21,14 @@ consequences shape this whole folder:
 
 ## Two routes, and neither is guarded by the platform
 
-| route             | port | what it is                                     |
-| ----------------- | ---- | ---------------------------------------------- |
-| `calino.klees.io` | 8085 | the app — Caddy serving the built bundle       |
-| `dav.klees.io`    | 8086 | the proxy — relays CalDAV to `dav.mxroute.com` |
+| route             | `container_port` | what it is                                     |
+| ----------------- | ---------------- | ---------------------------------------------- |
+| `calino.klees.io` | 8085             | the app — Caddy serving the built bundle       |
+| `dav.klees.io`    | 8086             | the proxy — relays CalDAV to `dav.mxroute.com` |
+
+The column is what each part listens on **inside** the pod. The loopback port
+Traefik dials is Cradle's, derived per route from the service name and the
+domain, and appears in no file here.
 
 **The app carries no `basic_auth`.** Calino's master password is its authentication, and a
 second prompt in front of it guards nothing that is not already encrypted. The accepted

@@ -5,7 +5,7 @@ Description=Yuzukam
 Image=ghcr.io/janlucaklees/yuzukam:latest
 ContainerName=yuzukam
 AutoUpdate=registry
-PublishPort=127.0.0.1:{{ service.port }}:3000
+PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}
 Environment=TZ={{ tz }}
 HealthCmd=wget -q --spider http://127.0.0.1:3000/ || exit 1
 HealthOnFailure=kill

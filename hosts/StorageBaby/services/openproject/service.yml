@@ -1,5 +1,5 @@
 name: openproject
-port: 8081
+container_port: 8080
 domain: openproject.klees.io
 volumes:
   # The attachment and avatar tree -- `APP_DATA_PATH` inside the image, which its

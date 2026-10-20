@@ -1,5 +1,5 @@
 name: mealie
-port: 9000
+container_port: 9000
 # Public: a shopping list is read in a supermarket, which is the one place a VPN is not
 # already on. `klees.io` written out in full, so the host's own `domain` completes nothing.
 domain: mealie.klees.io

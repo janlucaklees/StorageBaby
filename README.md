@@ -54,20 +54,20 @@ storagebaby. "auto" means `AutoUpdate=registry` plus the service user's
 `podman-auto-update.timer`, which rolls back an image that fails its health check.
 A **pod** is one Podman pod per service: every part keeps its own image, container
 and generated unit, all of them share one network namespace and reach each other on
-`127.0.0.1`, and the pod is the only thing that publishes a port — on loopback, for
-Traefik.
+`127.0.0.1`, and the pod is the only thing that publishes a port — on loopback, at the
+port Cradle derives for that route, for Traefik.
 
-| Service                           | Route → loopback port                      | Images and updates                                                                                                      | Backup                                                              | Phase |
-| --------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ----- |
-| traefik (built-in, every host)    | `traefik.*` → 8080 (dashboard)             | `docker.io/library/traefik:v3` — auto                                                                                   | none                                                                | 1     |
-| yuzukam                           | `yuzukam.*` → 3000                         | `ghcr.io/janlucaklees/yuzukam:latest` — auto                                                                            | none (stateless)                                                    | 2     |
-| stirling-pdf                      | `stirling.*` → 8180                        | `docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest` — auto                                                       | none                                                                | 2     |
-| jellyfin                          | `jellyfin.*` → 8096                        | `lscr.io/linuxserver/jellyfin:latest` — auto                                                                            | none                                                                | 2     |
-| kopia (built-in, `backup:` block) | `kopia.*` → 51515                          | `docker.io/kopia/kopia:0.23.1` — pinned, bumped in git                                                                  | the repository server itself, plus one generated account per client | 2     |
-| paperless (pod)                   | `paperless.*` → 8000, FTP 21 + 21100–21109 | app `paperless-ngx:2.20.15` and `pure-ftpd:trixie-1.0.50` pinned; postgres, redis, gotenberg and tika auto              | `data`, `media`, `backups` (nightly dump)                           | 3, 4  |
-| openarchiver (pod)                | `openarchiver.*` → 3001                    | app `v0.6.0`, `meilisearch:v1.38` and `tika:3.2.2.0-full` pinned; postgres and valkey auto                              | `data`, `backups` (nightly dump)                                    | 3     |
-| immich (pod)                      | `immich.*` → 2283                          | server and machine learning `v3.2.0` pinned together, the vectorchord postgres pinned by digest beside them; redis auto | `upload` (minus its own `backups/`), `backups` (nightly dump)       | 3     |
-| nextcloud (pod)                   | `nextcloud.*` → 8280, `collabora.*` → 9980 | app `33-fpm-alpine` pinned; nginx, postgres, redis and Collabora auto                                                   | `html`, `data`, `backups` (nightly dump)                            | 3     |
+| Service                           | Route                               | Images and updates                                                                                                      | Backup                                                              | Phase |
+| --------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ----- |
+| traefik (built-in, every host)    | `traefik.*` (dashboard)             | `docker.io/library/traefik:v3` — auto                                                                                   | none                                                                | 1     |
+| yuzukam                           | `yuzukam.*`                         | `ghcr.io/janlucaklees/yuzukam:latest` — auto                                                                            | none (stateless)                                                    | 2     |
+| stirling-pdf                      | `stirling.*`                        | `docker.stirlingpdf.com/stirlingtools/stirling-pdf:latest` — auto                                                       | none                                                                | 2     |
+| jellyfin                          | `jellyfin.*`                        | `lscr.io/linuxserver/jellyfin:latest` — auto                                                                            | none                                                                | 2     |
+| kopia (built-in, `backup:` block) | `kopia.*`                           | `docker.io/kopia/kopia:0.23.1` — pinned, bumped in git                                                                  | the repository server itself, plus one generated account per client | 2     |
+| paperless (pod)                   | `paperless.*`, FTP 21 + 21100–21109 | app `paperless-ngx:2.20.15` and `pure-ftpd:trixie-1.0.50` pinned; postgres, redis, gotenberg and tika auto              | `data`, `media`, `backups` (nightly dump)                           | 3, 4  |
+| openarchiver (pod)                | `openarchiver.*`                    | app `v0.6.0`, `meilisearch:v1.38` and `tika:3.2.2.0-full` pinned; postgres and valkey auto                              | `data`, `backups` (nightly dump)                                    | 3     |
+| immich (pod)                      | `immich.*`                          | server and machine learning `v3.2.0` pinned together, the vectorchord postgres pinned by digest beside them; redis auto | `upload` (minus its own `backups/`), `backups` (nightly dump)       | 3     |
+| nextcloud (pod)                   | `nextcloud.*`, `collabora.*`        | app `33-fpm-alpine` pinned; nginx, postgres, redis and Collabora auto                                                   | `html`, `data`, `backups` (nightly dump)                            | 3     |
 
 Traefik and kopia have no folder here — they are Cradle's built-ins, listed because they
 run on this host and answer on these names. Everything else in the table is a folder under
@@ -80,9 +80,13 @@ which is not a decision for a nightly timer. The pods pin on the same rule: what
 carries a migration when it moves (an application schema, a search index format, a
 database extension set) is a line in git, and the interchangeable parts float.
 
-`openarchiver`'s route port is 3001 while the app itself listens on 3000 — yuzukam
-already has 3000 on the host, and only the pod's `PublishPort=` line sees both
-numbers.
+No loopback port appears in the table, because none appears in a file either. A
+service declares `container_port`, the port its own process listens on inside the
+container, and Cradle derives the port Traefik dials from the service name and the
+route's domain — `10000 + (crc32("<name>/<domain>") mod 10000)`, stable, stateless,
+and a collision refused at converge naming both services. That is what `container_port`
+is for: `openarchiver` and `yuzukam` both listen on 3000 inside their own pods and no
+longer care, and only the pod's `PublishPort=` line sees both numbers.
 
 A service with a `backup:` block gets a Kopia client container **generated into its
 pod** by the `service` role; it is not in the service folder. It connects to
@@ -200,14 +204,20 @@ timer's run.
 ## Networking
 
 Traefik is the only process on a routable port. It runs rootless as `svc-traefik` with
-`Network=host`, owns 80 and 443, and every other service publishes on `127.0.0.1:<port>`
-only — rootless containers of different users cannot reach each other's loopback, so
-service-to-service traffic goes out through Traefik and the public name.
+`Network=host`, owns 80 and 443, and every other service publishes on
+`127.0.0.1:<derived port>` only — rootless containers of different users cannot reach
+each other's loopback, so service-to-service traffic goes out through Traefik and the
+public name.
 
-Plain TCP goes through the same door. A service declares `tcp_ports` (paperless:
-`{port: 21, target: 2121}` plus the passive range `21100–21109`), the playbook collects
-every placed port, and Traefik gets one entrypoint per port forwarding to that service's
-loopback port. Three consequences worth knowing before the first converge:
+Plain TCP goes through the same door, and it is the one kind of port a service still
+picks: a port like 21 is meaningful to the client that dials it. A service declares
+`tcp_ports` (paperless: `{port: 21, target: 2121}` plus the passive range
+`21100–21109`), the playbook collects every placed port, and Traefik gets one entrypoint
+per port forwarding to that service's target on loopback. Those numbers all sit
+**outside** the derivation range 10000–19999, which is why they are allowed at all — a
+declared TCP port inside that range is refused outright, collision or not, because the
+range belongs to the derived ports and nothing else may claim a number in it. Three
+consequences worth knowing before the first converge:
 
 - **A TCP entrypoint binds one concrete address**, `tcp_bind_address`, which defaults to
   the host's default-route address (`ansible_default_ipv4.address`) and is overridable as

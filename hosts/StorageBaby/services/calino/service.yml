@@ -1,7 +1,7 @@
 name: calino
 # Two routes, two containers, and they are reached differently: the browser loads the app
 # from the first and then makes its CalDAV requests to the second, cross-origin. So the
-# `routes` list rather than the `domain:` + `port:` shorthand.
+# `routes` list rather than the `domain:` + `container_port:` shorthand.
 routes:
   # The app itself. **No `basic_auth`**, deliberately: Calino's own master password is the
   # authentication, and a second prompt in front of it protects nothing that is not already
@@ -10,7 +10,7 @@ routes:
   # master password is attackable offline rather than through a login. PBKDF2 at 600,000
   # iterations is what makes that expensive, which puts the whole weight on choosing a
   # strong one.
-  - { domain: calino.klees.io, port: 8085 }
+  - { domain: calino.klees.io, container_port: 8085 }
   # The CORS proxy. **No `basic_auth` here**, and that is not an oversight: the browser
   # calls this from the app's origin, and a cross-origin request carries no basic
   # credentials, so the middleware would 401 every CalDAV call. It is pinned by
@@ -19,7 +19,7 @@ routes:
   #
   # `probe_path`: the proxy answers `/health` and treats `/` as an unencoded target, so the
   # verifier has to ask the endpoint that means "I am up".
-  - { domain: dav.klees.io, port: 8086, probe_path: /health }
+  - { domain: dav.klees.io, container_port: 8086, probe_path: /health }
 # Nothing persists. The app is a static bundle and the proxy is a relay; everything a user
 # accumulates lives in their own browser.
 volumes: {}

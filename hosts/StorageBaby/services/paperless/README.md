@@ -393,8 +393,9 @@ actually restarted something and not on the nightly no-op.
   the only writer is `paperless-ftp`, inside the pod, as the same in-container uid
   the app runs as.
 - **Traefik labels.** Podman containers are invisible to Traefik's Docker
-  provider; the role writes a file-provider route from `domain` and `port` in
-  `service.yml` instead.
+  provider; the role writes a file-provider route from `domain` and the loopback
+  port it derives for that route instead — `service.yml` names only the
+  `container_port`.
 - **Watchtower labels.** `AutoUpdate=registry` and the service user's
   `podman-auto-update.timer` replaced it.
 

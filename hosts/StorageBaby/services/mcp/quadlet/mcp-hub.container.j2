@@ -20,8 +20,8 @@ Environment=TZ={{ tz }}
    container's network namespace keeps `net.ipv4.ip_unprivileged_port_start` at 1024, so a
    process that is not container-root cannot bind 80 at all: the hub exited and the
    container reported `unhealthy` while the two adapters beside it -- 8000 and 3001 -- were
-   fine. Measured on test-a. Anything above 1024 works; the route port is the obvious
-   choice, so the number means one thing from Traefik to the process. #}
+   fine. Measured on test-a. Anything above 1024 works; this is the `container_port` the
+   route declares, and the loopback port Traefik dials is derived from the route's name. #}
 Environment=PORT=3002
 {# The public base URL as a client sees it, which is what the OAuth flow redirects to.
    Traefik terminates the TLS; the hub itself serves plain HTTP inside the pod. #}

@@ -1,10 +1,9 @@
 [Pod]
 PodName=paperless
-{# Literal, not `{{ service.port }}` or a loop over `tcp_ports`: the static check reads
-   these lines out of the raw template to compare the published ports against the
-   declared routes and TCP targets, and a templated line would make it compare the
-   contract with itself. #}
-PublishPort=127.0.0.1:8000:8000
+{# The loopback port is Cradle's, derived and in no file; `container_port` is this pod's
+   own. The static check reads this line out of the raw template and accepts a `publish_port`
+   expression for a route and a literal only for a `tcp_ports` target. #}
+PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}
 {# The FTP control port. Traefik owns 21 on the host's own address and forwards here. #}
 PublishPort=127.0.0.1:2121:2121
 {# The passive range, one line for the whole of it, port-to-port because the server

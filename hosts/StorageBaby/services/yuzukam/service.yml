@@ -1,5 +1,5 @@
 name: yuzukam
-port: 3000
+container_port: 3000
 domain: yuzukam
 volumes: {}
 secrets: []

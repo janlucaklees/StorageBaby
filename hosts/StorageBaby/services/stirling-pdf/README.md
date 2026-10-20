@@ -39,11 +39,12 @@ answer, not an outage.
 
 ## Networking
 
-The container binds `127.0.0.1:8180` only, never the LAN interface.
-Reachability comes entirely from Traefik, whose route file the `service` role
-renders from `domain` and `port` in `service.yml`. Traefik finds it through its
-file provider, not Docker labels — Podman containers are invisible to Traefik's
-Docker provider whatever the network mode.
+The container listens on 8080 — its `container_port` — and the unit publishes that
+on loopback only, at the port Cradle derives for the `stirling.klees.io` route;
+never the LAN interface. Reachability comes entirely from Traefik, whose route file
+the `service` role renders from `domain` and that same derived port. Traefik finds
+it through its file provider, not Docker labels — Podman containers are invisible
+to Traefik's Docker provider whatever the network mode.
 
 ## Updates
 
@@ -54,5 +55,6 @@ one fails its health check.
 ## Changing something
 
 Edit `service.yml` or `quadlet/stirling-pdf.container.j2` and let the host's
-deploy timer converge — the role re-renders the unit and restarts it, and a
-changed `domain`/`port` rewrites the Traefik route with no restart at all.
+deploy timer converge — the role re-renders the unit and restarts it. A changed
+`domain` rewrites the Traefik route, and moves the derived loopback port with it,
+so the unit changes too and the service restarts once.

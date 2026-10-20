@@ -194,8 +194,9 @@ copy of a backup, and dropping it is a decision about restore work, not about re
   client is registered by the kopia server from `client_immich` rather than by
   hand.
 - **The Traefik labels.** Podman containers are invisible to Traefik's Docker
-  provider; the role writes a file-provider route from `domain` and `port` in
-  `service.yml` instead.
+  provider; the role writes a file-provider route from `domain` and the loopback
+  port it derives for that route instead — `service.yml` names only the
+  `container_port`.
 - **The Watchtower label on redis.** `AutoUpdate=registry` and the service user's
   `podman-auto-update.timer` replaced it.
 - **The database and secret env on `immich-ml`.** The compose file gave the ML

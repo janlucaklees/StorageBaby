@@ -1,6 +1,6 @@
 [Pod]
 PodName=mealie
-{# Literal, not `{{ service.port }}`: the static check reads this line out of the raw
-   template to compare the published ports against the declared routes, and a templated
-   line would make it compare the contract with itself. #}
-PublishPort=127.0.0.1:9000:9000
+{# The loopback port is Cradle's, derived and in no file; `container_port` is this pod's
+   own. The static check reads this line out of the raw template and accepts a `publish_port`
+   expression for a route and a literal only for a `tcp_ports` target. #}
+PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}
