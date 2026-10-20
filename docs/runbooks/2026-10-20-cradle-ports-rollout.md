@@ -199,8 +199,9 @@ traefik, kopia and the fourteen services.
       equivalent of Cradle's `test_ftp`. The ports did not move; the pod they forward into
       restarted.
 - [ ] **One hourly `kopia-sync.service` run**, and one sidecar's
-      `kopia repository status`. The sidecars reach the server through Traefik, and
-      Traefik's own port moved under them — this is the one indirect consequence of the
+      `kopia repository status`. The sidecars reach the server through Traefik on 443,
+      which did not move; what moved is the loopback port Traefik forwards to — kopia's
+      `PublishPort=` line, `51515` → `16915`. That is the one indirect consequence of the
       stage worth measuring rather than assuming.
 
 The route loop:

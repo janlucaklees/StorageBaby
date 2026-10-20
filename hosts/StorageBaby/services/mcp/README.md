@@ -21,13 +21,12 @@ ones, and gives all of them one door, one credential store and one config file.
 
 ```
 Traefik ──► 127.0.0.1:<derived> ──► mcp-hub :3002 ┬─ stdio ──► mealie-mcp ──► mealie.klees.io
-                                             ├─ http ───► :8000 mcp-nextcloud ──► nextcloud.klees.io
-                                             └─ http ───► :3001 mcp-paperless ──► paperless.klees.io
+                                                  ├─ http ───► :8000 mcp-nextcloud ──► nextcloud.klees.io
+                                                  └─ http ───► :3001 mcp-paperless ──► paperless.klees.io
 ```
 
-The pod publishes the hub's 3002 — its `container_port` — and nothing else, on the
-loopback port Cradle derives for the `mcp` route. 8000 and 3001 exist only on the pod's
-own loopback,
+The pod publishes the hub's 3002 — its `container_port` — and nothing else, on the loopback
+port Cradle derives for the `mcp` route. 8000 and 3001 exist only on the pod's own loopback,
 which is the point: `mcp-nextcloud` in single-user mode authenticates _to_ Nextcloud with an
 app password and asks its own clients for nothing, so the hub's OAuth 2.1 has to be the only
 way in. Each adapter reaches its application by the application's public route name through

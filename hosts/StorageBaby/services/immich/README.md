@@ -108,7 +108,8 @@ local_address                     rem_address
 ```
 
 and the VM's own `eth0` is `192.168.122.16/24`. So the peer is the **host
-itself**: Traefik runs with `Network=host` and connects to `127.0.0.1:2283`, and
+itself**: Traefik runs with `Network=host` and connects to `127.0.0.1:<the derived
+port>`, and
 pasta rewrites that loopback source to the pod's address, which under rootless
 Podman is the host's. Paperless found the same thing on port 8000.
 

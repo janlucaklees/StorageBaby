@@ -228,7 +228,7 @@ tcp 0 0 ::ffff:192.168.122.25:8000  ::ffff:192.168.122.25:60108  ESTABLISHED
 ```
 
 — the **host's own address**. Traefik runs with `Network=host` and connects to
-`127.0.0.1:8000`, and pasta rewrites that loopback source to the pod's address,
+`127.0.0.1:<the derived port>`, and pasta rewrites that loopback source to the pod's address,
 which under rootless Podman is the host's. So the value would have to be a
 different literal IP per host.
 

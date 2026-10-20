@@ -74,9 +74,9 @@ publish_port = 10000 + (crc32("<service name>/<route domain>") mod 10000)
   implementation.)
 - `crc32` over the UTF-8 bytes of `<name>/<domain>` where `<domain>` is the route's
   declared `domain` string (the label or the full name, as written). It is stable across
-  hosts and Cradle versions, needs no library beyond Python's `zlib` in the Ansible filter
-  and `binascii` in the tests, and is computed identically by the role (a filter plugin in
-  Cradle), by the static suite and by the integration verifiers.
+  hosts and Cradle versions and needs no library beyond Python's `zlib`. The function
+  lives in Cradle's filter plugin, and the static suite and the integration verifiers
+  import it from there rather than restating it.
 - **Collisions are refused, not resolved.** Two routes on one host mapping to the same
   port, or a derived port equal to a declared TCP port or TCP target, fail the converge
   naming both sides. Expected frequency: with 20 routes in 10,000 slots the chance of any
