@@ -58,8 +58,10 @@ unchanged. No route label is renamed, so no DNS record and no certificate change
 
 ## Preconditions
 
-- [ ] **The Cradle PR is open, green and not merged** — the PR from branch `ports` in
-      `janlucaklees/cradle`. Confirm its CI with `gh pr checks` before anything else.
+- [ ] **The Cradle PR is open, green and not merged** —
+      <https://github.com/janlucaklees/cradle/pull/1>, from branch `ports` in
+      `janlucaklees/cradle`. Confirm its CI with `gh pr checks 1 -R janlucaklees/cradle`
+      before anything else.
 - [ ] **Cradle's `stable` is still at the pre-stage-3 SHA**:
       `f8eb03b7d3b068d5c2328b61b8dd2c9e876a3b80`. Confirm with
       `gh api repos/janlucaklees/cradle/branches/stable --jq .commit.sha` and **write the
@@ -79,12 +81,13 @@ unchanged. No route label is renamed, so no DNS record and no certificate change
       the seven `*-dump.timer`s at 02:30 (immich, mailflow, mealie, nextcloud,
       openarchiver, openproject, paperless); the window leaves both clear on either side.
 - [ ] **The hourly replica push is not running.**
-      `systemctl --user -M svc-kopia@ list-timers` — `kopia-sync.timer` fires at `:00`-ish
+      `doas systemctl --user -M svc-kopia@ list-timers` — `kopia-sync.timer` fires at
+      `:00`-ish
       every hour; start inside the first half of an hour so the converge does not meet it.
       Not a hard deadline, but a push interrupted mid-converge makes the verification
       ambiguous.
 - [ ] **No Molecule run on the workstation**, and no second converge in flight:
-      `systemctl is-active cradle-deploy.service` → `inactive`.
+      `doas systemctl is-active cradle-deploy.service` → `inactive`.
 - [ ] **No data precondition at all.** Nothing in this stage touches a secret, a volume,
       a bind or the pool, so there is nothing to back up first and nothing to read out of
       a sops file before a merge. That is what makes this a restart window rather than a
@@ -92,8 +95,8 @@ unchanged. No route label is renamed, so no DNS record and no certificate change
 
 ## Stop the timer, first
 
-- [ ] `systemctl stop cradle-deploy.timer`
-- [ ] `systemctl is-active cradle-deploy.timer` → `inactive`
+- [ ] `doas systemctl stop cradle-deploy.timer`
+- [ ] `doas systemctl is-active cradle-deploy.timer` → `inactive`
 
 **Before any merge.** Three repositories break together here. The moment Cradle's `stable`
 carries stage 3, a host whose folders still say `port:` is refused — the role and the
@@ -105,7 +108,8 @@ line at all.
 
 ## The three merges, in order, each waited out
 
-- [ ] **Merge the Cradle PR** (branch `ports`). Then `gh run watch` on the master push,
+- [ ] **Merge the Cradle PR**, <https://github.com/janlucaklees/cradle/pull/1> (branch
+      `ports`). Then `gh run watch` on the master push,
       and confirm the promotion:
       `gh api repos/janlucaklees/cradle/branches/stable --jq .commit.sha` equals the merge
       commit.
@@ -149,6 +153,23 @@ storage task changed.** Nothing in this stage writes anything but a unit and a r
 The derived numbers to expect are the eighteen in the table above. Anything beyond that
 list stops the rollout — read it before converging.
 
+Then one check the converge itself **cannot** make. Cradle refuses a collision between two
+derived ports, and between a derived port and a declared TCP port or target, because it
+knows about both. It knows nothing about a process that is not a Cradle service: a derived
+port already held by something else on this host's loopback makes the pod fail to start
+with an address already in use, after the unit was written. So, **before** starting the
+converge:
+
+```bash
+doas ss -H -lnt | grep -E ':(11478|11773|12195|12726|13177|13465|13500|13721|13910|14550|15130|15171|16100|16109|16915|17609|18643|19778)\b'
+```
+
+Expected: **empty, no output at all.** The eighteen are the seventeen routes placed on this
+host plus renaissance's 16100. It has to run before the converge and not after: afterwards
+every one of them is bound by the service it belongs to, 12195 by Traefik itself, and the
+check is meaningless. A hit names the port — find what holds it and stop; the remedy is
+that process, or renaming the route's label, which is the service's own fact.
+
 ## The converge
 
 - [ ] `doas systemctl start cradle-deploy.service`, blocking.
@@ -156,7 +177,8 @@ list stops the rollout — read it before converging.
 Order within the tick: traefik first (it is placed first), then kopia, then the host's own
 services in folder order. Each restarts once, because its unit changed. Traefik's route
 files are rewritten in place and it watches the directory, so the only outage per service
-is its own restart. Expect the whole tick to take as long as fifteen container restarts.
+is its own restart. Expect the whole tick to take as long as sixteen container restarts —
+traefik, kopia and the fourteen services.
 
 ## Verification
 
@@ -164,7 +186,8 @@ is its own restart. Expect the whole tick to take as long as fifteen container r
 - [ ] Each of the fourteen — calino, hermes, immich, jellyfin, mailflow, mcp, mealie,
       nextcloud, openarchiver, openproject, paperless, renaissance, stirling-pdf,
       yuzukam: active.
-- [ ] `ss -H -lntpe | grep 127.0.0.1` — one line per derived port of the table above, each
+- [ ] `doas ss -H -lntpe | grep 127.0.0.1` — one line per derived port of the table above,
+      each
       with the `uid:` of its own `svc-<name>`, and **no line on the old ports**: 8085,
       8086, 8080, 8096, 8000, 8081, 8180, 8280, 9980, 9119, 9000, 3000, 3001, 3002, 3003,
       2283, 8300, 51515 as _host_-side ports. Several of those are still container-side
@@ -207,7 +230,7 @@ Three things go back together, for the same reason they went forward together: a
       once by bootstrap and read by every tick — no role rewrites it — so the pin survives
       converges and has to be taken out by hand (`CRADLE_REF=stable` again) when stage 3
       is attempted a second time. Check it with
-      `grep CRADLE_REF /etc/cradle/deploy.conf` before and after.
+      `doas grep CRADLE_REF /etc/cradle/deploy.conf` before and after.
 - [ ] **Revert this repository's merge** (`git revert -m 1 <merge sha>`, push, let CI move
       `stable`).
 - [ ] **Revert renaissance's change** the same way, and let its CI move its own `stable`.
@@ -220,8 +243,8 @@ cheap to abandon at any point before the converge.
 
 ## Start the timer
 
-- [ ] `systemctl start cradle-deploy.timer`
-- [ ] `systemctl list-timers cradle-deploy.timer` shows a next elapse.
+- [ ] `doas systemctl start cradle-deploy.timer`
+- [ ] `doas systemctl list-timers cradle-deploy.timer` shows a next elapse.
 
 **This is the step that is forgotten**, and a host with a stopped timer looks healthy for
 weeks.
