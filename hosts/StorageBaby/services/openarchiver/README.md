@@ -34,13 +34,14 @@ not make. tika is, because `3.2.2.0-full` is a specific build with the OCR and
 parser set attachment extraction needs; `latest` would swap that out silently.
 postgres and valkey ride `AutoUpdate=registry` within their major.
 
-### The published port is 3001, the app's port is 3000
+### `container_port: 3000` is the only port this folder names
 
-`PublishPort=127.0.0.1:3001:3000`. OpenArchiver's frontend listens on 3000 and
-that stays as it is inside the pod; on the host, yuzukam already publishes 3000,
-and two services cannot share a loopback port. So the route's port — the one in
-`service.yml` and in the Traefik file — is 3001, and the pod's publish line is
-the only place the two numbers meet.
+OpenArchiver's frontend listens on 3000, inside the pod, and that is the whole of
+what `service.yml` says about ports. The loopback port Traefik dials is Cradle's,
+derived from the service name and the route's domain, so no two services can want
+the same one by accident and there is nothing here to pick. The pod's publish line,
+`PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}`, is the only place
+the two numbers meet.
 
 ### `AddHost=` — the pod has to be able to reach Traefik
 
@@ -289,8 +290,9 @@ the archive and the database.
 ## Dropped from the compose stack
 
 - **The Traefik labels.** Podman containers are invisible to Traefik's Docker
-  provider; the role writes a file-provider route from `domain` and `port` in
-  `service.yml` instead.
+  provider; the role writes a file-provider route from `domain` and the loopback
+  port it derives for that route instead — `service.yml` names only the
+  `container_port`.
 - **The Watchtower labels.** `AutoUpdate=registry` and the service user's
   `podman-auto-update.timer` replaced them.
 - **`depends_on: condition: service_healthy`.** Inside a pod the parts share a

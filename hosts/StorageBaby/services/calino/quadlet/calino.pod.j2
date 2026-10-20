@@ -1,11 +1,12 @@
 [Pod]
 PodName=calino
-{# Literal, not templated: the static check reads these lines out of the raw template to
-   compare the published ports against the declared routes, and a templated line would
-   make it compare the contract with itself.
+{# The loopback port is Cradle's, derived and in no file; `container_port` is this pod's
+   own. The static check reads this line out of the raw template and accepts a `publish_port`
+   expression for a route and a literal only for a `tcp_ports` target.
 
-   Two ports because the browser talks to both: it loads the app from 8085 and then makes
-   its CalDAV calls to the proxy on 8086, from the app's origin. Unlike every other pod
-   here, neither port is internal -- there is no server-side hop between them at all. #}
-PublishPort=127.0.0.1:8085:8085
-PublishPort=127.0.0.1:8086:8086
+   Two lines because the browser talks to both routes: it loads the app from the first and
+   then makes its CalDAV calls to the proxy on the second, from the app's origin. Unlike
+   every other pod here, neither port is internal -- there is no server-side hop between
+   them at all. #}
+PublishPort=127.0.0.1:{{ routes[0].publish_port }}:{{ routes[0].container_port }}
+PublishPort=127.0.0.1:{{ routes[1].publish_port }}:{{ routes[1].container_port }}

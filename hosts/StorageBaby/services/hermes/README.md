@@ -20,7 +20,8 @@ Upstream's compose runs two containers, both with `network_mode: host`. Neither 
 - **No host networking.** This platform reserves that for Traefik. Hermes does not need it:
   every messaging channel it speaks is an outbound connection, and `HERMES_DASHBOARD_HOST`
   already defaults to `0.0.0.0`, so the dashboard is reachable through an ordinary
-  `PublishPort` on the pod.
+  `PublishPort` on the pod — `PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}`,
+  the loopback side of it being Cradle's and derived, not this folder's.
 
 `gateway run` is the command. Inside the image that process is a `sleep infinity` heartbeat
 and s6 supervises the real gateway, so a crash is restarted in seconds without the

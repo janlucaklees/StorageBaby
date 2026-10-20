@@ -5,7 +5,7 @@ Description=Jellyfin
 Image=lscr.io/linuxserver/jellyfin:latest
 ContainerName=jellyfin
 AutoUpdate=registry
-PublishPort=127.0.0.1:{{ service.port }}:8096
+PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}
 {% if keep_groups | bool %}
 GroupAdd=keep-groups
 {% endif %}

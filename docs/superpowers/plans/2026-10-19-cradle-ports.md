@@ -1495,12 +1495,14 @@ it publishes nothing, and renaissance is absent from the render):
 2121 11478 11773 12726 13177 13465 13500 13721 13910 14550 15130 15171 16109 16915 17609 18643 19778 21100
 ```
 
-The second must be exactly these **28** — the 17 derived route ports placed on this host,
-traefik's own 12195 among them, plus paperless's `2121` and its ten passive ports, each of
-which is a TCP service's own `127.0.0.1:<target>` line:
+The second must be exactly these **27** — the 16 derived route ports that get a route file
+with a `url:` on this host, plus paperless's `2121` and its ten passive ports, each of which
+is a TCP service's own `127.0.0.1:<target>` line. Traefik contributes nothing here either:
+its dashboard router points at `api@internal` and so its file carries no `url:`, which is
+why 12195 is absent:
 
 ```
-2121 11478 11773 12195 12726 13177 13465 13500 13721 13910 14550 15130 15171 16109 16915 17609 18643 19778 21100 21101 21102 21103 21104 21105 21106 21107 21108 21109
+2121 11478 11773 12726 13177 13465 13500 13721 13910 14550 15130 15171 16109 16915 17609 18643 19778 21100 21101 21102 21103 21104 21105 21106 21107 21108 21109
 ```
 
 Any number not in the list, or any of these missing, is the diff to read before the PR is

@@ -1,11 +1,11 @@
 [Pod]
 PodName=hermes
-{# Literal, not `{{ service.port }}`: the static check reads this line out of the raw
-   template to compare the published ports against the declared routes, and a templated
-   line would make it compare the contract with itself.
+{# The loopback port is Cradle's, derived and in no file; `container_port` is this pod's
+   own. The static check reads this line out of the raw template and accepts a `publish_port`
+   expression for a route and a literal only for a `tcp_ports` target.
 
    The dashboard, and nothing else. Upstream's compose runs both its containers with
    `network_mode: host`; this platform reserves host networking for Traefik, and Hermes
    does not need it -- every channel it speaks is an outbound connection, and the dashboard
    binds 0.0.0.0 inside the container by default. #}
-PublishPort=127.0.0.1:9119:9119
+PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}

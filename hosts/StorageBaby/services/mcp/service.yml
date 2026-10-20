@@ -1,5 +1,5 @@
 name: mcp
-port: 3002
+container_port: 3002
 # Private: `mcp` is the bare label the host's own `domain` completes, so this is
 # mcp.home.klees.io on storagebaby and mcp.test.local on a test host. The endpoint is
 # reached by OpenClaw on the same host and by a VPN client, never from the internet.

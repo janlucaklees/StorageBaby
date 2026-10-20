@@ -1,5 +1,5 @@
 name: mailflow
-port: 3003
+container_port: 80
 domain: mailflow.klees.io
 volumes:
   database: { class: fast, owner: 70 }

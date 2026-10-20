@@ -228,7 +228,7 @@ tcp 0 0 ::ffff:192.168.122.25:8000  ::ffff:192.168.122.25:60108  ESTABLISHED
 ```
 
 — the **host's own address**. Traefik runs with `Network=host` and connects to
-`127.0.0.1:8000`, and pasta rewrites that loopback source to the pod's address,
+`127.0.0.1:<the derived port>`, and pasta rewrites that loopback source to the pod's address,
 which under rootless Podman is the host's. So the value would have to be a
 different literal IP per host.
 
@@ -393,8 +393,9 @@ actually restarted something and not on the nightly no-op.
   the only writer is `paperless-ftp`, inside the pod, as the same in-container uid
   the app runs as.
 - **Traefik labels.** Podman containers are invisible to Traefik's Docker
-  provider; the role writes a file-provider route from `domain` and `port` in
-  `service.yml` instead.
+  provider; the role writes a file-provider route from `domain` and the loopback
+  port it derives for that route instead — `service.yml` names only the
+  `container_port`.
 - **Watchtower labels.** `AutoUpdate=registry` and the service user's
   `podman-auto-update.timer` replaced it.
 

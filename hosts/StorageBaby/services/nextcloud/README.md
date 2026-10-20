@@ -40,21 +40,28 @@ health check.
 
 ```yaml
 routes:
-  - { domain: nextcloud, port: 8280 }
-  - { domain: collabora, port: 9980, scheme: https, insecure_skip_verify: true }
+  - { domain: nextcloud.klees.io, container_port: 80 }
+  - {
+      domain: collabora.klees.io,
+      container_port: 9980,
+      scheme: https,
+      insecure_skip_verify: true
+    }
 ```
 
 This is the service the `routes` list exists for. The browser loads Nextcloud
 from one hostname and, when it opens a document, loads the editor from the other
 — they are two origins to it, not one service with a path prefix. So the pod
-publishes two loopback ports and the role writes two Traefik files,
-`nextcloud-nextcloud.yml` and `nextcloud-collabora.yml`, each with its own router
-and service.
+publishes two derived loopback ports and the role writes two Traefik files, named
+`<name>-<domain>.yml` — `nextcloud-nextcloud.klees.io.yml` and
+`nextcloud-collabora.klees.io.yml` — each with its own router and service.
 
-`8280` rather than `80`: `PublishPort=127.0.0.1:8280:80` maps the route's
-loopback port onto the port nginx really listens on. Only the pod's publish line
-bridges the two; nothing inside the pod knows about 8280. Collabora's two numbers
-are the same, so its line is `9980:9980`.
+Each route names only its `container_port` — 80, what nginx really listens on, and
+9980 for Collabora. The loopback port on the other side of the publish is derived
+per route from the service name and the domain, so the pod's two lines are
+`PublishPort=127.0.0.1:{{ routes[0].publish_port }}:{{ routes[0].container_port }}`
+and the same for `routes[1]`. Only those lines bridge the two numbers; nothing
+inside the pod knows the host-side one.
 
 The old compose file put `traefik.http.routers.collabora.tls.certresolver` on the
 Collabora container. There is no per-router resolver any more: Traefik issues one
@@ -221,7 +228,12 @@ would otherwise kill it halfway through and make it begin again. Collabora gets
 ## Collabora keeps its own TLS
 
 ```yaml
-- { domain: collabora, port: 9980, scheme: https, insecure_skip_verify: true }
+- {
+    domain: collabora.klees.io,
+    container_port: 9980,
+    scheme: https,
+    insecure_skip_verify: true
+  }
 ```
 
 ```
@@ -403,7 +415,7 @@ Traefik for `nextcloud.test.local` arrives as
 
 — `$remote_addr` is `192.168.122.247`, the **VM's own address**, while the
 `X-Forwarded-For` Traefik set is the real client. Traefik runs with
-`Network=host` and connects to `127.0.0.1:8280`, and pasta
+`Network=host` and connects to `127.0.0.1:<the derived port>`, and pasta
 rewrites that loopback source to the pod's address, which under rootless Podman
 is the host's. So the value would have to be a different literal IP per host, for
 a setting whose only job is to decide whether to believe `X-Forwarded-For`.

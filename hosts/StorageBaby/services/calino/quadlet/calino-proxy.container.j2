@@ -6,8 +6,8 @@ Image=ghcr.io/ivan-malinovski/calino-proxy:0.39.1
 ContainerName=calino-proxy
 Pod=calino.pod
 Environment=TZ={{ tz }}
-{# Its default is 8081; the route port instead, so one number means the same thing from
-   Traefik to the process. #}
+{# Its default is 8081; this is the `container_port` the route declares instead, so the
+   process and the publish line agree. The loopback port Traefik dials is derived. #}
 Environment=PORT=8086
 {# The whole of this relay's access control, and worth being precise about what each does.
    `ALLOWED_TARGETS` is the real limit: it may fetch this host and nothing else, so even an

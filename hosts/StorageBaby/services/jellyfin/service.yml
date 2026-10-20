@@ -1,5 +1,5 @@
 name: jellyfin
-port: 8096
+container_port: 8096
 domain: jellyfin
 volumes:
   # `PUID=1000`/`PGID=1000` in the unit, which the linuxserver image applies through

@@ -151,12 +151,15 @@ correct answer and not an outage.
 
 ## Networking
 
-The container binds `127.0.0.1:8096` only. Reachability comes entirely from
-Traefik, whose route file the `service` role renders from `domain` and `port` in
-`service.yml`; Traefik picks it up through its file provider, not Docker labels.
+The container listens on 8096 — its `container_port` — and the unit publishes that
+on loopback only, at the port Cradle derives for the `jellyfin` route. Reachability
+comes entirely from Traefik, whose route file the `service` role renders from
+`domain` and that same derived port; Traefik picks it up through its file provider,
+not Docker labels.
 
 ## Changing something
 
 Edit `service.yml` or `quadlet/jellyfin.container.j2` and let the host's deploy
-timer converge — the role re-renders the unit and restarts it, and a changed
-`domain`/`port` rewrites the Traefik route with no restart at all.
+timer converge — the role re-renders the unit and restarts it. A changed `domain`
+rewrites the Traefik route, and moves the derived loopback port with it, so the
+unit changes too and the service restarts once.
