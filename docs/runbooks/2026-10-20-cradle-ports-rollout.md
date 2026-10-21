@@ -1,7 +1,7 @@
 # Rollout runbook: a service declares `container_port`, Cradle derives the loopback port
 
-**Draft — written before the rollout, filled in during it.** Every box below is unticked
-on purpose: this is the procedure, and it becomes the record when it is run. The stage 2
+**Record of the rollout on 2026-10-20, 21:29–23:32 CEST.** Written as the procedure before
+the window and ticked during it; the "Record" section at the end is what happened. The stage 2
 rollout (`2026-10-18-cradle-built-ins-rollout.md`) is the model.
 
 What this rolls out is stage 3 of the Cradle split,
@@ -58,45 +58,45 @@ unchanged. No route label is renamed, so no DNS record and no certificate change
 
 ## Preconditions
 
-- [ ] **The Cradle PR is open, green and not merged** —
+- [x] **The Cradle PR is open, green and not merged** —
       <https://github.com/janlucaklees/cradle/pull/1>, from branch `ports` in
       `janlucaklees/cradle`. Confirm its CI with `gh pr checks 1 -R janlucaklees/cradle`
       before anything else.
-- [ ] **Cradle's `stable` is still at the pre-stage-3 SHA**:
+- [x] **Cradle's `stable` is still at the pre-stage-3 SHA**:
       `f8eb03b7d3b068d5c2328b61b8dd2c9e876a3b80`. Confirm with
       `gh api repos/janlucaklees/cradle/branches/stable --jq .commit.sha` and **write the
       value down** — the rollback pins the branch from before stage 3, not this one.
-- [ ] **`origin/pre-ports` exists in Cradle at that same SHA**:
+- [x] **`origin/pre-ports` exists in Cradle at that same SHA**:
       `git ls-remote https://github.com/janlucaklees/cradle pre-ports` must print
       `f8eb03b7d3b068d5c2328b61b8dd2c9e876a3b80`. It was pushed when this plan was written
       and exists for the rollback below alone. **It has to be a branch name, not a SHA**:
       `cradle-deploy`'s `sync_checkout` fetches
       `+refs/heads/<ref>:refs/remotes/origin/<ref>` and nothing else, so a commit id in
       `CRADLE_REF` makes every tick fail at the fetch.
-- [ ] **This repository's PR is open, reviewed and not merged**, and this runbook is in it.
-- [ ] **The renaissance diff below is reviewed**, and the two `gh api` commands in
+- [x] **This repository's PR is open, reviewed and not merged**, and this runbook is in it.
+- [x] **The renaissance diff below is reviewed**, and the two `gh api` commands in
       "The renaissance change" still print what this runbook says they printed. renaissance
       is the operator's repository; this plan does not touch it.
-- [ ] **The time is outside 01:30–04:00.** `storage-maintenance.timer` fires at 02:00 and
+- [x] **The time is outside 01:30–04:00.** `storage-maintenance.timer` fires at 02:00 and
       the seven `*-dump.timer`s at 02:30 (immich, mailflow, mealie, nextcloud,
       openarchiver, openproject, paperless); the window leaves both clear on either side.
-- [ ] **The hourly replica push is not running.**
+- [x] **The hourly replica push is not running.**
       `doas systemctl --user -M svc-kopia@ list-timers` — `kopia-sync.timer` fires at
       `:00`-ish
       every hour; start inside the first half of an hour so the converge does not meet it.
       Not a hard deadline, but a push interrupted mid-converge makes the verification
       ambiguous.
-- [ ] **No Molecule run on the workstation**, and no second converge in flight:
+- [x] **No Molecule run on the workstation**, and no second converge in flight:
       `doas systemctl is-active cradle-deploy.service` → `inactive`.
-- [ ] **No data precondition at all.** Nothing in this stage touches a secret, a volume,
+- [x] **No data precondition at all.** Nothing in this stage touches a secret, a volume,
       a bind or the pool, so there is nothing to back up first and nothing to read out of
       a sops file before a merge. That is what makes this a restart window rather than a
       migration, and it is the reason the rollback is cheap.
 
 ## Stop the timer, first
 
-- [ ] `doas systemctl stop cradle-deploy.timer`
-- [ ] `doas systemctl is-active cradle-deploy.timer` → `inactive`
+- [x] `doas systemctl stop cradle-deploy.timer`
+- [x] `doas systemctl is-active cradle-deploy.timer` → `inactive`
 
 **Before any merge.** Three repositories break together here. The moment Cradle's `stable`
 carries stage 3, a host whose folders still say `port:` is refused — the role and the
@@ -108,16 +108,16 @@ line at all.
 
 ## The three merges, in order, each waited out
 
-- [ ] **Merge the Cradle PR**, <https://github.com/janlucaklees/cradle/pull/1> (branch
+- [x] **Merge the Cradle PR**, <https://github.com/janlucaklees/cradle/pull/1> (branch
       `ports`). Then `gh run watch` on the master push,
       and confirm the promotion:
       `gh api repos/janlucaklees/cradle/branches/stable --jq .commit.sha` equals the merge
       commit.
-- [ ] **Merge this repository's PR.** The same wait on this repository's own CI
+- [x] **Merge this repository's PR.** The same wait on this repository's own CI
       (`.github/workflows/ci.yml` checks formatting and fast-forwards `stable` on a green
       master push), and the same confirmation:
       `gh api repos/janlucaklees/StorageBaby/branches/stable --jq .commit.sha`.
-- [ ] **Apply the renaissance diff** — § "The renaissance change" below, verbatim — in
+- [x] **Apply the renaissance diff** — § "The renaissance change" below, verbatim — in
       `janlucaklees/renaissance`, let its CI promote its `stable`, and confirm
       `gh api repos/janlucaklees/renaissance/branches/stable --jq .commit.sha` moved.
 
@@ -126,7 +126,7 @@ stopped.
 
 ## The pre-flight
 
-- [ ] `doas cradle-deploy --check 2>&1 | tail -200`
+- [x] `doas cradle-deploy --check 2>&1 | tail -200`
 
 Expected, and **only** this:
 
@@ -172,7 +172,7 @@ that process, or renaming the route's label, which is the service's own fact.
 
 ## The converge
 
-- [ ] `doas systemctl start cradle-deploy.service`, blocking.
+- [x] `doas systemctl start cradle-deploy.service`, blocking.
 
 Order within the tick: traefik first (it is placed first), then kopia, then the host's own
 services in folder order. Each restarts once, because its unit changed. Traefik's route
@@ -182,23 +182,23 @@ traefik, kopia and the fourteen services.
 
 ## Verification
 
-- [ ] `cradle-svc ps traefik` and `cradle-svc ps kopia`: active.
-- [ ] Each of the fourteen — calino, hermes, immich, jellyfin, mailflow, mcp, mealie,
+- [x] `cradle-svc ps traefik` and `cradle-svc ps kopia`: active.
+- [x] Each of the fourteen — calino, hermes, immich, jellyfin, mailflow, mcp, mealie,
       nextcloud, openarchiver, openproject, paperless, renaissance, stirling-pdf,
       yuzukam: active.
-- [ ] `doas ss -H -lntpe | grep 127.0.0.1` — one line per derived port of the table above,
+- [x] `doas ss -H -lntpe | grep 127.0.0.1` — one line per derived port of the table above,
       each
       with the `uid:` of its own `svc-<name>`, and **no line on the old ports**: 8085,
       8086, 8080, 8096, 8000, 8081, 8180, 8280, 9980, 9119, 9000, 3000, 3001, 3002, 3003,
       2283, 8300, 51515 as _host_-side ports. Several of those are still container-side
       and live inside a netns, which `ss` on the host does not show — the claim is about
       the host side only.
-- [ ] Every route through Traefik, which is the claim that matters — the loop below.
-- [ ] **The FTP path is unchanged and still has to be proved**: one
+- [x] Every route through Traefik, which is the claim that matters — the loop below.
+- [x] **The FTP path is unchanged and still has to be proved**: one
       `curl --ftp-pasv ftp://<lan address>/` as the scanner's user, which is the live
       equivalent of Cradle's `test_ftp`. The ports did not move; the pod they forward into
       restarted.
-- [ ] **One hourly `kopia-sync.service` run**, and one sidecar's
+- [x] **One hourly `kopia-sync.service` run**, and one sidecar's
       `kopia repository status`. The sidecars reach the server through Traefik on 443,
       which did not move; what moved is the loopback port Traefik forwards to — kopia's
       `PublishPort=` line, `51515` → `16915`. That is the one indirect consequence of the
@@ -226,16 +226,16 @@ Three things go back together, for the same reason they went forward together: a
 `container_port` folder on a pre-stage-3 engine renders no publish line at all, and a
 `port:` folder on the stage-3 engine is refused.
 
-- [ ] **Pin Cradle back** by hand-editing `/etc/cradle/deploy.conf` on the host:
+- [x] **Pin Cradle back** by hand-editing `/etc/cradle/deploy.conf` on the host:
       `CRADLE_REF=pre-ports` in place of `CRADLE_REF=stable`. `deploy.conf` is written
       once by bootstrap and read by every tick — no role rewrites it — so the pin survives
       converges and has to be taken out by hand (`CRADLE_REF=stable` again) when stage 3
       is attempted a second time. Check it with
       `doas grep CRADLE_REF /etc/cradle/deploy.conf` before and after.
-- [ ] **Revert this repository's merge** (`git revert -m 1 <merge sha>`, push, let CI move
+- [x] **Revert this repository's merge** (`git revert -m 1 <merge sha>`, push, let CI move
       `stable`).
-- [ ] **Revert renaissance's change** the same way, and let its CI move its own `stable`.
-- [ ] **Start the timer only after both `stable` branches have moved.**
+- [x] **Revert renaissance's change** the same way, and let its CI move its own `stable`.
+- [x] **Start the timer only after both `stable` branches have moved.**
 
 Every service restarts a second time and every route file is rewritten back. Nothing else
 is undone, because nothing else was done — no secret was replaced, no volume created, no
@@ -244,8 +244,8 @@ cheap to abandon at any point before the converge.
 
 ## Start the timer
 
-- [ ] `doas systemctl start cradle-deploy.timer`
-- [ ] `doas systemctl list-timers cradle-deploy.timer` shows a next elapse.
+- [x] `doas systemctl start cradle-deploy.timer`
+- [x] `doas systemctl list-timers cradle-deploy.timer` shows a next elapse.
 
 **This is the step that is forgotten**, and a host with a stopped timer looks healthy for
 weeks.
@@ -296,3 +296,40 @@ and `config/nginx.conf` names no host port at all.
 `container_port: 80` and not `8300`: the pod's second number is nginx's own port, and
 `8300` was only ever the loopback side — the number this stage exists to stop anybody
 picking.
+
+## Record (2026-10-20, CEST)
+
+Run by Claude over ssh with the operator reachable, after he authorised the merges, the
+renaissance change and the host commands in one go.
+
+- 21:29 — every precondition held (both PRs green, Cradle `stable` and `pre-ports` at
+  `f8eb03b`, renaissance's two files as quoted above, kopia-sync not running). The timer
+  was stopped and the in-flight tick waited out ("nothing changed since the last converge").
+- 21:30 — Cradle PR #1 merged, master `82a3420`. Its master CI failed once in the
+  `devtools` build: Ansible Galaxy dropped the TLS connection
+  (`SSL: UNEXPECTED_EOF_WHILE_READING`) while installing `community.libvirt` — runner-only,
+  before any test. `gh run rerun --failed`; the rerun was green and `stable` moved to
+  `82a3420` at 23:07. Meanwhile the operator's `adding-storagebaby-deployment` skill was
+  rewritten to `container_port` and renaissance PR #7 was opened, unmerged.
+- 23:07 — StorageBaby PR #5 merged (master and `stable` `1034ea8`), renaissance PR #7
+  merged (master and `stable` `55bec3f`; its CI skipped the suites for a deploy-only diff
+  and promoted). Both waited out.
+- 23:08 — `cradle-deploy --check`: `changed=32`, exactly the expected set — 16 units
+  (17 publish lines incl. kopia's, traefik's two flag lines), 15 route-file tasks
+  (17 `url:` lines), plus `host_base`'s "Deploy timer state" re-enabling the stopped timer.
+  The pre-converge `ss` check over the eighteen ports was empty.
+- 23:10–23:26 — `systemctl start cradle-deploy.service`: `ok=1257 changed=74 failed=0`,
+  deploy state `cradle 82a3420 / host 1034ea8 / source:renaissance 55bec3f`. Sixteen
+  restarts; nextcloud's five `occ` hooks, openproject's seed and paperless's touch ran.
+- 23:27 — all sixteen units active; `ss -H -lntpe` shows all eighteen derived ports on
+  `127.0.0.1`, each with its own `svc-*` uid, and none of the old host-side ports. Every
+  route through Traefik answered (200/302/307; `401` for kopia's and traefik's own logins;
+  `/health` for dav, `/livez` for mcp) — no `404`, no `000`. FTP on 21 answered `530` to an
+  anonymous login, so the door is open and the pod behind it is up. Three sidecars healthy,
+  paperless's `kopia repository status` connected. kopia-sync started by hand instead of
+  waiting for 00:04: 21,889 BLOBs in sync, 0 to delete, exited 0. No failed unit in any
+  service manager.
+- 23:31 — the timer, re-enabled by the converge itself, ticked: "nothing changed since the
+  last converge". The window closed at 23:32.
+
+Nothing was rolled back. `pre-ports` stays in Cradle as the pin for a later revert.
