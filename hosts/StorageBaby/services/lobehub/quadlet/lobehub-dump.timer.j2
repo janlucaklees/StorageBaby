@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily lobehub database dump
+
+[Timer]
+{# 02:30, the same as every other dump on this platform: half an hour before the backup
+   sidecars start at 03:00, so the file the snapshot carries is tonight's. #}
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

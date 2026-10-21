@@ -1,0 +1,35 @@
+[Unit]
+Description=LobeHub web search
+
+[Container]
+{# A dated tag, because this image publishes nothing else: `latest` is what upstream's
+   compose runs and it would move under the service on any converge that pulled. #}
+Image=docker.io/searxng/searxng:2026.10.15-b00212a83
+ContainerName=lobehub-search
+Pod=lobehub.pod
+Environment=TZ={{ tz }}
+{# `SEARXNG_SETTINGS_PATH`, not upstream compose's `SEARXNG_SETTINGS_FILE`: the latter is
+   not a variable SearXNG reads at all (`searx/settings_loader.py` reads `_PATH`), and the
+   compose file gets away with it only because the mount is at the default location --
+   which is also true here, so this line is belt and braces rather than load-bearing. #}
+Environment=SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+{# The instance's own signing secret. SearXNG's shipped settings file carries a literal
+   value for it, and `SEARXNG_SECRET` overrides that -- which is what keeps the value out
+   of `config/`, where everything is world-readable. #}
+Secret=searxng_secret,type=env,target=SEARXNG_SECRET
+{# One file, not the directory: `/etc/searxng` is the image's own and holds more than this.
+   `config/` is copied verbatim by the role and never templated, which is fine here --
+   nothing in that file differs between hosts. #}
+Volume={{ config_dir }}/searxng-settings.yml:/etc/searxng/settings.yml:ro
+{# busybox wget on the alpine base. `/healthz` is a plain 200 `OK` with no search attached
+   to it (`searx/webapp.py`), so an engine being down does not kill the container. #}
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
+HealthOnFailure=kill
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

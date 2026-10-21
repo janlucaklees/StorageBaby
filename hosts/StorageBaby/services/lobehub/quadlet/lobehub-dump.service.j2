@@ -1,0 +1,18 @@
+[Unit]
+Description=Dump the lobehub database into the backups volume
+{# Ordered after the database and conditional on it: a `podman exec` into a container that
+   is not running fails, and without Requisite= the dump would still be attempted --
+   leaving yesterday's file in /backups for the sidecar to snapshot as if it were
+   tonight's. Requisite= does not start the database, it refuses to run without it. #}
+After=lobehub-database.service
+Requisite=lobehub-database.service
+
+[Service]
+Type=oneshot
+{# Plain SQL and uncompressed, like every other dump on this platform: the sidecar
+   snapshots this file into a deduplicating repository, and a compressed dump differs in
+   every byte from one night to the next. `ansible/roles/service/README.md`, "The dump
+   form". Restore with `psql --single-transaction --set ON_ERROR_STOP=on`, not
+   `pg_restore`. The write goes to a temporary name and is moved into place, so a run that
+   dies half way does not leave a truncated file for the 03:00 snapshot. #}
+ExecStart=/usr/bin/podman exec lobehub-database sh -c 'pg_dump --clean --if-exists --no-owner --username={{ service.config.database_user }} --dbname={{ service.config.database_name }} > /backups/{{ service.config.database_name }}.sql.tmp && mv /backups/{{ service.config.database_name }}.sql.tmp /backups/{{ service.config.database_name }}.sql'

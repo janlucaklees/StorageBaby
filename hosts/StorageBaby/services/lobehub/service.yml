@@ -1,0 +1,88 @@
+name: lobehub
+# Three routes, because three of the pod's parts answer a browser directly and a Traefik
+# router matches on hostname alone -- there is no path-based routing in this platform.
+# Every one of them is private: a VPN client or another service on this host, nothing from
+# the internet. The app's own login is the first lock and this is the second.
+routes:
+  # The app. `/api/version` is a plain unauthenticated JSON handler
+  # (`src/app/(backend)/api/version/route.ts`), which is what makes it both the probe and
+  # the container's health check -- `/` is the SPA shell and answers before the server is
+  # able to do anything useful.
+  - { domain: lobehub, container_port: 3210, probe_path: /api/version }
+  # The agent gateway's websocket. The browser connects to it directly -- that is the
+  # whole point of gateway mode -- so it needs a name of its own. `GET /health` is the one
+  # plain-HTTP route its mux registers beside `/ws` and `/v2/ws`
+  # (`agent-gateway-go/internal/gateway/server.go`).
+  - { domain: lobehub-gateway, container_port: 8787, probe_path: /health }
+  # The file store. Uploads do not pass through the app: it hands the browser a presigned
+  # URL on this name, and the browser PUTs the bytes here -- which is why it is a route of
+  # its own rather than something the app proxies.
+  - { domain: lobehub-files, container_port: 9000, probe_path: /health }
+volumes:
+  # The uploads: every image and document attached to a conversation or added to a
+  # knowledge base. `pool` and not `fast`, because it grows without a ceiling and the SSD
+  # is 120G. 10001 is the `rustfs` user the image creates and runs as
+  # (`adduser -u 10001 -G rustfs -S rustfs`).
+  files: { class: pool, owner: 10001 }
+  # 999, not 70: `paradedb/paradedb:*-pg17` is `FROM postgres:17-trixie`, a Debian base,
+  # where the postgres user is 999 -- the alpine images this repo uses elsewhere are 70.
+  # Verify once on the running container with `podman exec lobehub-database id -u postgres`
+  # rather than trusting this comment.
+  database: { class: fast, owner: 999 }
+  # Redis is a cache here (`REDIS_PREFIX=lobehub`) but upstream persists it, so it gets a
+  # volume and no backup: everything in it is regenerable by definition. 999 is the
+  # `redis` user in `redis:7-alpine`.
+  cache: { class: fast, owner: 999 }
+  # No `owner`: written by the dump timer's `podman exec` with no `-u`, i.e. container
+  # root, which is the service user. `pool` for the usual reason -- a write-once nightly
+  # file has no business on the SSD.
+  backups: { class: pool }
+config:
+  # `postgres`, the superuser, and not a role of its own: the app's migrations create the
+  # `pg_search`, `vector` and `pg_cron` extensions, which is a superuser operation. That is
+  # upstream's own compose shape, not a shortcut taken here.
+  database_name: lobechat
+  database_user: postgres
+  # The bucket the file store serves and `s3-init.js` creates. `lobe` is upstream's name
+  # for it, kept so that a path seen in the UI matches every document upstream has.
+  s3_bucket: lobe
+  # Registration is open to nobody else. An empty value would let anyone who reaches the
+  # route sign themselves up, and the route is only as private as the VPN.
+  allowed_emails: email@janlucaklees.de
+secrets:
+  [
+    database_password,
+    key_vaults_secret,
+    auth_secret,
+    gateway_service_token,
+    jwks_key,
+    jwks_public_key,
+    s3_access_key,
+    s3_secret_key,
+    searxng_secret
+  ]
+# No `kopia_password` here, deliberately: the backup sidecar's credential is generated on
+# the host -- one `openssl rand -base64 32` under /var/lib/cradle/backup-clients/lobehub,
+# synced into this service's `kopia_password` and the kopia built-in's `client_lobehub` --
+# and a service that declares the name is refused, because a name cannot have two sources.
+# The bucket, its anonymous read policy and its CORS rule -- upstream runs these as a
+# one-off `rustfs/rc` container, which has no legal home here (every `*.container.j2` must
+# declare `Restart=always` and a health check, and a process that exits can give neither).
+#
+# So it is a hook, and it execs into the *app* rather than into the file store: the
+# `rustfs/rustfs` image carries curl and nothing else -- no shell scripting runtime, no S3
+# client -- while the app image is busybox + node and already holds the S3 credentials in
+# its configured environment, which is exactly what `podman exec` inherits. The script
+# signs its own requests; `config/s3-init.js` says why in full.
+#
+# Idempotent by construction: creating a bucket that exists is a 409 the script treats as
+# success, and both the policy and the CORS rule are whole-document PUTs.
+hooks:
+  after_change:
+    - { container: lobehub-app, command: '/bin/node /config/s3-init.js' }
+backup:
+  # `database` is absent on purpose: a postgres data directory is never snapshotted, the
+  # dump in `backups` is what a restore reads. `cache` is absent because it is a cache.
+  paths: [files, backups]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }
