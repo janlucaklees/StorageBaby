@@ -1,4 +1,14 @@
 name: nextcloud
+# Held stopped since 2026-10-21: PHP2Shell (CVE-2026-109618, CVE-2026-109619), two
+# unauthenticated remote-code-execution bugs in PHP's request handling, and the
+# `33-fpm-alpine` image was last built before the fix (php 8.4.27). Re-enabling is two
+# edits in one commit once Docker Hub has rebuilt the image on a patched base: remove
+# this line, and move the image reference in `nextcloud-app.container.j2` to the
+# rebuilt one -- a digest pin like immich-database's, or the rebuilt `33.0.x` tag.
+# Removing the line alone would start the vulnerable image again: the role pulls only
+# what is not already local, and the app unit has no AutoUpdate to move the tag for it.
+# Until then the whole pod is down, Collabora included.
+enabled: false
 # Two hostnames, so the `routes` list rather than the `domain:` + `container_port:`
 # shorthand: nginx serves Nextcloud itself and Collabora serves the office backend, and the
 # browser has to reach both under their own names. They differ in how Traefik reaches
