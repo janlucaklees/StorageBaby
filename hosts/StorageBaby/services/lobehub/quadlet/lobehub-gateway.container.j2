@@ -1,0 +1,33 @@
+[Unit]
+Description=LobeHub agent gateway
+
+[Container]
+{# Pinned to what upstream's compose pins at the app's own release tag (v2.2.19), not to
+   the newest tag in the registry: 0.4.0 and 0.5.0 exist and are not what this app version
+   was shipped against. A bump moves both lines together. #}
+Image=ghcr.io/lobehub/lobehub-gateway:0.3.2
+ContainerName=lobehub-gateway
+Pod=lobehub.pod
+Environment=TZ={{ tz }}
+{# The app, on the pod's loopback. The gateway calls back into it to execute an operation. #}
+Environment=LOBE_API_BASE_URL=http://127.0.0.1:3210
+{# The shared token the app presents, and the *public* half of the app's JWKS pair -- the
+   private half never leaves the app container. With it the gateway verifies the browser's
+   session token on its own, which is what lets the websocket skip a round trip to the app.
+   Both `type=env`: this is a Go binary reading its environment, with no file form. #}
+Secret=gateway_service_token,type=env,target=SERVICE_TOKEN
+Secret=jwks_public_key,type=env,target=JWKS_PUBLIC_KEY
+{# The alpine base gives busybox wget; the image carries no curl. `GET /health` is one of
+   four routes its mux registers, and the only one that is neither a websocket upgrade nor
+   an authenticated API call (`agent-gateway-go/internal/gateway/server.go`). #}
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:8787/health || exit 1
+HealthOnFailure=kill
+
+[Service]
+{# Upstream is explicit that this process keeps its state in memory: runs in flight are
+   lost when it restarts, which is a dropped chat and not a corrupted one. #}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

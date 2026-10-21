@@ -1,0 +1,19 @@
+[Pod]
+PodName=lobehub
+{# The loopback ports are Cradle's, derived from the service name and each route's
+   declared domain and written down nowhere; `container_port` is this pod's own. The static
+   check reads these lines out of the raw template and accepts a `publish_port` expression
+   for a route and a literal only for a `tcp_ports` target.
+
+   Three publishes for three routes, and nothing else. Upstream's compose also publishes the
+   database on 5432, redis on 6379 and the file store's admin console on 9001; none of them
+   is a route, so none of them is published -- inside the pod the parts reach each other on
+   this pod's own loopback at the container ports, and the console is turned off in the unit
+   rather than left listening on a port nobody can reach.
+
+   The device gateway's 8788 is deliberately absent too: it exists for desktop and CLI
+   clients joined with `lh connect`, which is not in use here. The container still listens
+   on it inside the pod, which is what lets the app reach it. #}
+PublishPort=127.0.0.1:{{ routes[0].publish_port }}:{{ routes[0].container_port }}
+PublishPort=127.0.0.1:{{ routes[1].publish_port }}:{{ routes[1].container_port }}
+PublishPort=127.0.0.1:{{ routes[2].publish_port }}:{{ routes[2].container_port }}
