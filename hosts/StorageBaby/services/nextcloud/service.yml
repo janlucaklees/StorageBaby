@@ -1,4 +1,11 @@
 name: nextcloud
+# Held stopped since 2026-10-21: PHP2Shell (CVE-2026-109618, CVE-2026-109619), two
+# unauthenticated remote-code-execution bugs in PHP's request handling, and the
+# `33-fpm-alpine` image was last built before the fix (php 8.4.27). Remove this line
+# once Docker Hub has rebuilt the image on a patched base -- and bump nothing else:
+# the app unit has no AutoUpdate, so the next converge pulls whatever the tag points at
+# only when the unit changes. Until then the whole pod is down, Collabora included.
+enabled: false
 # Two hostnames, so the `routes` list rather than the `domain:` + `container_port:`
 # shorthand: nginx serves Nextcloud itself and Collabora serves the office backend, and the
 # browser has to reach both under their own names. They differ in how Traefik reaches
