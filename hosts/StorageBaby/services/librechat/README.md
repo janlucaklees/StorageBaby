@@ -30,6 +30,23 @@ terminate TLS and serve the static bundle, which is Traefik's job here and the a
 server does the rest. The **admin panel** is a second web application on a second hostname,
 and nothing about one account needs it.
 
+## Read the image, not the repository's Dockerfile
+
+The first converge shipped three defects with one cause, so it is worth stating as a rule:
+**a published image is not the repository's root `Dockerfile`.** Both of these projects
+build several artefacts, and the one pinned here is not the one that file describes.
+
+| what was assumed         | what the image actually does                                                                                                                                |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cmd `npm run backend`    | `node server/index.js` from `/app/api` — the other form exits 1 every five seconds with `Missing script: "backend"`                                         |
+| `USER node`, so uid 1000 | no USER and no privilege drop: the process is container root, so volumes owned by the mapped 1000 are unwritable                                            |
+| the RAG image has curl   | it has neither curl nor wget, so a curl health check kills the container every two and a half minutes while its own log says `Application startup complete` |
+
+All three are invisible from outside: the pod runs, four of five containers are healthy, and
+the route answers with Traefik's bad-gateway page. `podman image inspect` and one throwaway
+`podman run --rm --entrypoint /bin/sh` answer all three questions in a minute, and that is
+the pre-flight a version bump here needs as much as the first placement did.
+
 ## The certificate, and the DNS trap underneath it
 
 The host declares `mayu.klees.io` in `cert_zones`, which is a line in `host.yml` and not
@@ -132,11 +149,20 @@ password stays out of the shell history:
 
 ```sh
 doas /usr/local/sbin/podman-as svc-librechat podman exec -it librechat-app \
-	/bin/sh -c '. /config/mongo-uri.sh; npm run create-user'
+	/bin/sh -c '. /config/mongo-uri.sh; npm run --prefix /app create-user'
 ```
 
-Sourcing the script is not optional — without it the command has no `MONGO_URI` at all.
-`npm run reset-password` is the same shape when she forgets it.
+Two halves of that line are load-bearing, both measured rather than assumed:
+
+- **`. /config/mongo-uri.sh`** — without it the command has no `MONGO_URI` and dies with
+  "Please define the MONGO_URI environment variable". A `podman exec` does not inherit what
+  pid 1's shell exported.
+- **`--prefix /app`** — the container's working directory is `/app/api`, which is the
+  backend workspace, and `create-user` is a script of the repository root's manifest. Run
+  without the prefix, npm resolves the name against the workspace and answers
+  `Missing script: "create-user"`.
+
+`npm run --prefix /app reset-password` is the same shape when she forgets her password.
 
 ## Backups
 

@@ -65,11 +65,23 @@ Volume={{ volumes.skill }}:/app/skill
 {# Read-only, and the whole directory rather than the one file: nothing in it carries a
    secret by construction -- `mongo-uri.sh` reads one, it does not hold one. #}
 Volume={{ config_dir }}:/config:ro
-{# `npm run backend` is the image's own Cmd, read off its Dockerfile; a version bump has
-   to read it again. `exec` so the node process is pid 1 and gets the signals systemd
-   sends rather than a shell that swallows them. #}
+{# `node server/index.js` from the image's own WorkingDir of /app/api, and a version bump
+   has to read it off the image again:
+
+     podman image inspect ghcr.io/librechat-ai/librechat-api:v0.8.8
+       --format 'workdir={{.Config.WorkingDir}} cmd={{.Config.Cmd}}'
+
+   Read it off the *image*, not off a Dockerfile in the repository. The root `Dockerfile`
+   there builds a different artefact and its Cmd is `npm run backend`, which this image
+   answers with `Missing script: "backend"` and an exit 1 every five seconds -- measured
+   on this host, because that is what the first converge shipped.
+
+   The image's `docker-entrypoint.sh` is node's standard one and only prefixes `node` when
+   the command is not an executable, so passing the command directly loses nothing. `exec`
+   so node is pid 1 and gets the signals systemd sends rather than a shell that swallows
+   them. #}
 Entrypoint=/bin/sh
-Exec=-c '. /config/mongo-uri.sh; exec npm run backend'
+Exec=-c '. /config/mongo-uri.sh; exec node server/index.js'
 {# busybox wget, because node:24-alpine has no curl. `/readyz` and not `/health`: both
    answer 200 while the server is listening, but only `/readyz` turns 503 when the
    post-listen initialisation has not finished -- which is the window in which the app
