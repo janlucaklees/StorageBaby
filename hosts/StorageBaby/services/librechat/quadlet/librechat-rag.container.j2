@@ -32,9 +32,16 @@ Environment=EMBEDDINGS_MODEL=text-embedding-3-small
 Secret=vectordb_password,type=env,target=POSTGRES_PASSWORD
 Secret=openai_api_key,type=env,target=OPENAI_API_KEY
 Secret=jwt_secret,type=env,target=JWT_SECRET
-{# curl is in the image: `python:3.12` is a buildpack-deps base and carries it. `/health`
-   is the service's own route (`app/routes/document_routes.py`). #}
-HealthCmd=curl -fs -S --max-time 2 http://127.0.0.1:8000/health || exit 1
+{# Python, because this image has neither curl nor wget -- measured inside it, after a
+   curl health check killed this container every two and a half minutes on the first
+   converge: the probe fails, `HealthOnFailure=kill` does what it says, and the only
+   symptom is a container that restarts while its own log says "Application startup
+   complete". The `-dev-lite` image is not built from the `python:3.12` base the rag_api
+   repository's root Dockerfile uses, which is where that curl came from.
+
+   `/health` is the service's own route (`app/routes/document_routes.py`). urlopen raises
+   on any non-2xx, so the status comparison is belt and braces. #}
+HealthCmd=python -c 'import urllib.request, sys; sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2).status == 200 else 1)'
 HealthOnFailure=kill
 {# It creates the `vector` extension and its indexes on first start, against a database
    that is itself starting. #}

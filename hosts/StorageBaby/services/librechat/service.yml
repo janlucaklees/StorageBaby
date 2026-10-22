@@ -22,15 +22,22 @@ route:
   probe_path: /health
 volumes:
   # Generated and pasted images, served back to the browser out of the app's static tree.
-  # 1000 is the `node` user the image runs as (`USER node`, node:24-alpine's own uid).
-  # Verify once with `podman exec librechat-app id -u` rather than trusting this comment.
-  images: { class: pool, owner: 1000 }
+  #
+  # `owner: 0`, declared rather than left out, and the three app volumes share the reason.
+  # The api image declares no USER and its entrypoint drops no privileges, so the process
+  # is container root -- which is the service user. Measured, after the first converge gave
+  # these three to uid 1000 on the strength of the `USER node` in the repository's root
+  # Dockerfile, which builds a different image: 0750 trees owned by the mapped 1000 that
+  # container root cannot write, i.e. every upload failing. It is spelled out because the
+  # role adopts a directory's owner only when `owner` is declared, and these three already
+  # exist on this host with the wrong one. openarchiver's `data` is the same case.
+  images: { class: pool, owner: 0 }
   # Every file she attaches to a conversation. `pool`: it grows without a ceiling and the
   # SSD is 120G.
-  uploads: { class: pool, owner: 1000 }
+  uploads: { class: pool, owner: 0 }
   # Agent skill bundles. The image creates the directory and nothing else persists it, so
   # without this volume a container recreate loses them.
-  skill: { class: pool, owner: 1000 }
+  skill: { class: pool, owner: 0 }
   # Accounts, conversations, messages, and the per-user credentials the app encrypts with
   # `creds_key`. 999 is the `mongodb` user in the official Debian-based image
   # (`useradd --uid 999 --system --gid mongodb`), not the 70 this repo's alpine postgres
