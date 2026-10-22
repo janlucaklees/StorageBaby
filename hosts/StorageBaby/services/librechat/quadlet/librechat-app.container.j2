@@ -44,6 +44,19 @@ Environment=MEILI_NO_ANALYTICS=true
 Environment=SEARCH=true
 Environment=RAG_PORT=8000
 Environment=RAG_API_URL=http://127.0.0.1:8000
+{# An assertion, and a true one: this pod runs exactly one app container and nothing here
+   scales it. Without it the scheduler refuses to arm, because its job store is
+   process-local and a second replica would reconcile runs it cannot see -- so every
+   schedule write answers 503 for the life of the process, and the app says so twice at
+   error level on every start. Measured on this host, from its own log:
+
+     [schedules] scheduler NOT started: this process cannot see other replicas'
+     generations ... set SCHEDULES_SINGLE_PROCESS=true to assert this deployment runs
+     exactly one replica.
+
+   The other way out is a shared stream store (`USE_REDIS_STREAMS`), which would mean a
+   redis container for a claim this unit can simply make. #}
+Environment=SCHEDULES_SINGLE_PROCESS=true
 {# The password as a *file*, and the connection string composed from it by
    `config/mongo-uri.sh`: the app reads one `MONGO_URI` and no file form of it, which is
    the shape openproject and openarchiver already solved here. The script's own comment

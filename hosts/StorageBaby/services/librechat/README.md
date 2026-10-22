@@ -222,6 +222,12 @@ avoids the problem entirely, which is why it is the documented one.
 - **`MEILI_ENV=production`.** The alternative is `development`, where the master key is
   optional — and an unkeyed index on a shared loopback is a worse default than a container
   that refuses to start.
+- **No redis.** `SCHEDULES_SINGLE_PROCESS=true` in the app's unit makes the claim a redis
+  container would otherwise have to prove: that exactly one app process runs here. Without
+  either, the scheduler never arms and every schedule write answers 503 for the life of the
+  process. The claim holds as long as this pod has one `librechat-app` — so a second app
+  container here would need `USE_REDIS_STREAMS` and the container behind it, not a copy of
+  this line.
 
 ## Before the first converge
 
