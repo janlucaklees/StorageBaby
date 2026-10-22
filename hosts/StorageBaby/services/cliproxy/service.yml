@@ -1,0 +1,29 @@
+name: cliproxy
+# The port CLIProxyAPI's own listener binds inside the pod. It is also what the
+# entrypoint writes into `server.port` on every start, through `CPA_CONTAINER_PORT`,
+# so this one number stays the only place it is declared -- the configuration file
+# the panel owns cannot drift away from the port the pod publishes.
+container_port: 8317
+# Private: `cliproxy` is the bare label the host's own domain completes, so this is
+# cliproxy.home.klees.io. `/` answers 200 unauthenticated with the endpoint list, which
+# is both the integration verifier's probe and the container's own health check, so no
+# `probe_path` is needed.
+domain: cliproxy
+volumes:
+  # The whole of this service's state: the configuration file the management panel
+  # writes, the provider credential files every OAuth login leaves behind, and the
+  # panel asset the application downloads for itself. Kilobytes, rewritten whenever a
+  # token refreshes -- so `fast`.
+  #
+  # No `owner`: the image runs as container-root, which the role maps onto `svc-cliproxy`.
+  data: { class: fast }
+# Both are written by the operator after this folder is placed, and both are held to
+# the same rule by the entrypoint: the placeholder they carry in git is never accepted
+# as a credential. Until `client_api_key` is real the proxy answers only to a random key
+# generated at start that nobody holds, and until `management_password` is real the
+# management API is not mounted at all. See README.md, "The two secrets".
+secrets: [client_api_key, management_password]
+backup:
+  paths: [data]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }

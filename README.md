@@ -68,6 +68,7 @@ port Cradle derives for that route, for Traefik.
 | openarchiver (pod)                | `openarchiver.*`                    | app `v0.6.0`, `meilisearch:v1.38` and `tika:3.2.2.0-full` pinned; postgres and valkey auto                                                | `data`, `backups` (nightly dump)                                    | 3     |
 | immich (pod)                      | `immich.*`                          | server and machine learning `v3.2.0` pinned together, the vectorchord postgres pinned by digest beside them; redis auto                   | `upload` (minus its own `backups/`), `backups` (nightly dump)       | 3     |
 | nextcloud (pod)                   | `nextcloud.*`, `collabora.*`        | app `33-fpm-alpine` pinned to the major, `Pull=newer` takes a rebuild under the tag on restart; nginx, postgres, redis and Collabora auto | `html`, `data`, `backups` (nightly dump)                            | 3     |
+| cliproxy (pod)                    | `cliproxy.*`                        | `eceasy/cli-proxy-api:v8.0.39` with yq layered on, built on the host — pinned, bumped in `config/build/Containerfile`                     | `data` (config, provider credentials)                               | —     |
 
 Traefik and kopia have no folder here — they are Cradle's built-ins, listed because they
 run on this host and answer on these names. Everything else in the table is a folder under
@@ -312,7 +313,15 @@ and the rest of its § 7 is about the engine, which is no longer this repository
    2026-10-15 and the command is the operator's — so this is the cost of a decision he
    takes, when he takes it, rather than an unattended one. Runtime and disk churn, not
    correctness: the repository is append-and-delete and a moved blob is the same blob.
-5. **Paperless carries a hook that only a test ever wanted.**
+5. **cliproxy's running configuration is not in git.** Everything in
+   `/data/config.yaml` except the client API keys, the listener port and the credential
+   directory is written by its management panel and lives only in the volume and in the
+   kopia snapshot. That is the application's own design — accounts are added in a browser
+   — and the three keys this repository does own are re-applied from the secret and the
+   unit on every start, so the gap is settings rather than credentials. It is still the
+   one service on this host whose behaviour cannot be read off a commit:
+   `hosts/StorageBaby/services/cliproxy/README.md`, "Who owns the configuration".
+6. **Paperless carries a hook that only a test ever wanted.**
    `hosts/StorageBaby/services/paperless/service.yml` declares a
    `touch /tmp/.hook-ran` after-change hook that existed only for
    `test_deploy_runs_after_change_hooks`. That test is Cradle's now and runs against

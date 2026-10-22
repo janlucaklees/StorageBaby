@@ -1,0 +1,12 @@
+[Pod]
+PodName=cliproxy
+{# The loopback port is Cradle's, derived and in no file; `container_port` is this pod's
+   own. The static check reads this line out of the raw template and accepts a `publish_port`
+   expression for a route and a literal only for a `tcp_ports` target.
+
+   The OAuth callback ports upstream's compose publishes -- 1455, 8085, 51121, 54545,
+   11451 -- are deliberately absent. Those are the `localhost` redirect targets of the
+   provider logins, and a login driven from the management panel never needs them to be
+   reachable: the provider redirects the operator's own browser, and the full callback URL
+   is pasted back into the panel. README.md, "Adding a provider account". #}
+PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}

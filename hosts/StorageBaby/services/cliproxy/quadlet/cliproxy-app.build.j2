@@ -1,0 +1,11 @@
+[Unit]
+Description=Build the cliproxy image with yq in it
+
+[Build]
+ImageTag=localhost/cliproxy-app:latest
+File={{ config_dir }}/build/Containerfile
+{# The build context is the Containerfile's own directory as the role deployed it, which
+   is why `config/build/` holds nothing else and the application's own files live in
+   `config/app/` beside it. Both of its FROM images come from a registry; no file is
+   copied in. #}
+SetWorkingDirectory=file

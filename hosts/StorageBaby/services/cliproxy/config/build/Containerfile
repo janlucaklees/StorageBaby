@@ -1,0 +1,22 @@
+# CLIProxyAPI, plus the one tool its entrypoint needs that the image does not carry.
+#
+# Fully qualified on purpose: a rootless build has no containers-registries.conf, so a
+# short name resolves to nothing and the build dies before STEP 1.
+#
+# Why a build at all: this service's entrypoint has to write two values this repository
+# owns -- the client API keys and the listener port -- into a configuration file the
+# management panel owns and rewrites in its own style. The application re-serialises that
+# file on every settings change with four-space indentation and quoted scalars, which
+# measured as exactly the case a `sed` anchor cannot survive, so the edit is done with a
+# YAML parser. The upstream image is debian:bookworm with a single Go binary in it: no
+# yq, no python, no perl module that could do it, and installing one on the host is not a
+# thing this platform does. yq is a static Go binary, which is why one COPY is the whole
+# of this file.
+FROM docker.io/mikefarah/yq:4.54.1 AS yq
+
+# Pinned, and bumped in git: upstream ships several releases a day -- v8.0.26 to v8.0.39
+# between 2026-10-12 and 2026-10-22 -- which is a cadence for a human to pick from, not
+# for `podman-auto-update.timer`. Hence no `AutoUpdate=registry` on the container either.
+FROM docker.io/eceasy/cli-proxy-api:v8.0.39
+
+COPY --from=yq /usr/bin/yq /usr/local/bin/yq
