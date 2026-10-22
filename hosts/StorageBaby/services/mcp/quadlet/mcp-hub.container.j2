@@ -3,8 +3,8 @@ Description=MCP hub
 {# Ordered after the two HTTP adapters so the hub's first probe of them succeeds. It would
    recover anyway -- it pings every child every 60 s and reconnects with backoff -- but a
    converge that reports every server healthy on the first try is worth the two lines. #}
-After=mcp-nextcloud.service mcp-paperless.service
-Wants=mcp-nextcloud.service mcp-paperless.service
+After=mcp-nextcloud.service mcp-paperless.service mcp-dm.service
+Wants=mcp-nextcloud.service mcp-paperless.service mcp-dm.service
 
 [Container]
 {# The unit reference and not `localhost/mcp-hub:latest`: Quadlet turns this into a

@@ -1,0 +1,50 @@
+name: mcp-mayu
+# The same port the other hub's process binds, and there is no clash: each hub is in its
+# own pod's network namespace, and the loopback port Traefik dials is derived per route.
+# Above 1024 because the image drops to an unprivileged user -- see the unit.
+container_port: 3002
+# Mayu's own zone, written out in full because it is two labels deep and so cannot be a
+# bare label the host's `domain` completes. The host has to declare `mayu.klees.io` in
+# `cert_zones` -- the `klees.io` wildcard does not reach a name one level further down.
+domain: mcp.mayu.klees.io
+route:
+  # The hub registers `/:name` and `/:name/mcp` and nothing above them, so `/` is a
+  # legitimate 404 rather than a route that fails to arrive. `/livez` is its own liveness
+  # endpoint, unauthenticated by design, and the one URL that answers without a token.
+  probe_path: /livez
+volumes:
+  # The hub's Ed25519 signing key, the OAuth clients that registered themselves, their
+  # refresh tokens and the on-demand tool cache. Small, written often, and losing it makes
+  # every connector re-authorise -- so `fast`, and backed up.
+  # 1000: the hub image drops to the node base image's unprivileged `node` user.
+  data: { class: fast, owner: 1000 }
+  # The dm.de session the `mcp-mayu-dm` container renews, plus the break reports it
+  # writes. Her own copy, because this pod runs its own browser: nothing is shared with
+  # the `mcp` pod beside it, which is the whole point of two pods.
+  #
+  # 1001, not 1000: that image ends on `USER pwuser`, and the playwright noble base
+  # already has `ubuntu` at 1000, so `pwuser` landed on 1001. The role creates this
+  # directory 0750, so a wrong owner is a container that cannot write its session.
+  dm_data: { class: fast, owner: 1001 }
+# Her login to her own hub, and nothing else: the one server this hub offers is remote, so
+# no adapter credential lives here. `hub_password_hash` is a bcrypt hash the operator
+# generates in a throwaway container, the README has the command, and `PASSWORD_HASH` wins
+# over `PASSWORD`, so the plaintext never exists on the host.
+#
+# `dm_session_cookies` is the raw `cookie:` header of a logged-in dm.de browser, and it is
+# the one decision this folder does not make: the same login as the `mcp` pod's, which
+# means one account and one shared cart with two browsers on it, or her own dm.de account,
+# which means two carts and no interference. The files are identical either way -- see the
+# README. There is no `github_token`: issue reporting about a dead session is off in both
+# pods for now, and the unit says what turning it on takes.
+#
+# There is no bearer for dm-mcp: it publishes no port and has no route, so the only thing
+# that can reach it is the hub in this same pod.
+secrets: [hub_password_hash, dm_session_cookies]
+# dm-mcp's image is published from a private repository, so its package is private too.
+# The host offers ghcr.io and holds the login.
+registries: [ghcr.io]
+backup:
+  paths: [data, dm_data]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }

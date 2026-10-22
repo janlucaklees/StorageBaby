@@ -1,0 +1,14 @@
+[Pod]
+PodName=mcp-mayu
+{# Two containers and one published port: the hub, and the dm.de server it is the only
+   client of, which publishes nothing. #}
+{# Chromium, in `mcp-mayu-dm`, keeps renderer shared memory in /dev/shm and crashes when it
+   runs out; Podman's default is 64 MB and upstream's compose sidesteps it with
+   `ipc: host`, which this platform does not do. A pod-level setting because a container
+   inside a pod shares the infra container's IPC namespace and cannot set its own. It is a
+   tmpfs, so this is a ceiling and not a reservation. #}
+ShmSize=1g
+{# The loopback port is Cradle's, derived and in no file; `container_port` is this pod's
+   own. The static check reads this line out of the raw template and accepts a
+   `publish_port` expression for a route and a literal only for a `tcp_ports` target. #}
+PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}

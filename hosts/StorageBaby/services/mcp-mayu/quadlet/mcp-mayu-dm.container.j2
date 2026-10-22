@@ -1,0 +1,64 @@
+[Unit]
+Description=dm.de shop MCP server
+
+[Container]
+{# JLK's own: <https://github.com/janlucaklees/dm-mcp>, published by its CI from the branch
+   it fast-forwards once the static suite and the live e2e suite are both green, so the
+   floating tag is a tested commit by construction. Nothing here migrates a database, so
+   there is no version to bump by hand. #}
+Image=ghcr.io/janlucaklees/dm-mcp:stable
+ContainerName=mcp-mayu-dm
+Pod=mcp-mayu.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+{# The image's own defaults, written out because the hub's config file and the volume below
+   have to agree with them. 3000 is published nowhere: it exists on this pod's loopback,
+   which is the whole point -- the hub beside it is the only thing that may reach a server
+   driving a logged-in dm.de session, and `config/hub/mcp.json` dials exactly this. #}
+Environment=PORT=3000
+Environment=DATA_DIR=/data
+{# `ALLOWED_HOSTS` is deliberately absent: it guards `/mcp` against DNS rebinding and its
+   default, `localhost,127.0.0.1`, is already the only name that reaches this container.
+   There is no route, so there is no public name to add. #}
+{# Nor is there an `MCP_AUTH_TOKEN` or an `API_AUTH_TOKEN`. Both would be guarding the pod
+   loopback against the one container that shares it, which is the hub that is supposed to
+   call it. `/api` is unauthenticated here, and reachable by nothing else. #}
+{# Issue reporting is **off**: `GITHUB_TOKEN`/`GITHUB_REPOSITORY` are both unset, which is
+   the only combination besides both-set that the server accepts -- it refuses to start on
+   exactly one of them, and a podman secret cannot hold an empty string, so "set the name,
+   leave the value blank" is not an option. The cost is that an expired dm.de session is
+   silent: nothing on this host watches that login, so it surfaces when a tool call fails.
+   Turning it on is a fine-grained PAT (Issues: read and write on janlucaklees/dm-mcp), a
+   `github_token` secret, and two lines here -- `Secret=github_token,type=env,target=GITHUB_TOKEN`
+   and `Environment=GITHUB_REPOSITORY=janlucaklees/dm-mcp`. #}
+{# Bootstrap only. The container renews the session itself and persists it to
+   `/data/session.json`, which it prefers on later starts -- but when the stored one turns
+   out to be expired at startup it falls back to this header and checks again, which is
+   what makes re-filling the secret a way to hand it a fresh login. #}
+Secret=dm_session_cookies,type=env,target=DM_SESSION_COOKIES
+Volume={{ volumes.dm_data }}:/data
+{# `--init`, as upstream's compose runs it. Chromium forks a tree of processes per browser
+   and node is a poor pid 1 for them: without a real init, every renderer that exits stays
+   a zombie for the life of the container. #}
+RunInit=true
+{# Liveness, and `/api/health` is the one endpoint that reports it without reporting on the
+   session: it answers 200 while the process is up, whatever its body says about the
+   browser, the queue or an expired login. That is the only question a health check may
+   ask here -- an expired dm.de session needs a person, and killing the container over it
+   every ten seconds would help nobody. node rather than curl because node is certainly in
+   this image and curl's presence in the playwright base is not this folder's to assume. #}
+HealthCmd=node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HealthOnFailure=kill
+{# The first start launches chromium, restores the stored session and asks dm.de who is
+   logged in -- over the network, on a NAS, with a consent banner to dismiss. Not measured,
+   so deliberately longer than the 60 s the hub beside it uses: with `HealthOnFailure=kill`
+   a window that is too short does not read as a slow start, it reads as a broken image
+   restarting forever. #}
+HealthStartPeriod=180s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

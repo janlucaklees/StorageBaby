@@ -1,11 +1,17 @@
 domain: home.klees.io
 acme: true
 acme_email: email@janlucaklees.de
-# The domains this host can obtain a certificate for -- one wildcard request each. Both
-# are in the same Porkbun account, so the one resolver traefik declares covers them; the
-# A records are the operator's. A service takes a name under one of these by writing it
+# The domains this host can obtain a certificate for -- one wildcard request each. All
+# three are in the same Porkbun account, so the one resolver traefik declares covers them;
+# the A records are the operator's. A service takes a name under one of these by writing it
 # out in full in its own `service.yml`.
-cert_zones: [home.klees.io, klees.io]
+#
+# `mayu.klees.io` is its own entry and not covered by the `klees.io` one: a wildcard
+# certificate is exactly one label deep, so `*.klees.io` does not match
+# `mcp.mayu.klees.io`. It is the zone Mayu's own services live under -- `mcp-mayu` is the
+# first -- and nothing refuses a route whose zone is missing here: it would simply be
+# served Traefik's default certificate and error in the browser.
+cert_zones: [home.klees.io, klees.io, mayu.klees.io]
 # The registries this host holds a login for (secrets/registries.sops.yaml). A service
 # names the ones it needs; one it names that is not here is refused at converge.
 registries: [ghcr.io]

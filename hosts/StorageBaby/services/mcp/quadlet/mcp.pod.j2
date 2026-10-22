@@ -7,4 +7,10 @@ PodName=mcp
    One port for three servers. The two HTTP adapters listen on 8000 and 3001 inside this
    pod and are deliberately not published: the nextcloud adapter has no client
    authentication of its own, and the hub's OAuth is what stands in front of both. #}
+{# Chromium, in `mcp-dm`, keeps renderer shared memory in /dev/shm and crashes when it
+   runs out; Podman's default is 64 MB and upstream's compose sidesteps it with
+   `ipc: host`, which this platform does not do. A pod-level setting because a container
+   inside a pod shares the infra container's IPC namespace and cannot set its own. It is a
+   tmpfs, so this is a ceiling and not a reservation. #}
+ShmSize=1g
 PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}
