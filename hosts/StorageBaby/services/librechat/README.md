@@ -214,6 +214,21 @@ avoids the problem entirely, which is why it is the documented one.
   one provider. It would go in `config/` with `CONFIG_PATH=/config/librechat.yaml`, and
   that is where a restricted model list or a different file-upload policy would be
   written.
+
+  It costs one **error-level log line**, at startup and in every `podman exec` of a
+  `config/` script, and the line is noise rather than a fault:
+
+  ```
+  error: Config file YAML format is invalid: ENOENT: no such file or directory, open '/app/librechat.yaml'
+  ```
+
+  The loader logs once and returns `null`, the app continues on its defaults, and nothing
+  is retried or thrown — read off `packages/api/dist/index.cjs` in the image, and confirmed
+  from outside: `/api/config` reports exactly what the app's unit sets. Upstream simply logs
+  a missing _optional_ file at error level. Writing a `librechat.yaml` to silence it would
+  buy a `version` key to keep in step with the image and a second place where endpoints are
+  configured.
+
 - **No volume for `/app/data`.** Upstream gives it a named volume; what it holds is the
   temporary-credentials file (`LIBRECHAT_TEMP_CREDENTIALS_PATH`), and the image creates the
   directory itself. Losing it costs a re-authorisation, not data.
