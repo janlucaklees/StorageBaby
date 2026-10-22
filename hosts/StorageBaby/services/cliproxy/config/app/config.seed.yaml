@@ -1,0 +1,46 @@
+# The configuration CLIProxyAPI starts its life with, and only that: the entrypoint copies
+# this file into the data volume once, on the first start that finds none there, and from
+# then on the management panel owns /data/config.yaml. Editing this file changes nothing on
+# a host that already has one. README.md, "Who owns the configuration".
+#
+# Three keys are the exception and are re-applied from here or from a secret on every
+# start: `access.api-keys`, `server.port` and `oauth.auth-dir`.
+config-version: 8
+server:
+  # Overwritten on every start from the pod's own `container_port`. The value is here so
+  # the file is valid on its own, and because a config whose port is 0 is what the
+  # application treats as "no configuration at all".
+  port: 8317
+management:
+  # Empty, and it stays empty: a plaintext value here is replaced by its bcrypt hash on
+  # the next load, which would rewrite a file this repository hands over to the panel.
+  # The password reaches the application as MANAGEMENT_PASSWORD instead, which also lifts
+  # the localhost-only restriction -- the panel is reached through Traefik, so every
+  # request arrives from the host's own address and none of them is local.
+  secret-key: ''
+  # Stated rather than relied upon: MANAGEMENT_PASSWORD forces remote access on anyway,
+  # and this is what the file would have to say if it ever stopped doing that. With an
+  # empty secret-key and no environment variable the management routes are not mounted at
+  # all, so `false` here would protect nothing that is not already a 404.
+  allow-remote: true
+access:
+  # Overwritten on every start from the `client_api_key` secret. Empty here on purpose:
+  # an empty list unregisters the only access provider there is, and a request that
+  # reaches an unregistered provider set is *allowed* -- so a config.yaml that ever
+  # reaches the application with this line as it stands is an open AI gateway. The
+  # entrypoint is what guarantees it never does.
+  api-keys: []
+oauth:
+  # Inside the volume, and re-applied on every start for that reason: this is where every
+  # provider login's credential file lands, and a path the panel could move out of /data
+  # is a credential set that leaves the backup without saying so.
+  auth-dir: /data/auths
+observability:
+  logs:
+    debug: false
+    # Off: the application would otherwise write one file per proxied request, and the
+    # whole point of this volume being `fast` is that it is 120 GB of SSD shared with
+    # every other service's small state.
+    request-log: false
+    # A ceiling for what it does still write -- error logs, which are kept regardless.
+    logs-max-total-size-mb: 64

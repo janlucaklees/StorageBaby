@@ -1,0 +1,45 @@
+[Unit]
+Description=CLI Proxy API
+
+[Container]
+{# The unit reference and not `localhost/cliproxy-app:latest`: Quadlet turns this into a
+   `Requires=`/`After=` on `cliproxy-app-build.service`, so the image is built before
+   anything runs it and a changed Containerfile restarts this container. Naming the tag
+   directly would start whatever image happened to exist, and the role's pre-pull would
+   try to fetch it -- `localhost/` is rejected there for exactly that spelling. #}
+Image=cliproxy-app.build
+ContainerName=cliproxy-app
+Pod=cliproxy.pod
+{# The image's CMD is `./CLIProxyAPI` with no entrypoint, and this replaces it: the
+   application reads one configuration file and that file is half this repository's and
+   half the panel's, so something has to reconcile the two before the server starts.
+   The script is the whole of that logic and config/app/entrypoint.sh documents it. #}
+Exec=sh /config/entrypoint.sh
+Environment=TZ={{ tz }}
+{# What the entrypoint writes into `server.port`, so the number the pod publishes and the
+   number the application listens on cannot come apart -- see service.yml. #}
+Environment=CPA_CONTAINER_PORT={{ container_port }}
+{# Both arrive under a `CPA_` name and neither is what the application reads. The
+   entrypoint compares each against the placeholder it carries in git and only then
+   promotes it: the client key into the configuration file, the panel password into
+   `MANAGEMENT_PASSWORD`, which is the one spelling that enables the management API
+   without writing a credential into a file the panel then rewrites. #}
+Secret=client_api_key,type=env,target=CPA_CLIENT_API_KEY
+Secret=management_password,type=env,target=CPA_MANAGEMENT_PASSWORD
+Volume={{ volumes.data }}:/data
+Volume={{ config_dir }}/app:/config:ro
+{# Liveness through the one endpoint that answers without a credential: `/` returns the
+   endpoint list, 200, with no access provider consulted. A script and not an inline
+   command because the probe needs bash's /dev/tcp -- the image has neither curl nor
+   wget -- and a `3<>` redirect inside a unit value is three layers of quoting deep.
+   HealthStartPeriod covers the panel asset fetch the server does on its first start. #}
+HealthCmd=bash /config/health.sh
+HealthOnFailure=kill
+HealthStartPeriod=30s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
