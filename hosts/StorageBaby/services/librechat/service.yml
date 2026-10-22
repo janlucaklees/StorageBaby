@@ -1,0 +1,76 @@
+name: librechat
+# 3080 inside the pod: the api's own default and what its Dockerfile EXPOSEs. The loopback
+# port Traefik dials is Cradle's, derived from the service name and this route's domain,
+# and held in no file here.
+container_port: 3080
+# Written out in full, so the host's own `domain` completes nothing: this name is hers,
+# under her own label. Public, for mealie's reason -- she opens it on a phone on mobile
+# data, which is the one place a VPN is not already on -- so the app's own login is the
+# only lock. That is why registration is closed in the app's unit and her account is made
+# once by hand (README, "The first account").
+#
+# The host declares `mayu.klees.io` in `cert_zones` for this name; without it Traefik would
+# serve a certificate that does not cover it and nothing would say so. DNS needs nothing:
+# Porkbun answers the existing `*.klees.io` wildcard at any depth -- measured,
+# `nothing.mayu.klees.io` resolves to the same address as `anything.klees.io`.
+domain: chat.mayu.klees.io
+route:
+  # `/health` and `/livez` are unconditional 200s registered ahead of every other route
+  # (`api/server/index.js`); `/` is the SPA shell, which answers before the server can do
+  # anything useful. The app's health check asks `/readyz` instead -- the one of the three
+  # that can say no.
+  probe_path: /health
+volumes:
+  # Generated and pasted images, served back to the browser out of the app's static tree.
+  # 1000 is the `node` user the image runs as (`USER node`, node:24-alpine's own uid).
+  # Verify once with `podman exec librechat-app id -u` rather than trusting this comment.
+  images: { class: pool, owner: 1000 }
+  # Every file she attaches to a conversation. `pool`: it grows without a ceiling and the
+  # SSD is 120G.
+  uploads: { class: pool, owner: 1000 }
+  # Agent skill bundles. The image creates the directory and nothing else persists it, so
+  # without this volume a container recreate loses them.
+  skill: { class: pool, owner: 1000 }
+  # Accounts, conversations, messages, and the per-user credentials the app encrypts with
+  # `creds_key`. 999 is the `mongodb` user in the official Debian-based image
+  # (`useradd --uid 999 --system --gid mongodb`), not the 70 this repo's alpine postgres
+  # images use.
+  database: { class: fast, owner: 999 }
+  # The search index. No `owner`: meilisearch's image declares no USER, so it is container
+  # root, which is the service user -- what the role creates the directory as. Not backed
+  # up either: an index is regenerable from the database by definition.
+  search: { class: fast }
+  # The embeddings of whatever she uploads. 999 again, and for the same reason:
+  # `pgvector/pgvector:*-pg15-trixie` is a Debian image.
+  vectordb: { class: fast, owner: 999 }
+  # No `owner`: written by the dump timer's `podman exec` with no `-u`, i.e. container
+  # root, which is the service user. `pool` and not `fast` -- a write-once nightly file has
+  # no business on a 120G SSD.
+  backups: { class: pool }
+config:
+  # These four are duplicated by hand in `config/mongo-uri.sh` and `config/mongo-dump.sh`:
+  # `config/` is copied verbatim and never templated. `LibreChat` is upstream's own
+  # database name, kept so that everything upstream writes about restoring one applies here
+  # unchanged.
+  mongo_database: LibreChat
+  mongo_user: librechat
+  vector_database: librechat
+  vector_user: librechat
+secrets:
+  [
+    mongo_password,
+    vectordb_password,
+    meili_master_key,
+    creds_key,
+    creds_iv,
+    jwt_secret,
+    jwt_refresh_secret,
+    openai_api_key
+  ]
+backup:
+  # `database`, `vectordb` and `search` are absent on purpose: a database is carried as the
+  # dump in `backups`, never as its data directory, and a search index is regenerable from
+  # the database.
+  paths: [images, uploads, skill, backups]
+  schedule: '03:00'
+  retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }

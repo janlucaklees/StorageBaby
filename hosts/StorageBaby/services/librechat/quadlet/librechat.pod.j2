@@ -1,0 +1,7 @@
+[Pod]
+PodName=librechat
+{# One route, one line. The loopback port is Cradle's derived one and `container_port` is
+   the app's own 3080. Nothing else of this pod is published: the database, the search
+   index, the RAG service and its database are reached by the app on the pod's own
+   loopback, which no other service user can see. #}
+PublishPort=127.0.0.1:{{ publish_port }}:{{ container_port }}
