@@ -164,6 +164,44 @@ Two halves of that line are load-bearing, both measured rather than assumed:
 
 `npm run --prefix /app reset-password` is the same shape when she forgets her password.
 
+`create-user` gives the USER role and nothing else; the auto-admin upstream describes is the
+first account to _register_, and registration is closed, so no account here is an admin
+unless one is made so by hand. That is one update on her user document:
+
+```sh
+doas /usr/local/sbin/podman-as svc-librechat podman exec -i librechat-database \
+	sh -c 'mongosh --quiet --username=librechat --password="$(cat /run/secrets/mongo_password)" \
+	--authenticationDatabase=admin LibreChat \
+	--eval "db.users.updateOne({ email: \"<email>\" }, { \$set: { role: \"ADMIN\" } })"'
+```
+
+It buys the role and not a place to use it: the admin panel is a second container on a
+second hostname (`ghcr.io/clickhouse/librechat-admin-panel`), deliberately absent, and the
+main application has no settings screen of its own. The MCP allowlist below is a file in
+this folder for that reason -- it is the one thing the panel could have set at runtime,
+and in git is where this platform keeps a fact about a service.
+
+## Reaching Mayu's MCP hub
+
+`config/librechat.yaml` is the app's own configuration file, `CONFIG_PATH=/config/librechat.yaml`
+in the unit, and its one setting is `mcpSettings.allowedDomains: [mcp.mayu.klees.io]`. On
+its defaults LibreChat lets a public MCP URL through and refuses one that resolves to a
+private address, and inside this pod her hub's name resolves to the host gateway -- the
+`AddHost=` drop-in the role writes for every route on the host -- so the UI answered "not in
+the allow list" the first time she added it. Listing the name is the whole fix, with one
+consequence: a non-empty list is a strict whitelist, and every further MCP server she adds
+in the UI has to be named there first.
+
+The hub itself is `mcp-mayu`'s README, "Connecting a client": a resource-bound token minted
+on the host, pasted into the UI as `Authorization: Bearer …` against
+`https://mcp.mayu.klees.io/hub/mcp`.
+
+Not yet measured on 0.8.8: upstream carries a long thread of 0.8.2 users whose
+`allowedDomains` entry for a private address was still refused, never resolved. If the
+converge brings the file up and the UI still refuses the name, `allowedAddresses` is the
+other key, and declaring the hub in this file's `mcpServers` block with the token as a
+secret is the fallback that bypasses the UI's check entirely.
+
 ## Backups
 
 The sidecar carries `images`, `uploads`, `skill` and `backups` at 03:00. `backups` holds
@@ -210,13 +248,12 @@ avoids the problem entirely, which is why it is the documented one.
 
 ## What is not here, and why
 
-- **No `librechat.yaml`.** The app runs on its defaults, which is enough for one user and
-  one provider. It would go in `config/` with `CONFIG_PATH=/config/librechat.yaml`, and
-  that is where a restricted model list or a different file-upload policy would be
-  written.
+- **A `librechat.yaml` with one setting.** The app runs on its defaults otherwise, which is
+  enough for one user and one provider; the file exists for the MCP allowlist above, and a
+  restricted model list or a different file-upload policy would be written in it too.
 
-  It costs one **error-level log line**, at startup and in every `podman exec` of a
-  `config/` script, and the line is noise rather than a fault:
+  Before it existed, its absence cost one **error-level log line**, at startup and in every
+  `podman exec` of a `config/` script, and the line was noise rather than a fault:
 
   ```
   error: Config file YAML format is invalid: ENOENT: no such file or directory, open '/app/librechat.yaml'
@@ -225,9 +262,9 @@ avoids the problem entirely, which is why it is the documented one.
   The loader logs once and returns `null`, the app continues on its defaults, and nothing
   is retried or thrown — read off `packages/api/dist/index.cjs` in the image, and confirmed
   from outside: `/api/config` reports exactly what the app's unit sets. Upstream simply logs
-  a missing _optional_ file at error level. Writing a `librechat.yaml` to silence it would
-  buy a `version` key to keep in step with the image and a second place where endpoints are
-  configured.
+  a missing _optional_ file at error level. With `CONFIG_PATH` pointing at the file the line
+  is gone, and what the file costs instead is its `version` key, which a version bump of the
+  image has to keep in step.
 
 - **No volume for `/app/data`.** Upstream gives it a named volume; what it holds is the
   temporary-credentials file (`LIBRECHAT_TEMP_CREDENTIALS_PATH`), and the image creates the

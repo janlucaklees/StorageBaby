@@ -25,6 +25,10 @@ Environment=PORT={{ container_port }}
    rather than the loopback it dialled, so this has to be the public one. #}
 Environment=DOMAIN_CLIENT=https://{{ fqdn }}
 Environment=DOMAIN_SERVER=https://{{ fqdn }}
+{# The app's own configuration file, out of the read-only config mount below. Its one
+   setting today is the MCP allowlist that lets her hub's name through -- the file's own
+   comment says why a name on this host needs listing. #}
+Environment=CONFIG_PATH=/config/librechat.yaml
 {# Exactly one proxy in front, which is Traefik: with this set the app reads the client's
    address from X-Forwarded-For, and the login throttle and the rate limits are per
    address. Without it every request looks like it came from the same place. #}
