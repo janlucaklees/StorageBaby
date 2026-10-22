@@ -1,0 +1,37 @@
+[Unit]
+Description=LobeHub file store
+
+[Container]
+{# 1.0.1, the newest tag that is not a `-preview`. Upstream's compose runs `latest`. #}
+Image=docker.io/rustfs/rustfs:1.0.1
+ContainerName=lobehub-files
+Pod=lobehub.pod
+Environment=TZ={{ tz }}
+{# The `_FILE` form, which this image's entrypoint supports for both credentials
+   (`RUSTFS_ACCESS_KEY_FILE` / `RUSTFS_SECRET_KEY_FILE`, resolved in `entrypoint.sh`). With
+   it the value never appears in the container's environment at all, which is why it is
+   preferred over `type=env` wherever an image offers it -- the app next door has no such
+   form and takes the same two secrets as variables. #}
+Environment=RUSTFS_ACCESS_KEY_FILE=/run/secrets/s3_access_key
+Environment=RUSTFS_SECRET_KEY_FILE=/run/secrets/s3_secret_key
+Secret=s3_access_key
+Secret=s3_secret_key
+{# Off, unlike upstream's compose. The console is an admin UI on 9001, and 9001 is not a
+   route here -- leaving it enabled would be a second surface inside the pod that nothing
+   can reach and nobody watches. The S3 API on 9000 is untouched by this. #}
+Environment=RUSTFS_CONSOLE_ENABLE=false
+{# `/data` is the image's own `RUSTFS_VOLUMES`, so no arguments are needed and the image's
+   default command stands. #}
+Volume={{ volumes.files }}:/data
+{# curl, which this image does install (its runtime stage adds ca-certificates, coreutils,
+   curl and tzdata). `/health` is what upstream's own compose healthcheck asks for. #}
+HealthCmd=curl -fs -S --max-time 2 http://127.0.0.1:9000/health || exit 1
+HealthOnFailure=kill
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

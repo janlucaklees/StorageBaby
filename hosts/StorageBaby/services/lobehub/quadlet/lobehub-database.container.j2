@@ -1,0 +1,40 @@
+[Unit]
+Description=LobeHub database
+
+[Container]
+{# ParadeDB and not plain postgres, and it is not interchangeable: the app's full-text
+   search is `pg_search`, which this image ships and the official postgres image does not.
+   A versioned tag rather than upstream's `latest-pg17`, so a converge cannot move the
+   cluster's major extension version on its own. #}
+Image=docker.io/paradedb/paradedb:0.26.1-pg17
+ContainerName=lobehub-database
+Pod=lobehub.pod
+Environment=TZ={{ tz }}
+Environment=POSTGRES_DB={{ service.config.database_name }}
+Environment=POSTGRES_PASSWORD_FILE=/run/secrets/database_password
+Secret=database_password
+Volume={{ volumes.database }}:/var/lib/postgresql/data
+{# The dump timer writes here, and the backup sidecar mounts the same volume read-only:
+   a database is backed up as a dump, never as its data directory. #}
+Volume={{ volumes.backups }}:/backups
+{# The image's own default preload list, repeated verbatim because naming any of the three
+   replaces all of them: this image's first-start bootstrap creates the pg_cron extension
+   and aborts initialization when pg_cron is missing from the list. No whitespace inside
+   the argument, so nothing here needs quoting. #}
+Exec=postgres -c shared_preload_libraries=pg_search,pg_cron,pg_stat_statements
+{# Over TCP (`-h 127.0.0.1`), not the unix socket: during first-time initialization this
+   image runs a temporary server that listens on the socket only, so a socket probe reports
+   ready while the app's own connections are still refused. Upstream's compose carries the
+   same note. #}
+HealthCmd=pg_isready -U {{ service.config.database_user }} -d {{ service.config.database_name }} -h 127.0.0.1
+HealthOnFailure=kill
+{# Initialization installs three extensions and runs pg_cron's bootstrap before TCP opens,
+   which outlasts the default grace period. #}
+HealthStartPeriod=180s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

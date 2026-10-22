@@ -1,0 +1,29 @@
+# SearXNG's configuration, as little of it as possible.
+#
+# Upstream's compose copies the project's whole shipped `settings.yml` -- 2500 lines of
+# engine definitions -- into the container. This file does the same job with
+# `use_default_settings`, which tells SearXNG to load its own built-in settings and apply
+# only what is written here on top. A 2500-line copy would be a second source of truth
+# that silently stops matching the image on every bump.
+#
+# `config/` is copied verbatim and never templated, so nothing here may be host-specific.
+# Nothing here is: this instance answers one caller on the pod's own loopback.
+#
+# The signing secret is deliberately absent. SearXNG's shipped file carries a literal value
+# for `server.secret_key`, and `SEARXNG_SECRET` in the unit overrides it -- everything under
+# /etc/cradle/lobehub/ is world-readable.
+use_default_settings: true
+
+search:
+  # `json` is the whole point: LobeHub queries this instance's JSON API, which SearXNG
+  # refuses to serve unless the format is enabled. `html` stays on so that the same
+  # instance can be opened in a browser when a result looks wrong.
+  formats:
+    - html
+    - json
+
+server:
+  # Off: the limiter exists to keep bots off a public instance, and the only client here is
+  # the container next door. Left on, it rate-limits the agent's own searches.
+  limiter: false
+  public_instance: false

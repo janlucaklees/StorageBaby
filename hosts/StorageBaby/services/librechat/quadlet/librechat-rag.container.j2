@@ -1,0 +1,55 @@
+[Unit]
+Description=LibreChat RAG service
+After=librechat-vectordb.service
+Wants=librechat-vectordb.service
+
+[Container]
+{# Upstream's compose floats this on `latest` and calls it `-dev-lite`; the tag here is the
+   service's own release numbering, which is not the app's -- v0.9.0 against the app's
+   v0.8.8. The "lite" image is the one without the local embedding models, which is right
+   while embeddings are OpenAI's. #}
+Image=ghcr.io/librechat-ai/librechat-rag-api-dev-lite:v0.9.0
+ContainerName=librechat-rag
+Pod=librechat.pod
+Environment=TZ={{ tz }}
+Environment=RAG_PORT=8000
+{# 127.0.0.1 and not a container name: one network namespace per pod. #}
+Environment=DB_HOST=127.0.0.1
+Environment=DB_PORT=5432
+Environment=POSTGRES_DB={{ service.config.vector_database }}
+Environment=POSTGRES_USER={{ service.config.vector_user }}
+{# Both are this service's own defaults, written out so that an upstream change of default
+   cannot silently re-embed her documents against a different model -- and so the cost of a
+   file upload is readable here. #}
+Environment=EMBEDDINGS_PROVIDER=openai
+Environment=EMBEDDINGS_MODEL=text-embedding-3-small
+{# Environment and not a file for all three: this service reads `os.getenv` only. It
+   URL-quotes the password itself when it composes its DSN (`app/config.py`), so unlike the
+   mongo one this value does not have to be URL-safe.
+   `jwt_secret` is the app's: the app signs a short-lived token per request and this
+   service verifies it with the same value (HS256, `app/middleware.py`). Two containers,
+   one podman secret -- a mismatch would make every upload fail authorisation. #}
+Secret=vectordb_password,type=env,target=POSTGRES_PASSWORD
+Secret=openai_api_key,type=env,target=OPENAI_API_KEY
+Secret=jwt_secret,type=env,target=JWT_SECRET
+{# Python, because this image has neither curl nor wget -- measured inside it, after a
+   curl health check killed this container every two and a half minutes on the first
+   converge: the probe fails, `HealthOnFailure=kill` does what it says, and the only
+   symptom is a container that restarts while its own log says "Application startup
+   complete". The `-dev-lite` image is not built from the `python:3.12` base the rag_api
+   repository's root Dockerfile uses, which is where that curl came from.
+
+   `/health` is the service's own route (`app/routes/document_routes.py`). urlopen raises
+   on any non-2xx, so the status comparison is belt and braces. #}
+HealthCmd=python -c 'import urllib.request, sys; sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2).status == 200 else 1)'
+HealthOnFailure=kill
+{# It creates the `vector` extension and its indexes on first start, against a database
+   that is itself starting. #}
+HealthStartPeriod=90s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

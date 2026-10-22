@@ -1,0 +1,23 @@
+[Unit]
+Description=Dump the librechat databases into the backups volume
+{# Ordered after both and conditional on both: a `podman exec` into a container that is not
+   running fails, and without Requisite= the dump would still be attempted -- leaving
+   yesterday's file in /backups for the sidecar to snapshot as if it were tonight's.
+   Requisite= does not start anything, it refuses to run without it. #}
+After=librechat-database.service librechat-vectordb.service
+Requisite=librechat-database.service librechat-vectordb.service
+
+[Service]
+Type=oneshot
+{# Two databases, one timer -- the platform's convention is one `<name>-dump` pair per
+   service. They run in order and the unit stops at the first that fails, which is wanted:
+   the nightly maintenance mail lists every failed unit of every service manager, so a
+   dump that did not happen is reported rather than silently skipped. Mongo goes first
+   because it is the one a restore actually needs; the embeddings behind it can be rebuilt
+   by re-uploading.
+   The mongo half is a script in `config/` rather than a command here: it needs the
+   password, systemd expands `$` in this line itself, and a shell script is also the form
+   an operator can run by hand. The postgres half is the platform's standard dump line,
+   byte for byte what the other seven services use. #}
+ExecStart=/usr/bin/podman exec librechat-database /bin/sh /config/mongo-dump.sh
+ExecStart=/usr/bin/podman exec librechat-vectordb sh -c 'pg_dump --clean --if-exists --no-owner --username={{ service.config.vector_user }} --dbname={{ service.config.vector_database }} > /backups/{{ service.config.vector_database }}.sql.tmp && mv /backups/{{ service.config.vector_database }}.sql.tmp /backups/{{ service.config.vector_database }}.sql'

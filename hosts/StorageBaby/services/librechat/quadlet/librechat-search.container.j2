@@ -1,0 +1,29 @@
+[Unit]
+Description=LibreChat search index
+
+[Container]
+Image=docker.io/getmeili/meilisearch:v1.35.1
+ContainerName=librechat-search
+Pod=librechat.pod
+Environment=TZ={{ tz }}
+Environment=MEILI_NO_ANALYTICS=true
+{# `production` and not the default `development`: it makes the master key mandatory
+   instead of optional, which is the difference between a keyed index and one any process
+   in this pod could reindex. #}
+Environment=MEILI_ENV=production
+{# The same value the app presents. No file form exists for it, so `type=env` -- and in
+   `production` meilisearch refuses to start without it, which is the behaviour wanted:
+   an unset key fails loudly here rather than quietly opening the index. #}
+Secret=meili_master_key,type=env,target=MEILI_MASTER_KEY
+Volume={{ volumes.search }}:/meili_data
+{# curl is in the image (`apk add -q --no-cache libgcc tini curl` in its Dockerfile), and
+   `/health` is meilisearch's own endpoint, which answers without the master key. #}
+HealthCmd=curl -fs -S --max-time 2 http://127.0.0.1:7700/health || exit 1
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

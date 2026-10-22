@@ -1,0 +1,27 @@
+[Unit]
+Description=LibreChat vector database
+
+[Container]
+Image=docker.io/pgvector/pgvector:0.8.0-pg15-trixie
+ContainerName=librechat-vectordb
+Pod=librechat.pod
+Environment=TZ={{ tz }}
+Environment=POSTGRES_DB={{ service.config.vector_database }}
+Environment=POSTGRES_USER={{ service.config.vector_user }}
+{# The file form, which this image inherits from the official postgres entrypoint. The RAG
+   service beside it gets the same secret as an environment variable instead, because it
+   reads no file -- one podman secret, two shapes. #}
+Environment=POSTGRES_PASSWORD_FILE=/run/secrets/vectordb_password
+Secret=vectordb_password
+Volume={{ volumes.vectordb }}:/var/lib/postgresql/data
+{# The dump timer writes here, and the sidecar mounts the same volume read-only. #}
+Volume={{ volumes.backups }}:/backups
+HealthCmd=pg_isready -U {{ service.config.vector_user }} -d {{ service.config.vector_database }}
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,23 @@
+[Unit]
+Description=LobeHub cache
+
+[Container]
+Image=docker.io/library/redis:7-alpine
+ContainerName=lobehub-cache
+Pod=lobehub.pod
+AutoUpdate=registry
+Environment=TZ={{ tz }}
+{# Upstream's own flags: an append-only log plus a 60-second snapshot. Everything in here
+   is regenerable, so the persistence is a warm restart and not a backup -- which is why
+   `cache` is absent from `backup.paths`. #}
+Exec=redis-server --save 60 1000 --appendonly yes
+Volume={{ volumes.cache }}:/data
+HealthCmd=redis-cli ping
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

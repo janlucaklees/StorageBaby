@@ -1,0 +1,126 @@
+[Unit]
+Description=LobeHub
+After=lobehub-database.service lobehub-cache.service lobehub-files.service lobehub-search.service
+Wants=lobehub-database.service lobehub-cache.service lobehub-files.service lobehub-search.service
+
+[Container]
+Image=docker.io/lobehub/lobehub:2.2.19
+ContainerName=lobehub-app
+Pod=lobehub.pod
+Environment=TZ={{ tz }}
+{# The public name, and it has to be the public one: it is what the app builds absolute
+   links and OAuth-style callbacks from. `INTERNAL_APP_URL` is the same server reached
+   from inside the pod, which upstream requires for server-to-server calls (image
+   generation goes through it) because `APP_URL` is a name that resolves to Traefik. #}
+Environment=APP_URL=https://{{ routes[0].fqdn }}
+Environment=INTERNAL_APP_URL=http://127.0.0.1:3210
+{# Gateway mode: agent runs execute server-side and stream to the browser through the
+   gateway container. `AGENT_GATEWAY_URL` is the address the *browser* dials, so it is the
+   public route name; `AGENT_GATEWAY_INTERNAL_URL` is the same process on the pod's
+   loopback, which is where this server talks to it. The device gateway is internal only
+   -- there is no route for 8788 and no client joined to it yet. #}
+Environment=ENABLE_AGENT_GATEWAY=1
+Environment=AGENT_GATEWAY_URL=https://{{ routes[1].fqdn }}
+Environment=AGENT_GATEWAY_INTERNAL_URL=http://127.0.0.1:8787
+Environment=DEVICE_GATEWAY_URL=http://127.0.0.1:8788
+{# Two endpoints for one file store, and the split is not optional. `S3_ENDPOINT` is
+   handed to the browser inside presigned upload and download URLs, so it must be the
+   public route name; `S3_INTERNAL_ENDPOINT` is what this server uses, on the pod's
+   loopback. Writing the public name in both would send every server-side read out to
+   Traefik and back. #}
+Environment=S3_ENDPOINT=https://{{ routes[2].fqdn }}
+Environment=S3_INTERNAL_ENDPOINT=http://127.0.0.1:9000
+Environment=S3_BUCKET={{ service.config.s3_bucket }}
+{# Path-style addressing, because a virtual-hosted bucket would need
+   `lobe.lobehub-files.home.klees.io` in DNS and in the certificate. No ACL on upload: the
+   bucket's own policy grants anonymous reads, which is what `s3-init.js` sets, and an
+   object ACL on top of it is a second mechanism this store does not need. #}
+Environment=S3_ENABLE_PATH_STYLE=1
+Environment=S3_SET_ACL=0
+{# Vision models get images inline rather than as a URL: the file store's public name is
+   VPN-only, so a provider fetching it from the internet would get nothing. #}
+Environment=LLM_VISION_IMAGE_USE_BASE64=1
+Environment=SEARXNG_URL=http://127.0.0.1:8080
+Environment=REDIS_URL=redis://127.0.0.1:6379
+Environment=REDIS_PREFIX=lobehub
+Environment=REDIS_TLS=0
+{# Registration is closed to everything but this address. Without it anyone who reaches
+   the route can create an account, and the route is only as private as the VPN in front
+   of it. Email verification stays off (`AUTH_EMAIL_VERIFICATION` unset), which is what
+   makes this work with no SMTP configuration at all. #}
+Environment=AUTH_ALLOWED_EMAILS={{ service.config.allowed_emails }}
+{# Every one of these is `type=env` because the app reads them from the environment and
+   offers no `_FILE` form for any of them -- `scripts/serverLauncher/startServer.js` reads
+   `process.env` directly. `podman inspect` prints the variable with its value replaced by
+   asterisks; an `Environment=` line would put the value in a world-readable unit file.
+
+   `KEY_VAULTS_SECRET` encrypts the model provider API keys the operator enters in the UI,
+   at rest in the database. Losing it means losing those keys, not the conversations.
+   `JWKS_KEY` is an RS256 key *pair* as a JWKS JSON string; the gateway gets the same key
+   without its private fields, as `jwks_public_key`. The two have to be halves of one pair
+   -- see this folder's README, "The gateway's key pair". #}
+Secret=key_vaults_secret,type=env,target=KEY_VAULTS_SECRET
+Secret=auth_secret,type=env,target=AUTH_SECRET
+Secret=jwks_key,type=env,target=JWKS_KEY
+{# One secret, two variables: the app authenticates to both halves of the gateway with the
+   same shared token, which is how upstream's compose wires it. #}
+Secret=gateway_service_token,type=env,target=AGENT_GATEWAY_SERVICE_TOKEN
+Secret=gateway_service_token,type=env,target=DEVICE_GATEWAY_SERVICE_TOKEN
+{# `S3_ACCESS_KEY` and `S3_ACCESS_KEY_ID` are the same value under two names, as upstream's
+   compose sets them: the documented variable is the latter and parts of the code still
+   read the former. #}
+Secret=s3_access_key,type=env,target=S3_ACCESS_KEY
+Secret=s3_access_key,type=env,target=S3_ACCESS_KEY_ID
+Secret=s3_secret_key,type=env,target=S3_SECRET_ACCESS_KEY
+{# The database password is not its own variable here, it is a field inside DATABASE_URL,
+   and a URL assembled in the unit would put the password in a world-readable file. So the
+   secret is mounted as a file and the URL is assembled inside the container -- see
+   `Entrypoint=` below. #}
+Secret=database_password
+{# `/config` is this service folder's `config/` as deployed by the role: the S3 init script
+   the after-change hook runs, and nothing else the app itself reads. #}
+Volume={{ config_dir }}:/config:ro
+{# `HOSTNAME` is exported here and *not* as an `Environment=` line, which is the one thing
+   without which nothing inside this pod can reach the app. Next.js standalone binds
+   `process.env.HOSTNAME || '0.0.0.0'`, and podman injects the container's (here the pod's)
+   hostname into the runtime environment *after* the configured one -- so an
+   `Environment=HOSTNAME=0.0.0.0` line loses. Measured in a VM, and the two views
+   disagree, which is what made it worth writing down: `podman exec ... printenv HOSTNAME`
+   answered `0.0.0.0` (the configured value) while the server's own
+   `/proc/<pid>/environ` held `HOSTNAME=lobehub`, and the listener was
+
+     tcp 0 0 192.168.122.175:3210 0.0.0.0:* LISTEN 22/next-server
+
+   the pod's interface address alone. From outside that looks healthy -- the pod's
+   `PublishPort` forwards to exactly that address, so `/api/version` answered 200 through
+   Traefik -- while `127.0.0.1:3210` inside the pod was refused, which breaks this
+   container's own health check and the gateway's `LOBE_API_BASE_URL` with it. A variable
+   exported by this shell belongs to the process it execs, so it wins.
+#}
+{# The image's own `ENTRYPOINT ["/bin/node"]` and `CMD ["/app/startServer.js"]`, replaced
+   by a shell that composes DATABASE_URL from the mounted secret and then execs exactly
+   what they would have run. Read off the image's Dockerfile rather than guessed, and a
+   version bump has to read them again. `exec` so node is pid 1 and gets the signals
+   systemd sends instead of a shell that swallows them. The image is busybox-based, so
+   `/bin/sh` is there.
+
+   The password must be URL-safe, which is why every generated password here is hex: a
+   value containing `@`, `:` or `/` would silently produce a different connection. #}
+Entrypoint=/bin/sh
+Exec=-c 'export HOSTNAME=0.0.0.0; export DATABASE_URL="postgresql://{{ service.config.database_user }}:$(cat /run/secrets/database_password)@127.0.0.1:5432/{{ service.config.database_name }}"; exec /bin/node /app/startServer.js'
+{# busybox wget, not curl: the runtime stage is `FROM busybox` plus a distroless node, so
+   curl is not in the image. `/api/version` is an unauthenticated JSON handler -- the one
+   endpoint that answers 200 without a session and without touching a model provider. #}
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:3210/api/version || exit 1
+HealthOnFailure=kill
+{# First start runs the schema migrations against an empty cluster, which includes creating
+   the pg_search and vector extensions. Measured generously rather than guessed; the role's
+   hook wait allows ten minutes on top. #}
+HealthStartPeriod=300s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

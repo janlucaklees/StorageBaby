@@ -5,6 +5,14 @@ Wants=nextcloud-database.service nextcloud-cache.service
 
 [Container]
 Image=docker.io/library/nextcloud:{{ service.config.version }}
+{# Pinned to the major, so the tag moves under the unit: a security rebuild of
+   `33-fpm-alpine` (PHP2Shell, 2026-10-21) is the same tag with a new digest, and
+   Quadlet's default `Pull=missing` never looks for it -- the pod sat on the
+   vulnerable image until it was held stopped. `newer` checks the registry on every
+   start and takes the rebuild; the image is already local, so a start with the
+   registry unreachable falls back to it. The other parts ride AutoUpdate=registry
+   instead; this one does not, because a Nextcloud *major* has to be a line in git. #}
+Pull=newer
 ContainerName=nextcloud-app
 Pod=nextcloud.pod
 Environment=TZ={{ tz }}

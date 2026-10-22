@@ -31,7 +31,12 @@ The app is pinned and everything around it is not: a Nextcloud major carries a
 database migration and the `occ` steps below, so it is a line in git;
 postgres, redis, nginx and Collabora ride `AutoUpdate=registry` with the service
 user's `podman-auto-update.timer`, which rolls back an image that fails its
-health check.
+health check. The app unit carries `Pull=newer` instead: the tag names a major, so
+a rebuild of the same tag on a patched base is a new digest nothing else would
+fetch — PHP2Shell (2026-10-21) found the pod on an image built before the fix, and
+it was held stopped with `enabled: false` until Docker Hub rebuilt `33-fpm-alpine`
+on php 8.4.27 the next day. With `newer`, every start asks the registry and takes
+the rebuild; a start with the registry unreachable keeps the local image.
 
 `nextcloud-backup` is **not** in this folder. The role generates it from
 `backup:` in `service.yml` and joins it to this pod.

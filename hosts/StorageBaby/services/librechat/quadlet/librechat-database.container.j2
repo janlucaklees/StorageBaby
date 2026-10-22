@@ -1,0 +1,42 @@
+[Unit]
+Description=LibreChat database
+
+[Container]
+Image=docker.io/library/mongo:8.0.20
+ContainerName=librechat-database
+Pod=librechat.pod
+Environment=TZ={{ tz }}
+{# Authentication by the image's own mechanism: with both of these set the entrypoint
+   creates this user with the root role on the first start *and* adds `--auth` to mongod
+   ("if we have a username/password, let's set --auth", docker-entrypoint.sh). Upstream's
+   compose runs `--noauth` instead and relies on nothing being able to reach the port --
+   which is true here too, the pod's network namespace being this service user's alone --
+   so this is a second lock rather than the only one, and the image takes it as one file.
+   `_FILE` and not the plain variable: the entrypoint's own `file_env` reads it, so the
+   value never enters any environment.
+   It acts on an *empty* /data/db only. A volume that already holds a cluster without this
+   user keeps whatever it had, and the app then fails to authenticate -- README,
+   "Restoring". #}
+Environment=MONGO_INITDB_ROOT_USERNAME={{ service.config.mongo_user }}
+Environment=MONGO_INITDB_ROOT_PASSWORD_FILE=/run/secrets/mongo_password
+Secret=mongo_password
+Volume={{ volumes.database }}:/data/db
+{# The dump timer writes here and the backup sidecar mounts the same volume read-only: a
+   database is backed up as a dump, never as its data directory. #}
+Volume={{ volumes.backups }}:/backups
+{# Read-only, for `mongo-dump.sh` alone -- the dump needs credentials and systemd must not
+   be the thing that composes them, so the command lives in a script the way the app's URI
+   does. #}
+Volume={{ config_dir }}:/config:ro
+{# `ping` is one of the few commands MongoDB answers without authentication, which is what
+   lets this line carry no credentials while `--auth` is on. mongosh is in the image --
+   `mongodb-org-shell` pulls it in, and the Dockerfile sets HOME for it explicitly. #}
+HealthCmd=mongosh --quiet --eval 'db.adminCommand({ping:1})'
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

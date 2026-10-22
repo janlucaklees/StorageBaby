@@ -174,12 +174,12 @@ private space is the second layer instead.
 ## Connecting a client
 
 A browser-capable client does OAuth against the hub with the password above. One that
-cannot — Hermes, and anything driving the OpenAI Responses API — uses a resource-bound
+cannot — LobeHub, and anything driving the OpenAI Responses API — uses a resource-bound
 token, created on the host and printed exactly once:
 
 ```sh
 doas /usr/local/sbin/podman-as svc-mcp podman exec mcp-hub \
-	node /app/dist/admin.js tokens create --resource hub --days 90 --label hermes
+	node /app/dist/admin.js tokens create --resource hub --days 90 --label lobehub
 ```
 
 Path routing gives each adapter its own endpoint — `/dm`, `/mealie`, `/nextcloud`,

@@ -1,0 +1,101 @@
+[Unit]
+Description=LibreChat
+{# Wants= and not Requires=: every part restarts on its own and the app reconnects, so a
+   database that comes back does not need the app restarted with it. The ordering still
+   matters, because a first start that finds no database exits -- and then Restart=always
+   would be doing the waiting instead of systemd. #}
+After=librechat-database.service librechat-search.service librechat-rag.service
+Wants=librechat-database.service librechat-search.service librechat-rag.service
+
+[Container]
+Image=ghcr.io/librechat-ai/librechat-api:v0.8.8
+ContainerName=librechat-app
+Pod=librechat.pod
+Environment=TZ={{ tz }}
+Environment=NODE_ENV=production
+{# The one line this service cannot do without. The server binds
+   `process.env.HOST || 'localhost'` (`api/server/index.js`), and a pod's published port
+   arrives on the pod's interface address -- so with the default it would listen on the
+   pod's loopback only and Traefik's connection would be refused with nothing in the app's
+   own log to say why. Upstream's compose sets the same value for the same reason. #}
+Environment=HOST=0.0.0.0
+Environment=PORT={{ container_port }}
+{# Both halves of the public name. The app builds absolute links out of them -- password
+   mails, OAuth redirects, shared conversations -- and Traefik forwards the name she typed
+   rather than the loopback it dialled, so this has to be the public one. #}
+Environment=DOMAIN_CLIENT=https://{{ fqdn }}
+Environment=DOMAIN_SERVER=https://{{ fqdn }}
+{# Exactly one proxy in front, which is Traefik: with this set the app reads the client's
+   address from X-Forwarded-For, and the login throttle and the rate limits are per
+   address. Without it every request looks like it came from the same place. #}
+Environment=TRUST_PROXY=1
+{# Closed, and this name's only lock is the app's own login: the route is public. Her
+   account is created once by hand -- README, "The first account". Email login stays on
+   because that account *is* an email and a password; social login is off because nothing
+   is configured for it, and an enabled-but-unconfigured provider is a broken button on a
+   login page. #}
+Environment=ALLOW_REGISTRATION=false
+Environment=ALLOW_EMAIL_LOGIN=true
+Environment=ALLOW_SOCIAL_LOGIN=false
+{# Inside a pod the parts share one network namespace, so each of these is 127.0.0.1 and
+   not a container name the way upstream's compose has them. #}
+Environment=MEILI_HOST=http://127.0.0.1:7700
+Environment=MEILI_NO_ANALYTICS=true
+Environment=SEARCH=true
+Environment=RAG_PORT=8000
+Environment=RAG_API_URL=http://127.0.0.1:8000
+{# The password as a *file*, and the connection string composed from it by
+   `config/mongo-uri.sh`: the app reads one `MONGO_URI` and no file form of it, which is
+   the shape openproject and openarchiver already solved here. The script's own comment
+   says why it is sourced rather than exported from this line. #}
+Secret=mongo_password
+{# `type=env` for these six, which is the fallback and not the preference: LibreChat reads
+   no `_FILE` variant of any of them. `meili_master_key` is the same value the search
+   container gets, `jwt_secret` the same the RAG service gets -- one podman secret each,
+   mounted into both. #}
+Secret=meili_master_key,type=env,target=MEILI_MASTER_KEY
+Secret=creds_key,type=env,target=CREDS_KEY
+Secret=creds_iv,type=env,target=CREDS_IV
+Secret=jwt_secret,type=env,target=JWT_SECRET
+Secret=jwt_refresh_secret,type=env,target=JWT_REFRESH_SECRET
+Secret=openai_api_key,type=env,target=OPENAI_API_KEY
+Volume={{ volumes.images }}:/app/client/public/images
+Volume={{ volumes.uploads }}:/app/uploads
+Volume={{ volumes.skill }}:/app/skill
+{# Read-only, and the whole directory rather than the one file: nothing in it carries a
+   secret by construction -- `mongo-uri.sh` reads one, it does not hold one. #}
+Volume={{ config_dir }}:/config:ro
+{# `node server/index.js` from the image's own WorkingDir of /app/api, and a version bump
+   has to read it off the image again:
+
+     podman image inspect ghcr.io/librechat-ai/librechat-api:v0.8.8
+       --format 'workdir={{.Config.WorkingDir}} cmd={{.Config.Cmd}}'
+
+   Read it off the *image*, not off a Dockerfile in the repository. The root `Dockerfile`
+   there builds a different artefact and its Cmd is `npm run backend`, which this image
+   answers with `Missing script: "backend"` and an exit 1 every five seconds -- measured
+   on this host, because that is what the first converge shipped.
+
+   The image's `docker-entrypoint.sh` is node's standard one and only prefixes `node` when
+   the command is not an executable, so passing the command directly loses nothing. `exec`
+   so node is pid 1 and gets the signals systemd sends rather than a shell that swallows
+   them. #}
+Entrypoint=/bin/sh
+Exec=-c '. /config/mongo-uri.sh; exec node server/index.js'
+{# busybox wget, because node:24-alpine has no curl. `/readyz` and not `/health`: both
+   answer 200 while the server is listening, but only `/readyz` turns 503 when the
+   post-listen initialisation has not finished -- which is the window in which the app
+   serves the SPA and then fails every request behind it. #}
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:{{ container_port }}/readyz || exit 1
+HealthOnFailure=kill
+{# First start creates the Mongo collections and indexes and builds the Meilisearch index,
+   which takes longer than the default grace period allows. Mealie's 120s, for the same
+   reason. #}
+HealthStartPeriod=120s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
