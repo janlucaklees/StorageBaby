@@ -1,0 +1,59 @@
+[Unit]
+Description=MCP hub (Mayu)
+{# Ordered after the one server it offers, so the hub's first probe of it succeeds. It
+   would recover anyway -- it pings every child every 60 s and reconnects with backoff --
+   but a converge that reports every server healthy on the first try is worth two lines. #}
+After=mcp-mayu-dm.service
+Wants=mcp-mayu-dm.service
+
+[Container]
+{# The upstream image as it comes, and not a build: a build exists in the `mcp` folder
+   only because that hub runs stdio adapters, which have to be installed into the image
+   first. Every server this hub offers is remote, so there is nothing to install.
+
+   Pinned, and the two hubs are meant to move together -- this is the version the other
+   one's Containerfile builds from. #}
+Image=ghcr.io/ni-c/mcp-hub:0.11.6
+ContainerName=mcp-mayu-hub
+Pod=mcp-mayu.pod
+Environment=TZ={{ tz }}
+{# The image defaults to PORT=80 and drops to the node base image's uid 1000. A rootless
+   container's network namespace keeps `net.ipv4.ip_unprivileged_port_start` at 1024, so a
+   process that is not container-root cannot bind 80 at all -- it exits and the container
+   reports `unhealthy`. Measured for the other hub, on test-a; the number here is the
+   `container_port` this route declares. #}
+Environment=PORT={{ container_port }}
+{# The public base URL as a client sees it, which is what the OAuth flow redirects to.
+   Traefik terminates the TLS; the hub itself serves plain HTTP inside the pod. #}
+Environment=EXTERNAL_URL=https://{{ routes[0].fqdn }}
+{# `TRUSTED_PROXIES` is deliberately unset, and the hub says so on every start:
+   "TRUSTED_PROXIES is not set -- login rate limiting falls back to a single global
+   counter". That is the whole consequence; the OAuth redirects come from EXTERNAL_URL
+   above, not from a forwarded header. A wrong value here would trust a header any client
+   can send. #}
+{# As an environment variable rather than a file because the hub reads its login from the
+   environment -- `PASSWORD_HASH` wins over `PASSWORD`, so the plaintext never exists here.
+   It is the only secret this container needs: the one server it offers sits on this pod's
+   loopback and wants no credential, so `mcp.json` has no `${…}` name left in it. #}
+Secret=hub_password_hash,type=env,target=PASSWORD_HASH
+Volume={{ volumes.data }}:/data
+{# The directory, not the file: the hub reloads `mcp.json` when it changes, and an Ansible
+   copy or an editor saves by rename -- a new inode, which a single-file bind mount cannot
+   follow. The `hub/` subdirectory is the other hub's shape kept on purpose, so that
+   installing a stdio adapter here later adds a `build/` beside it and leaves this mount
+   alone. #}
+Volume={{ config_dir }}/hub:/config:ro
+{# The image's own HEALTHCHECK, spelled out because Quadlet does not inherit it. Liveness
+   only, by upstream's design: `/livez` stays 200 while a single child server is degraded,
+   which is what `/health` reports and what should not kill this container -- here that
+   means a dm-mcp that is down does not take her hub with it. #}
+HealthCmd=node -e "fetch('http://127.0.0.1:{{ container_port }}/livez').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HealthOnFailure=kill
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -6,12 +6,12 @@ acme_email: email@janlucaklees.de
 # the A records are the operator's. A service takes a name under one of these by writing it
 # out in full in its own `service.yml`.
 #
-# `mayu.klees.io` is here because `*.klees.io` is one label deep and `chat.mayu.klees.io`
-# is two, so the second wildcard does not cover librechat's name -- and nothing would say
-# so: the route would be served traefik's own default certificate and only the browser
-# would complain. DNS needed nothing for it, which is the trap: Porkbun answers the
-# existing `*.klees.io` record at any depth, so her name resolved to this host before it
-# could be served.
+# `mayu.klees.io` is here because `*.klees.io` is one label deep while `chat.mayu.klees.io`
+# and `mcp.mayu.klees.io` are two, so the second wildcard covers neither of Mayu's names --
+# and nothing would say so: the route would be served traefik's own default certificate and
+# only the browser would complain. DNS needed nothing for it, which is the trap: Porkbun
+# answers the existing `*.klees.io` record at any depth, so her names resolved to this host
+# before they could be served.
 cert_zones: [home.klees.io, klees.io, mayu.klees.io]
 # The registries this host holds a login for (secrets/registries.sops.yaml). A service
 # names the ones it needs; one it names that is not here is refused at converge.

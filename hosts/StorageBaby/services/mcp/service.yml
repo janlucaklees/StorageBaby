@@ -15,6 +15,16 @@ volumes:
   # every connector re-authorise -- so `fast`, and backed up.
   # 1000: the hub image drops to the node base image's unprivileged `node` user.
   data: { class: fast, owner: 1000 }
+  # The dm.de session the `mcp-dm` container renews, plus the break reports it writes.
+  # Small, written often, so `fast` -- and the one thing in this service a person cannot
+  # regenerate: dm.de rejects scripted logins, so a lost session.json means exporting
+  # cookies out of a logged-in browser by hand.
+  #
+  # 1001, not 1000: that image ends on `USER pwuser`, and the playwright noble base
+  # already has `ubuntu` at 1000, so `pwuser` landed on 1001. Read off the image
+  # (`podman run --rm --entrypoint id <image> pwuser`), because the role creates this
+  # directory 0750 and a wrong owner is a container that cannot write its session.
+  dm_data: { class: fast, owner: 1001 }
 config:
   # Copied verbatim into /etc/cradle/mcp/ -- `config/` is `ansible.builtin.copy`, not
   # a template, so these values are duplicated in config/hub/mcp.json by hand. They agree
@@ -28,15 +38,25 @@ config:
 # open rather than two, and no pair that can drift apart. The account it names is the
 # operator's own -- Nextcloud's data is per-user, so an adapter signed in as a dedicated
 # account would see an empty Nextcloud rather than a narrower one.
+#
+# `dm_session_cookies` is the raw `cookie:` header of a logged-in dm.de browser -- the one
+# secret here that is a person's credential rather than a machine's. There is no bearer for
+# dm-mcp: it publishes no port and has no route, so the only thing that can reach it is the
+# hub in this same pod. And no `github_token`: `mcp-dm` can file its own issues about a
+# dead session, and that is off for now -- the unit says what turning it on takes.
 secrets:
   [
     hub_password_hash,
     mealie_api_token,
     nextcloud_user,
     nextcloud_password,
-    paperless_token
+    paperless_token,
+    dm_session_cookies
   ]
+# dm-mcp's image is published from a private repository, so its package is private too.
+# The host offers ghcr.io and holds the login.
+registries: [ghcr.io]
 backup:
-  paths: [data]
+  paths: [data, dm_data]
   schedule: '03:00'
   retention: { latest: 3, daily: 7, weekly: 4, monthly: 12, annual: 3 }
