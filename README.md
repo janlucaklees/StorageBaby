@@ -321,7 +321,14 @@ and the rest of its § 7 is about the engine, which is no longer this repository
    unit on every start, so the gap is settings rather than credentials. It is still the
    one service on this host whose behaviour cannot be read off a commit:
    `hosts/StorageBaby/services/cliproxy/README.md`, "Who owns the configuration".
-6. **Paperless carries a hook that only a test ever wanted.**
+6. **One API key lives in two sops files.** `cliproxy`'s `client_api_key` and
+   `librechat`'s `cliproxy_api_key` have to hold the same string — LibreChat's chat
+   provider is that proxy — and the platform's mechanism for exactly this, a
+   `host_secrets` set, is deliberately unused: the set would have moved cliproxy's own key
+   out of its own folder for one consumer. The cost is the rotation. Changing one file and
+   not the other leaves a proxy that is up and healthy and a chat that answers 401 to
+   every message, and nothing reports it.
+7. **Paperless carries a hook that only a test ever wanted.**
    `hosts/StorageBaby/services/paperless/service.yml` declares a
    `touch /tmp/.hook-ran` after-change hook that existed only for
    `test_deploy_runs_after_change_hooks`. That test is Cradle's now and runs against

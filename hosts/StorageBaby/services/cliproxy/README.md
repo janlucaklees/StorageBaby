@@ -54,6 +54,13 @@ entrypoint treats that string as "no credential exists yet" rather than as a cre
   placeholder the environment variable is not set at all, which leaves the management
   routes unmounted: `/v8/management/*` is a hard 404 and the panel cannot be logged in to.
 
+**`client_api_key` has a second holder.** LibreChat's chat provider is this proxy, and its
+own `cliproxy_api_key` has to be byte-identical to this value — a copy, taken deliberately
+instead of a `host_secrets` set, so that this key stays in this folder. Rotating it means
+both files: `hosts/StorageBaby/services/librechat/secrets.sops.yaml` too, or every
+conversation there fails against a proxy that is up.
+`hosts/StorageBaby/services/librechat/README.md` has that side.
+
 Set both in one edit, from the repository root:
 
 ```sh
