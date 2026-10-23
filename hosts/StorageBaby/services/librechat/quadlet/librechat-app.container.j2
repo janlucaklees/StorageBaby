@@ -25,9 +25,9 @@ Environment=PORT={{ container_port }}
    rather than the loopback it dialled, so this has to be the public one. #}
 Environment=DOMAIN_CLIENT=https://{{ fqdn }}
 Environment=DOMAIN_SERVER=https://{{ fqdn }}
-{# The app's own configuration file, out of the read-only config mount below. Its one
-   setting today is the MCP allowlist that lets her hub's name through -- the file's own
-   comment says why a name on this host needs listing. #}
+{# The app's own configuration file, out of the read-only config mount below. Two
+   settings today: the MCP allowlist that lets her hub's name through, and the
+   speech-to-text provider -- the file's own comments say why each one is needed. #}
 Environment=CONFIG_PATH=/config/librechat.yaml
 {# Exactly one proxy in front, which is Traefik: with this set the app reads the client's
    address from X-Forwarded-For, and the login throttle and the rate limits are per
@@ -66,8 +66,8 @@ Environment=SCHEDULES_SINGLE_PROCESS=true
    the shape openproject and openarchiver already solved here. The script's own comment
    says why it is sourced rather than exported from this line. #}
 Secret=mongo_password
-{# `type=env` for these six, which is the fallback and not the preference: LibreChat reads
-   no `_FILE` variant of any of them. `meili_master_key` is the same value the search
+{# `type=env` for these seven, which is the fallback and not the preference: LibreChat
+   reads no `_FILE` variant of any of them. `meili_master_key` is the same value the search
    container gets, `jwt_secret` the same the RAG service gets -- one podman secret each,
    mounted into both. #}
 Secret=meili_master_key,type=env,target=MEILI_MASTER_KEY
@@ -76,6 +76,12 @@ Secret=creds_iv,type=env,target=CREDS_IV
 Secret=jwt_secret,type=env,target=JWT_SECRET
 Secret=jwt_refresh_secret,type=env,target=JWT_REFRESH_SECRET
 Secret=openai_api_key,type=env,target=OPENAI_API_KEY
+{# Transcription's own key, and not the one above: an OpenAI project key can be scoped to
+   a subset of the API, so a key that answers chat completions may answer
+   `/v1/audio/transcriptions` with a 401. Two keys also split the two lines of the bill.
+   `config/librechat.yaml` references this variable by name as `${STT_API_KEY}` -- that
+   file is copied verbatim and can hold no value, only a reference. #}
+Secret=stt_api_key,type=env,target=STT_API_KEY
 Volume={{ volumes.images }}:/app/client/public/images
 Volume={{ volumes.uploads }}:/app/uploads
 Volume={{ volumes.skill }}:/app/skill

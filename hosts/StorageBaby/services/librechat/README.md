@@ -108,7 +108,7 @@ Three consequences, all of them things to know before touching this service:
 
 ## The secrets, and how to fill them
 
-Eight, in one file — set on storagebaby, and this is what to regenerate them with:
+Nine, in one file — set on storagebaby, and this is what to regenerate them with:
 
 ```sh
 mise run sops hosts/StorageBaby/services/librechat/secrets.sops.yaml
@@ -124,6 +124,7 @@ mise run sops hosts/StorageBaby/services/librechat/secrets.sops.yaml
 | `jwt_secret`         | signs her session, and the token the RAG service verifies          | `openssl rand -hex 32`  |
 | `jwt_refresh_secret` | signs the refresh token                                            | `openssl rand -hex 32`  |
 | `openai_api_key`     | the chat and embeddings key                                        | from the OpenAI account |
+| `stt_api_key`        | transcription's key — Whisper, see "Speech to text" below          | from the OpenAI account |
 
 Hex throughout, and for one of them that is a requirement rather than a habit:
 `mongo_password` is composed into a URL, so a base64 value's `+`, `/` or `=` could change
@@ -136,10 +137,15 @@ credential rather than at startup. `meili_master_key` must be at least 16 bytes,
 `MEILI_ENV=production` enforces by refusing to start without it — a loud failure, on
 purpose.
 
-One key covers both halves of the OpenAI bill: the app uses it for chat and the RAG service
-uses the same value for embeddings (`text-embedding-3-small`, written out in its unit so
-that an upstream change of default cannot quietly re-embed her documents against a
-different model).
+Two of the nine are OpenAI keys, and the split is deliberate. `openai_api_key` covers both
+halves of the conversation bill: the app uses it for chat and the RAG service uses the same
+value for embeddings (`text-embedding-3-small`, written out in its unit so that an upstream
+change of default cannot quietly re-embed her documents against a different model).
+`stt_api_key` covers transcription alone. The same value may be put in both — nothing here
+checks — but a project key on that account can be **scoped to a subset of the API**, so a
+key that answers chat completions can answer `/v1/audio/transcriptions` with a 401, and the
+two names are what makes that a key to replace rather than a feature to debug. The bill
+reads as two lines for the same reason.
 
 ## The first account
 
@@ -202,6 +208,73 @@ converge brings the file up and the UI still refuses the name, `allowedAddresses
 other key, and declaring the hub in this file's `mcpServers` block with the token as a
 secret is the fallback that bypasses the UI's check entirely.
 
+## Speech to text
+
+She presses the microphone in the composer, speaks, presses it again, and the words appear
+in the message box. The recording goes to this server, this server posts it to OpenAI's
+`whisper-1`, and the transcript comes back — nothing is transcribed in the browser.
+
+That takes **two** settings in `config/librechat.yaml`, and either one alone does nothing:
+
+| setting                                      | what it decides                                     |
+| -------------------------------------------- | --------------------------------------------------- |
+| `speech.stt.openai`                          | what this server does with a recording it is handed |
+| `speechTab.speechToText.engineSTT: external` | whether the browser hands it over at all            |
+
+The second is the one that is easy to miss. The client's own default is `engineSTT:
+browser` — the Web Speech API, which transcribes inside the browser, sends this server
+nothing and reaches no provider. A `speech.stt` block with the browser engine still
+selected is configuration that costs nothing and does nothing.
+
+And it is a **default**, not a setting: the client applies what the server reports only for
+keys the browser's local storage does not already hold
+(`client/src/hooks/Config/useSpeechSettingsInit.ts`). An account that has already opened
+Settings → Speech and changed something there keeps its own choice, and has to pick
+**External** in that tab once. A fresh browser profile picks it up on the first load.
+
+No language is pinned, so Whisper detects one per recording. The Speech tab has a language
+dropdown, and naming a language there is worth trying if detection mishears her.
+
+### The key, and how it fails
+
+`apiKey: '${STT_API_KEY}'` is a _reference_: `config/` is copied verbatim into
+`/etc/cradle/librechat/` and never templated, so it can hold no value. The name is the
+podman secret `stt_api_key`, mounted `type=env` in the app's unit, and the app resolves the
+`${…}` from its own environment when the request is made.
+
+What that costs is the failure mode, and it is worth knowing before debugging it: a `${…}`
+whose variable is unset resolves to **the literal string**, which is then sent as the
+bearer token (`extractEnvVariable`, `packages/data-provider/src/utils.ts`). So a missing or
+wrong key is a **401 at her first dictation** — not a startup error, and nothing in the
+app's log at boot. The platform catches the absent _secret_ before that: a name in
+`service.yml`'s `secrets` with no key in `secrets.sops.yaml` fails the converge with
+`missing in secrets file: ['stt_api_key']`. It cannot catch a key that is merely wrong.
+
+Two things upstream refuses, both of which would be silent if they were not:
+
+- **More than one provider.** The service counts the configured providers of the `stt`
+  block and throws "Multiple providers are set" unless exactly one survives
+  (`listConfiguredSpeechProviders`). An Azure block would replace this one, not join it.
+- **`allowedAddresses` with a public address.** That key is a transport exemption for a
+  self-hosted transcription endpoint on a private address, and its schema refuses public IP
+  literals outright. It has nothing to do with reaching `api.openai.com`, which needs no
+  entry.
+
+### Verifying it
+
+What the server believes, from the host — `sttExternal: true` is the whole question, and
+the endpoint needs her session, so this is read in the browser's devtools against
+`/api/files/speech/config/get` rather than with curl. What can be read without a session is
+that the file arrived and parsed:
+
+```sh
+cradle-svc logs librechat | grep -i 'speech\|Config file'
+```
+
+A `librechat.yaml` the loader rejects is one **error-level** line at startup and defaults
+afterwards — the app does not exit. So "the pod is healthy" says nothing about this file,
+which is what the grep is for.
+
 ## Backups
 
 The sidecar carries `images`, `uploads`, `skill` and `backups` at 03:00. `backups` holds
@@ -248,9 +321,9 @@ avoids the problem entirely, which is why it is the documented one.
 
 ## What is not here, and why
 
-- **A `librechat.yaml` with one setting.** The app runs on its defaults otherwise, which is
-  enough for one user and one provider; the file exists for the MCP allowlist above, and a
-  restricted model list or a different file-upload policy would be written in it too.
+- **A `librechat.yaml` with more in it.** The app runs on its defaults beyond the two
+  blocks it carries — the MCP allowlist and the speech provider, both above; a restricted
+  model list or a different file-upload policy would be written in it too.
 
   Before it existed, its absence cost one **error-level log line**, at startup and in every
   `podman exec` of a `config/` script, and the line was noise rather than a fault:
