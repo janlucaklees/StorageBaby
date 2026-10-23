@@ -108,7 +108,7 @@ Three consequences, all of them things to know before touching this service:
 
 ## The secrets, and how to fill them
 
-Eight, in one file — set on storagebaby, and this is what to regenerate them with:
+Nine, in one file — set on storagebaby, and this is what to regenerate them with:
 
 ```sh
 mise run sops hosts/StorageBaby/services/librechat/secrets.sops.yaml
@@ -123,7 +123,8 @@ mise run sops hosts/StorageBaby/services/librechat/secrets.sops.yaml
 | `creds_iv`           | the matching IV — **32 hex characters, exactly**                   | `openssl rand -hex 16`  |
 | `jwt_secret`         | signs her session, and the token the RAG service verifies          | `openssl rand -hex 32`  |
 | `jwt_refresh_secret` | signs the refresh token                                            | `openssl rand -hex 32`  |
-| `openai_api_key`     | the chat and embeddings key                                        | from the OpenAI account |
+| `openai_api_key`     | the **embeddings** key, for file uploads only                      | from the OpenAI account |
+| `cliproxy_api_key`   | the chat provider — the same value as cliproxy's `client_api_key`  | copied, not generated   |
 
 Hex throughout, and for one of them that is a requirement rather than a habit:
 `mongo_password` is composed into a URL, so a base64 value's `+`, `/` or `=` could change
@@ -136,10 +137,41 @@ credential rather than at startup. `meili_master_key` must be at least 16 bytes,
 `MEILI_ENV=production` enforces by refusing to start without it — a loud failure, on
 purpose.
 
-One key covers both halves of the OpenAI bill: the app uses it for chat and the RAG service
-uses the same value for embeddings (`text-embedding-3-small`, written out in its unit so
-that an upstream change of default cannot quietly re-embed her documents against a
-different model).
+`cliproxy_api_key` is the one value here that is **copied rather than generated**: it has
+to be byte-identical to `client_api_key` in
+`hosts/StorageBaby/services/cliproxy/secrets.sops.yaml`, because the two sides are a
+client and a server. The platform has a mechanism for one string two services must agree
+on — a `host_secrets` set — and this deliberately does not use it: the set would have
+moved cliproxy's own key out of cliproxy's own folder for the sake of one consumer, and
+the operator took the copy instead. **Rotating it is therefore two files**, and the
+symptom of changing only one is every conversation here failing against a proxy that is
+up and healthy.
+
+`openai_api_key` no longer pays for chat. It used to cover both halves of the OpenAI bill;
+since the chat provider became cliproxy it is read by the RAG service alone, for
+embeddings (`text-embedding-3-small`, written out in its unit so that an upstream change
+of default cannot quietly re-embed her documents against a different model). That split is
+not a tidiness choice: cliproxy offers CLI subscriptions, which have no embeddings
+endpoint at all — it registers `/v1/chat/completions` and `/v1/messages` and no
+`/v1/embeddings` — so an upload still costs OpenAI tokens while a conversation costs
+nothing beyond the subscription.
+
+## The chat provider is cliproxy, and the model list is not in git
+
+`config/librechat.yaml` declares one `endpoints.custom` entry pointing at
+`https://cliproxy.home.klees.io/v1` with `models.fetch: true`, so **the dropdown is
+whatever accounts are signed in to cliproxy's panel**. Adding a provider account there
+changes what she can pick here with no commit and no converge; the `models.default` list
+beside it is only the fallback for a fetch that fails, and is not a statement about which
+accounts exist.
+
+The built-in OpenAI endpoint is gone from the selector, and the mechanism is the absence of
+a line rather than a setting: LibreChat offers that endpoint exactly when the app container
+has `OPENAI_API_KEY`, and this unit no longer sets it. There is no `disabled:` key to
+write, and putting the variable back is all it takes to get the endpoint back.
+
+Conversations she held on the OpenAI endpoint keep their history and are still readable;
+continuing one means picking a model from this endpoint instead.
 
 ## The first account
 
@@ -292,8 +324,9 @@ third is for the first start.
   within five minutes of a push — so a placeholder that arrives first _becomes_ the
   password, and the value set afterwards is ignored for the life of the volume. The only
   fix then is wiping `database` and `vectordb` and restoring. The failure is **silent**:
-  `meili_master_key` refuses to start on a bad value and `openai_api_key` fails at the
-  first message, but Mongo and Postgres accept a placeholder and run happily on it.
+  `meili_master_key` refuses to start on a bad value, `cliproxy_api_key` fails at the
+  first message and `openai_api_key` at the first upload, but Mongo and Postgres accept a
+  placeholder and run happily on it.
 - **MongoDB 8 needs AVX**, or `mongod` dies with `Illegal instruction` and no other
   message. Settled on this host: `lscpu` reports `avx` and `avx2`.
 - **Memory.** Five containers, two databases and a search index are a real addition to this

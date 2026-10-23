@@ -63,6 +63,17 @@ config:
   mongo_user: librechat
   vector_database: librechat
   vector_user: librechat
+# `cliproxy_api_key` is the chat provider's: the same string `cliproxy`'s own
+# `client_api_key` holds, written a second time rather than shared through a
+# `host_secrets` set. Two copies of one value is a thing this platform has a mechanism
+# against, and it was the operator's call to take the copy: the set would have moved
+# cliproxy's own key out of its own folder for one consumer. The cost is the rotation --
+# changing it means both files, and the symptom of changing only one is every
+# conversation here failing with a 401 from a proxy that is up.
+#
+# `openai_api_key` stays, and no longer for the chat endpoint: the app container does not
+# get it any more (which is what removes OpenAI from the endpoint selector), and the RAG
+# container still does, because embeddings are not something cliproxy serves.
 secrets:
   [
     mongo_password,
@@ -72,7 +83,8 @@ secrets:
     creds_iv,
     jwt_secret,
     jwt_refresh_secret,
-    openai_api_key
+    openai_api_key,
+    cliproxy_api_key
   ]
 backup:
   # `database`, `vectordb` and `search` are absent on purpose: a database is carried as the

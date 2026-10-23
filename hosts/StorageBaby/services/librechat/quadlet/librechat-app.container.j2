@@ -75,7 +75,16 @@ Secret=creds_key,type=env,target=CREDS_KEY
 Secret=creds_iv,type=env,target=CREDS_IV
 Secret=jwt_secret,type=env,target=JWT_SECRET
 Secret=jwt_refresh_secret,type=env,target=JWT_REFRESH_SECRET
-Secret=openai_api_key,type=env,target=OPENAI_API_KEY
+{# The chat provider is `cliproxy` on this host, and this is the whole of how it is
+   selected: `config/librechat.yaml` reads this variable as the custom endpoint's
+   `apiKey`, and **`OPENAI_API_KEY` is deliberately not set here** -- LibreChat shows its
+   built-in OpenAI endpoint exactly when that variable is present, so leaving it out is
+   what takes it out of the endpoint selector. There is no `disabled:` key to write.
+   `openai_api_key` still exists as a secret of this service and is still mounted into
+   the RAG container beside this one: embeddings are not something cliproxy serves (it
+   registers no `/v1/embeddings`), so a file upload still pays OpenAI per token while a
+   conversation does not. The service README says what that costs. #}
+Secret=cliproxy_api_key,type=env,target=CLIPROXY_API_KEY
 Volume={{ volumes.images }}:/app/client/public/images
 Volume={{ volumes.uploads }}:/app/uploads
 Volume={{ volumes.skill }}:/app/skill

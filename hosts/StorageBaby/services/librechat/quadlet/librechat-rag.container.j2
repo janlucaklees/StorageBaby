@@ -30,6 +30,11 @@ Environment=EMBEDDINGS_MODEL=text-embedding-3-small
    service verifies it with the same value (HS256, `app/middleware.py`). Two containers,
    one podman secret -- a mismatch would make every upload fail authorisation. #}
 Secret=vectordb_password,type=env,target=POSTGRES_PASSWORD
+{# The one consumer of this key left on this host, and the reason it survived the move of
+   the chat provider to cliproxy: that proxy offers CLI subscriptions, which have no
+   embeddings endpoint -- it registers `/v1/chat/completions` and `/v1/messages` and no
+   `/v1/embeddings` at all. So the app container no longer gets this value and this one
+   still does, which is also why `EMBEDDINGS_PROVIDER` above still says `openai`. #}
 Secret=openai_api_key,type=env,target=OPENAI_API_KEY
 Secret=jwt_secret,type=env,target=JWT_SECRET
 {# Python, because this image has neither curl nor wget -- measured inside it, after a
