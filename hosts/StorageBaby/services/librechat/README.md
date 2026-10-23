@@ -216,10 +216,10 @@ in the message box. The recording goes to this server, this server posts it to O
 
 That takes **two** settings in `config/librechat.yaml`, and either one alone does nothing:
 
-| setting                                      | what it decides                                     |
-| -------------------------------------------- | --------------------------------------------------- |
-| `speech.stt.openai`                          | what this server does with a recording it is handed |
-| `speechTab.speechToText.engineSTT: external` | whether the browser hands it over at all            |
+| setting                                   | what it decides                                     |
+| ----------------------------------------- | --------------------------------------------------- |
+| `speech.stt.openai`                       | what this server does with a recording it is handed |
+| `speech.speechTab.speechToText.engineSTT` | whether the browser hands it over at all            |
 
 The second is the one that is easy to miss. The client's own default is `engineSTT:
 browser` — the Web Speech API, which transcribes inside the browser, sends this server
@@ -262,18 +262,26 @@ Two things upstream refuses, both of which would be silent if they were not:
 
 ### Verifying it
 
-What the server believes, from the host — `sttExternal: true` is the whole question, and
-the endpoint needs her session, so this is read in the browser's devtools against
-`/api/files/speech/config/get` rather than with curl. What can be read without a session is
-that the file arrived and parsed:
+Two questions, and the first one is answerable from the host. Did the file arrive and
+parse? A `librechat.yaml` the loader rejects costs one **error-level** line and the app
+then runs on its defaults — it does not exit — so "the pod is healthy" says nothing about
+this file:
 
 ```sh
-cradle-svc logs librechat | grep -i 'speech\|Config file'
+journalctl CONTAINER_NAME=librechat-app --since today | grep -i 'config file'
 ```
 
-A `librechat.yaml` the loader rejects is one **error-level** line at startup and defaults
-afterwards — the app does not exit. So "the pod is healthy" says nothing about this file,
-which is what the grep is for.
+`CONTAINER_NAME=` and a bounded `--since`, not `cradle-svc logs librechat`: that wrapper
+is `journalctl -f`, which tails and never shows a line written at the last restart.
+
+The second question — does the server offer the external engine — is
+`/api/files/speech/config/get`, which answers `sttExternal: true` and `engineSTT:
+external` once this is in place. It needs her session, so it is read in the browser's
+devtools rather than with curl.
+
+Neither proves the key. **The first dictation is the only test of that**, and a key the
+account has scoped away from audio fails it with a 401 while everything above still looks
+right.
 
 ## Backups
 
