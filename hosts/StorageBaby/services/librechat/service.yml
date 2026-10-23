@@ -72,7 +72,8 @@ secrets:
     creds_iv,
     jwt_secret,
     jwt_refresh_secret,
-    openai_api_key
+    openai_api_key,
+    stt_api_key
   ]
 backup:
   # `database`, `vectordb` and `search` are absent on purpose: a database is carried as the
