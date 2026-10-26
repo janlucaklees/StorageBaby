@@ -108,7 +108,7 @@ Three consequences, all of them things to know before touching this service:
 
 ## The secrets, and how to fill them
 
-Nine, in one file — set on storagebaby, and this is what to regenerate them with:
+Ten, in one file — set on storagebaby, and this is what to regenerate them with:
 
 ```sh
 mise run sops hosts/StorageBaby/services/librechat/secrets.sops.yaml
@@ -123,7 +123,8 @@ mise run sops hosts/StorageBaby/services/librechat/secrets.sops.yaml
 | `creds_iv`           | the matching IV — **32 hex characters, exactly**                   | `openssl rand -hex 16`  |
 | `jwt_secret`         | signs her session, and the token the RAG service verifies          | `openssl rand -hex 32`  |
 | `jwt_refresh_secret` | signs the refresh token                                            | `openssl rand -hex 32`  |
-| `openai_api_key`     | the chat and embeddings key                                        | from the OpenAI account |
+| `openai_api_key`     | the **embeddings** key, for file uploads only                      | from the OpenAI account |
+| `cliproxy_api_key`   | the chat provider — the same value as cliproxy's `client_api_key`  | copied, not generated   |
 | `stt_api_key`        | transcription's key — Whisper, see "Speech to text" below          | from the OpenAI account |
 
 Hex throughout, and for one of them that is a requirement rather than a habit:
@@ -137,15 +138,54 @@ credential rather than at startup. `meili_master_key` must be at least 16 bytes,
 `MEILI_ENV=production` enforces by refusing to start without it — a loud failure, on
 purpose.
 
-Two of the nine are OpenAI keys, and the split is deliberate. `openai_api_key` covers both
-halves of the conversation bill: the app uses it for chat and the RAG service uses the same
-value for embeddings (`text-embedding-3-small`, written out in its unit so that an upstream
-change of default cannot quietly re-embed her documents against a different model).
-`stt_api_key` covers transcription alone. The same value may be put in both — nothing here
-checks — but a project key on that account can be **scoped to a subset of the API**, so a
-key that answers chat completions can answer `/v1/audio/transcriptions` with a 401, and the
-two names are what makes that a key to replace rather than a feature to debug. The bill
-reads as two lines for the same reason.
+`cliproxy_api_key` is the one value here that is **copied rather than generated**: it has
+to be byte-identical to `client_api_key` in
+`hosts/StorageBaby/services/cliproxy/secrets.sops.yaml`, because the two sides are a
+client and a server. The platform has a mechanism for one string two services must agree
+on — a `host_secrets` set — and this deliberately does not use it: the set would have
+moved cliproxy's own key out of cliproxy's own folder for the sake of one consumer, and
+the operator took the copy instead. **Rotating it is therefore two files**, and the
+symptom of changing only one is every conversation here failing against a proxy that is
+up and healthy.
+
+`openai_api_key` no longer pays for chat. It used to cover both halves of the OpenAI bill;
+since the chat provider became cliproxy it is read by the RAG service alone, for
+embeddings (`text-embedding-3-small`, written out in its unit so that an upstream change
+of default cannot quietly re-embed her documents against a different model). That split is
+not a tidiness choice: cliproxy offers CLI subscriptions, which have no embeddings
+endpoint at all — it registers `/v1/chat/completions` and `/v1/messages` and no
+`/v1/embeddings` — so an upload still costs OpenAI tokens while a conversation costs
+nothing beyond the subscription.
+
+`stt_api_key` is a third key of the same shape, and it exists because a _name_ here
+decides a feature. It may hold the same string as `openai_api_key` — transcription is
+OpenAI's endpoint and that is an OpenAI key — but it cannot _be_ `openai_api_key`, because
+the container that needs it is the app, and the app's own secret of that name would be
+mounted as `OPENAI_API_KEY`: the one variable that puts the built-in OpenAI endpoint back
+in the selector. `STT_API_KEY` buys audio and nothing else. Nor can it be
+`cliproxy_api_key`, for the reason the paragraph above gives about embeddings: CLI
+subscriptions register no `/v1/audio/transcriptions` any more than they do
+`/v1/embeddings`. There is one more reason to keep the two OpenAI keys distinct even when
+the value is the same — a project key can be **scoped to a subset of the API**, so a key
+that answers embeddings can answer transcription with a 401, and two names make that a key
+to replace rather than a feature to debug.
+
+## The chat provider is cliproxy, and the model list is not in git
+
+`config/librechat.yaml` declares one `endpoints.custom` entry pointing at
+`https://cliproxy.home.klees.io/v1` with `models.fetch: true`, so **the dropdown is
+whatever accounts are signed in to cliproxy's panel**. Adding a provider account there
+changes what she can pick here with no commit and no converge; the `models.default` list
+beside it is only the fallback for a fetch that fails, and is not a statement about which
+accounts exist.
+
+The built-in OpenAI endpoint is gone from the selector, and the mechanism is the absence of
+a line rather than a setting: LibreChat offers that endpoint exactly when the app container
+has `OPENAI_API_KEY`, and this unit no longer sets it. There is no `disabled:` key to
+write, and putting the variable back is all it takes to get the endpoint back.
+
+Conversations she held on the OpenAI endpoint keep their history and are still readable;
+continuing one means picking a model from this endpoint instead.
 
 ## The first account
 
@@ -242,6 +282,13 @@ dropdown, and naming a language there is worth trying if detection mishears her.
 podman secret `stt_api_key`, mounted `type=env` in the app's unit, and the app resolves the
 `${…}` from its own environment when the request is made.
 
+**Do not simplify this to `OPENAI_API_KEY`**, however much it looks like the same key under
+a longer name. That variable is what LibreChat reads to offer its built-in OpenAI endpoint,
+which this host deliberately does not — "The chat provider is cliproxy" above — so
+mounting the existing `openai_api_key` into the app container would bring the endpoint back
+as a side effect of configuring a microphone. The two may hold the same string; they may
+not share a variable.
+
 What that costs is the failure mode, and it is worth knowing before debugging it: a `${…}`
 whose variable is unset resolves to **the literal string**, which is then sent as the
 bearer token (`extractEnvVariable`, `packages/data-provider/src/utils.ts`). So a missing or
@@ -329,9 +376,10 @@ avoids the problem entirely, which is why it is the documented one.
 
 ## What is not here, and why
 
-- **A `librechat.yaml` with more in it.** The app runs on its defaults beyond the two
-  blocks it carries — the MCP allowlist and the speech provider, both above; a restricted
-  model list or a different file-upload policy would be written in it too.
+- **A `librechat.yaml` with more in it.** The app runs on its defaults beyond the three
+  blocks it carries — the MCP allowlist, the cliproxy endpoint and the speech provider,
+  all three above; a restricted model list or a different file-upload policy would be
+  written in it too.
 
   Before it existed, its absence cost one **error-level log line**, at startup and in every
   `podman exec` of a `config/` script, and the line was noise rather than a fault:
@@ -373,8 +421,9 @@ third is for the first start.
   within five minutes of a push — so a placeholder that arrives first _becomes_ the
   password, and the value set afterwards is ignored for the life of the volume. The only
   fix then is wiping `database` and `vectordb` and restoring. The failure is **silent**:
-  `meili_master_key` refuses to start on a bad value and `openai_api_key` fails at the
-  first message, but Mongo and Postgres accept a placeholder and run happily on it.
+  `meili_master_key` refuses to start on a bad value, `cliproxy_api_key` fails at the
+  first message and `openai_api_key` at the first upload, but Mongo and Postgres accept a
+  placeholder and run happily on it.
 - **MongoDB 8 needs AVX**, or `mongod` dies with `Illegal instruction` and no other
   message. Settled on this host: `lscpu` reports `avx` and `avx2`.
 - **Memory.** Five containers, two databases and a search index are a real addition to this

@@ -63,6 +63,25 @@ config:
   mongo_user: librechat
   vector_database: librechat
   vector_user: librechat
+# `cliproxy_api_key` is the chat provider's: the same string `cliproxy`'s own
+# `client_api_key` holds, written a second time rather than shared through a
+# `host_secrets` set. Two copies of one value is a thing this platform has a mechanism
+# against, and it was the operator's call to take the copy: the set would have moved
+# cliproxy's own key out of its own folder for one consumer. The cost is the rotation --
+# changing it means both files, and the symptom of changing only one is every
+# conversation here failing with a 401 from a proxy that is up.
+#
+# `openai_api_key` stays, and no longer for the chat endpoint: the app container does not
+# get it any more (which is what removes OpenAI from the endpoint selector), and the RAG
+# container still does, because embeddings are not something cliproxy serves.
+#
+# `stt_api_key` is the third key of this shape and it cannot be either of the other two.
+# Not `cliproxy_api_key`, because cliproxy serves CLI subscriptions and registers no
+# `/v1/audio/transcriptions` any more than it does `/v1/embeddings`. And not
+# `openai_api_key` -- that one is OpenAI's and would do the job, but the app container is
+# the thing that needs it and mounting it there as `OPENAI_API_KEY` is exactly what puts
+# the built-in OpenAI endpoint back in the selector. A separate name mounted as
+# `STT_API_KEY` is how transcription gets a key without the endpoint coming back with it.
 secrets:
   [
     mongo_password,
@@ -73,6 +92,7 @@ secrets:
     jwt_secret,
     jwt_refresh_secret,
     openai_api_key,
+    cliproxy_api_key,
     stt_api_key
   ]
 backup:
