@@ -3,14 +3,17 @@ container_port: 80
 domain: mailflow.klees.io
 volumes:
   database: { class: fast, owner: 70 }
+  # Redis, and the one place this service's storage departs from paperless's, nextcloud's
+  # and openarchiver's. Theirs is a queue or a cache and is thrown away on purpose; this
+  # one is the session store -- express-session writes through `connect-redis`, so redis's
+  # dataset is the list of who is signed in -- and with no volume every restart signed
+  # everyone out. Not in `backup.paths`: a session is not state a restore wants back.
+  # 999 is the `redis` user in `redis:alpine`.
+  sessions: { class: fast, owner: 999 }
   # No `owner`: written by the dump timer's `podman exec` with no `-u`, i.e. container root,
   # which is the service user. `pool` because a write-once nightly file has no business on
   # the SSD.
   backups: { class: pool }
-# Deliberately no volume for redis, unlike upstream's compose file. It holds sessions and
-# cache, nothing a restore wants, and every other service on this platform that runs
-# redis or valkey -- paperless, nextcloud, openarchiver -- gives it none either. The cost
-# of a restart is that everyone signs in again.
 config:
   database_name: mailflow
   database_user: mailflow

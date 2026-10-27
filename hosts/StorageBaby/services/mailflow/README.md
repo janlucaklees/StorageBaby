@@ -15,7 +15,8 @@ One pod, four containers and a timer:
   reaches; it proxies every API path to the backend.
 - `mailflow-backend` — the Node API on 3000, pod-internal.
 - `mailflow-database` — Postgres 17. The only copy of anything that matters.
-- `mailflow-broker` — redis, sessions and cache.
+- `mailflow-broker` — redis, sessions and cache. The one part whose data is kept across a
+  restart; see Volumes.
 - `mailflow-dump.timer` — `pg_dump` into `backups` at 02:30.
 
 ## Three settings that come from reading the image, not the compose file
@@ -76,11 +77,24 @@ the database gives a working instance with every stored account unreadable.
 | volume     | class | owner | what it holds                          |
 | ---------- | ----- | ----- | -------------------------------------- |
 | `database` | fast  | 70    | the Postgres data directory            |
+| `sessions` | fast  | 999   | redis's snapshot: who is signed in     |
 | `backups`  | pool  | —     | the nightly dump, written by the timer |
 
-Redis gets no volume, unlike upstream's compose file — it holds sessions and cache, and every
-other service here that runs redis or valkey does the same. The cost of a restart is that
-everyone signs in again.
+### Redis keeps its data here, unlike everywhere else on this platform
+
+MailFlow's sessions are neither cookies carrying their own state nor rows in Postgres:
+express-session stores them through `connect-redis`, so redis's dataset _is_ the list of who
+is signed in. Until 2026-10-27 this service followed paperless, nextcloud and openarchiver
+and gave its redis no volume — and so every restart, whether a deploy, a redis auto-update or
+a reboot, signed everyone out. That is what the `sessions` volume fixes, with upstream's own
+`--save 60 1`: one snapshot sixty seconds after a change, so a hard kill loses at most the
+last minute's sign-ins and a graceful stop loses none.
+
+Two consequences worth knowing. Nothing snapshots this volume — a session is not state a
+restore wants back, and losing it costs one sign-in. And persistence buys the failure mode
+nextcloud's unit avoids on purpose: a redis that cannot write its snapshot stops accepting
+writes, which here means nobody can sign in. The dataset is kilobytes and it sits on `fast`,
+so that needs the SSD to be full before it bites.
 
 ## Secrets
 
