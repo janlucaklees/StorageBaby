@@ -58,8 +58,9 @@ HealthOnFailure=kill
    `HealthOnFailure=kill` a start period shorter than the migrations kills the container
    mid-upgrade and starts it again -- survivable, because each migration is its own
    transaction behind a session advisory lock and is retried, but a loop that never gets
-   anywhere if the margin is always too small. 4.0.4's 0068 rewrites thread keys across
-   every message in the database, which is the longest one between 3.8.3 and 4.0.5. #}
+   anywhere if the margin is always too small. 4.0.4's 0068 is the long one between 3.8.3
+   and 4.0.5: it re-threads every subject-grouped conversation in the database, which
+   upstream puts at a few seconds on a large mailbox. #}
 HealthStartPeriod=300s
 
 [Service]
