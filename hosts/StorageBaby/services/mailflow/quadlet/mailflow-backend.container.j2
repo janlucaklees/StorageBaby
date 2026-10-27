@@ -4,14 +4,22 @@ After=mailflow-database.service mailflow-broker.service
 Wants=mailflow-database.service mailflow-broker.service
 
 [Container]
-Image=ghcr.io/maathimself/mailflow-backend:3.8.3
+Image=ghcr.io/maathimself/mailflow-backend:4.0.5
 ContainerName=mailflow-backend
 Pod=mailflow.pod
 Environment=TZ={{ tz }}
 Environment=NODE_ENV=production
-{# The name the browser uses. It goes into invite mails and into the CORS allowlist, so it
-   has to be the public route and not the loopback the process binds. #}
+{# The name the browser uses: it goes into invite mails, into the OIDC redirect URIs and
+   into the `Origin` every browser websocket is checked against, so it has to be the public
+   route and not the loopback the process binds. The backend refuses to start in production
+   without it. #}
 Environment=APP_URL=https://{{ routes[0].fqdn }}
+{# Upstream sets both from the same value. APP_URL is the load-bearing one -- the backend
+   refuses to start in production without it and the websocket checks `Origin` against it --
+   while FRONTEND_URL is only the CORS allowlist, which nothing here needs because the SPA is
+   served from this very name. Set anyway, so the one cross-origin preflight the backend
+   would accept is this host rather than upstream's `http://localhost:5173` fallback. #}
+Environment=FRONTEND_URL=https://{{ routes[0].fqdn }}
 Environment=DB_HOST=127.0.0.1
 Environment=DB_PORT=5432
 Environment=DB_NAME={{ service.config.database_name }}
@@ -21,6 +29,13 @@ Environment=REDIS_URL=redis://127.0.0.1:6379
    on `trust_proxy_hops` in service.yml for why this value is safe here and would not be on
    a host that published these ports anywhere but loopback. #}
 Environment=TRUST_PROXY_HOPS={{ service.config.trust_proxy_hops }}
+{# 4.0.0's image proxy. The directory is the image's own, created and chowned to `node` in
+   its Dockerfile; the volume underneath it is what keeps the cache across a restart. #}
+Environment=IMAGE_CACHE_DIR=/var/cache/mailflow/images
+Environment=IMAGE_CACHE_MAX_MB={{ service.config.image_cache_max_mb }}
+{# See the comment on `ms_builtin_app` in service.yml. Rendered as a word and not as the
+   YAML boolean, which Jinja would print capitalised. #}
+Environment=MS_BUILTIN_APP={{ 'true' if service.config.ms_builtin_app else 'false' }}
 {# `type=env` for all three: this image documents no `_FILE` variant for any of them.
    `encryption_key` is the one secret here that cannot be rotated -- it encrypts the stored
    IMAP and SMTP credentials at rest, and a new value makes every saved account unreadable.
@@ -28,11 +43,24 @@ Environment=TRUST_PROXY_HOPS={{ service.config.trust_proxy_hops }}
 Secret=database_password,type=env,target=DB_PASSWORD
 Secret=session_secret,type=env,target=SESSION_SECRET
 Secret=encryption_key,type=env,target=ENCRYPTION_KEY
+Volume={{ volumes.image_cache }}:/var/cache/mailflow/images
+{# Upstream's `stop_grace_period`: the backend waits up to 25 s for a send already in
+   flight. On the pod as well as here, because stopping a pod service stops the pod, and
+   `podman pod stop` uses the pod's own timeout and not the containers'. #}
+StopTimeout=30
 {# busybox wget again: node:22-alpine has no curl either, and `/api/health` is the endpoint
    upstream's own compose healthcheck names. #}
 HealthCmd=wget -q --spider http://127.0.0.1:3000/api/health || exit 1
 HealthOnFailure=kill
-HealthStartPeriod=60s
+{# 300s, not 60s: the backend applies its pending schema migrations before it listens
+   (`await runMigrations()` comes before `httpServer.listen()` in upstream's
+   `backend/src/index.js`), so `/api/health` answers nothing at all while they run. With
+   `HealthOnFailure=kill` a start period shorter than the migrations kills the container
+   mid-upgrade and starts it again -- survivable, because each migration is its own
+   transaction behind a session advisory lock and is retried, but a loop that never gets
+   anywhere if the margin is always too small. 4.0.4's 0068 rewrites thread keys across
+   every message in the database, which is the longest one between 3.8.3 and 4.0.5. #}
+HealthStartPeriod=300s
 
 [Service]
 Restart=always
