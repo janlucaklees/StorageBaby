@@ -3,14 +3,24 @@ container_port: 80
 domain: mailflow.klees.io
 volumes:
   database: { class: fast, owner: 70 }
+  # Redis, and the one place this service's storage departs from paperless's, nextcloud's
+  # and openarchiver's. Theirs is a queue or a cache and is thrown away on purpose; this
+  # one is the session store -- express-session writes through `connect-redis`, so redis's
+  # dataset is the list of who is signed in -- and with no volume every restart signed
+  # everyone out. Not in `backup.paths`: a session is not state a restore wants back.
+  # 999 is the `redis` user in `redis:alpine`.
+  sessions: { class: fast, owner: 999 }
+  # 4.0.0's image proxy keeps the images it has fitted, so a second device or a later view
+  # shows them at once. Upstream's compose file gives it a named volume; without one the
+  # cache grows inside the container's writable layer and is thrown away on every restart.
+  # 1000 is the `node` user the backend image runs as -- it is not root inside the
+  # container and cannot chown a mount itself, so the role has to hand it over. Not in
+  # `backup.paths`: every byte of it is re-fetchable from the message it belongs to.
+  image_cache: { class: fast, owner: 1000 }
   # No `owner`: written by the dump timer's `podman exec` with no `-u`, i.e. container root,
   # which is the service user. `pool` because a write-once nightly file has no business on
   # the SSD.
   backups: { class: pool }
-# Deliberately no volume for redis, unlike upstream's compose file. It holds sessions and
-# cache, nothing a restore wants, and every other service on this platform that runs
-# redis or valkey -- paperless, nextcloud, openarchiver -- gives it none either. The cost
-# of a restart is that everyone signs in again.
 config:
   database_name: mailflow
   database_user: mailflow
@@ -20,6 +30,14 @@ config:
   # rate-limited and logged under. That holds here by construction: the pod publishes on
   # 127.0.0.1 alone, and a static test refuses any other bind.
   trust_proxy_hops: 2
+  # The image proxy's cache ceiling, in MB per user, kept for a month. Upstream's default.
+  image_cache_max_mb: 512
+  # 4.0.5 ships MailFlow's own Microsoft OAuth app, so a personal Outlook.com or Hotmail
+  # account connects without registering one in Microsoft Entra. Off here: no account on
+  # this instance is a Microsoft one, and the default would put a third party's client
+  # registration in the sign-in path for a provider nobody uses. The same switch is in the
+  # UI under Settings > Email providers, so turning it on does not need a deploy.
+  ms_builtin_app: false
 secrets: [database_password, session_secret, encryption_key]
 backup:
   # Only the dump. Every byte of mailflow's state is in Postgres: there is no upload tree,

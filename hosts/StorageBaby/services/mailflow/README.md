@@ -15,8 +15,12 @@ One pod, four containers and a timer:
   reaches; it proxies every API path to the backend.
 - `mailflow-backend` — the Node API on 3000, pod-internal.
 - `mailflow-database` — Postgres 17. The only copy of anything that matters.
-- `mailflow-broker` — redis, sessions and cache.
+- `mailflow-broker` — redis, sessions and cache. The sessions are the reason it has a volume
+  at all, unlike every other redis on this host; see Volumes.
 - `mailflow-dump.timer` — `pg_dump` into `backups` at 02:30.
+
+The frontend and the backend are two halves of one release and carry the same tag, **4.0.5**;
+they are bumped together, never one at a time.
 
 ## Three settings that come from reading the image, not the compose file
 
@@ -44,7 +48,9 @@ here. All three have supported escape hatches, so none of this needs a patched c
 Neither image ships `curl`, so upstream's own compose healthchecks cannot be working. Both
 health checks here use busybox `wget`, which is in `nginx:alpine` and `node:22-alpine` alike.
 
-All three were verified on test-a rather than reasoned about. What a correctly configured
+All three were verified on test-a rather than reasoned about, and re-verified against the
+4.0.5 images: `set-backend.sh`, `set-tls.sh` and the two marker lines in `nginx.conf` are
+unchanged, and the frontend still has `wget` and no `curl`. What a correctly configured
 frontend looks like from inside the container:
 
 ```sh
@@ -73,14 +79,43 @@ the database gives a working instance with every stored account unreadable.
 
 ## Volumes
 
-| volume     | class | owner | what it holds                          |
-| ---------- | ----- | ----- | -------------------------------------- |
-| `database` | fast  | 70    | the Postgres data directory            |
-| `backups`  | pool  | —     | the nightly dump, written by the timer |
+| volume        | class | owner | what it holds                            |
+| ------------- | ----- | ----- | ---------------------------------------- |
+| `database`    | fast  | 70    | the Postgres data directory              |
+| `sessions`    | fast  | 999   | redis's snapshot: who is signed in       |
+| `image_cache` | fast  | 1000  | remote images the image proxy has fitted |
+| `backups`     | pool  | —     | the nightly dump, written by the timer   |
 
-Redis gets no volume, unlike upstream's compose file — it holds sessions and cache, and every
-other service here that runs redis or valkey does the same. The cost of a restart is that
-everyone signs in again.
+### Redis keeps its data here, unlike everywhere else on this platform
+
+MailFlow's sessions are neither cookies carrying their own state nor rows in Postgres:
+express-session stores them through `connect-redis`, so redis's dataset _is_ the list of who
+is signed in. Until 2026-10-27 this service followed paperless, nextcloud and openarchiver
+and gave its redis no volume — and so every restart, whether a deploy, a redis auto-update or
+a reboot, signed everyone out. That is what the `sessions` volume fixes, with upstream's own
+`--save 60 1`: one snapshot sixty seconds after a change, so a hard kill loses at most the
+last minute's sign-ins and a graceful stop loses none.
+
+Two consequences worth knowing. Nothing snapshots this volume — a session is not state a
+restore wants back, and losing it costs one sign-in. And persistence buys the failure mode
+nextcloud's unit avoids on purpose: a redis that cannot write its snapshot stops accepting
+writes, which here means nobody can sign in. The dataset is kilobytes and it sits on `fast`,
+so that needs the SSD to be full before it bites.
+
+## Upgrading is a tag bump and nothing else
+
+Both images move together, and the backend does the rest by itself: it applies every pending
+schema migration before it starts listening (`runMigrations()` ahead of `httpServer.listen()`
+in upstream's `backend/src/index.js`), under a Postgres session advisory lock, each migration
+in its own transaction. So there is no `hooks.after_change` here and nothing to run on the
+host — which is why `HealthStartPeriod` on the backend is 300 s rather than the usual 60: the
+health endpoint is dark for as long as the migrations take, and `HealthOnFailure=kill` would
+otherwise restart the container in the middle of an upgrade.
+
+Two things a bump can still ask for, both of which have to be read out of the release notes
+before it goes out: a new volume (4.0.0 added one, for the image proxy's cache) and a new
+setting (4.0.5 added the Microsoft app switch). 3.8.3 → 4.0.5 carried migrations 0063–0070
+and needed both.
 
 ## Secrets
 
@@ -105,3 +140,8 @@ doas /usr/local/sbin/podman-as svc-mailflow podman exec -i mailflow-database \
 
 Web push (`VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`) and Google OAuth for Gmail accounts. Both
 are upstream features this folder leaves off; adding either is a `config:` key plus a secret.
+
+MailFlow's own Microsoft app is switched off (`ms_builtin_app: false`), so adding a personal
+Outlook.com or Hotmail account would need an app registered in Microsoft Entra, exactly as it
+did before 4.0.5. Turning it back on is a `config:` flip — or the same switch in the UI under
+Settings > Email providers, which needs no deploy.

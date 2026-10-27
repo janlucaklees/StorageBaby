@@ -1,5 +1,9 @@
 [Pod]
 PodName=mailflow
+{# Upstream's `stop_grace_period` for the backend, which only takes effect here: stopping
+   this service stops the pod, and `podman pod stop` uses the pod's timeout rather than the
+   timeout of each container inside it. #}
+StopTimeout=30
 {# The loopback port is Cradle's, derived and in no file; `container_port` is this pod's
    own. The static check reads this line out of the raw template and accepts a `publish_port`
    expression for a route and a literal only for a `tcp_ports` target.

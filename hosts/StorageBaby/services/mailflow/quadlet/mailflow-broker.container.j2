@@ -7,10 +7,15 @@ ContainerName=mailflow-broker
 Pod=mailflow.pod
 AutoUpdate=registry
 Environment=TZ={{ tz }}
-{# No volume, unlike upstream's compose file: this holds sessions and cache only. See the
-   comment in service.yml -- paperless, nextcloud and openarchiver all run their
-   redis/valkey the same way, and the cost of a restart is that everyone signs in again. #}
-HealthCmd=redis-cli --raw incr ping
+{# Unlike paperless's and nextcloud's, this redis is neither a queue nor a cache: it is
+   the session store (express-session through `connect-redis`), so without a volume every
+   restart signed everyone out. Upstream's own flags -- one snapshot 60 seconds after a
+   change, so a hard kill loses at most the last minute's sign-ins. The probe is a plain
+   `ping` and not the `incr ping` the queue brokers here use: `incr` writes, and a writing
+   probe would dirty the dataset and rewrite the snapshot every minute for nothing. #}
+Exec=redis-server --save 60 1 --loglevel warning
+Volume={{ volumes.sessions }}:/data
+HealthCmd=redis-cli ping
 HealthOnFailure=kill
 
 [Service]
