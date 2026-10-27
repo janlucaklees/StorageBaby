@@ -38,7 +38,7 @@ exists for desktop and CLI clients joined with `lh connect` and has none here.
 | `lobehub-app`      | `lobehub/lobehub:2.2.19`        | the Next.js application and its API          |
 | `lobehub-gateway`  | `lobehub-gateway:0.3.2`         | relays server-side agent runs to the browser |
 | `lobehub-database` | `paradedb/paradedb:0.26.1-pg17` | postgres with `pg_search` and `pg_cron`      |
-| `lobehub-cache`    | `redis:7-alpine`                | cache, prefix `lobehub`                      |
+| `lobehub-cache`    | `redis:alpine`                  | cache, prefix `lobehub`                      |
 | `lobehub-files`    | `rustfs/rustfs:1.0.1`           | the S3-compatible attachment store           |
 | `lobehub-search`   | `searxng/searxng:2026.10.15-…`  | the agent's web search backend               |
 
