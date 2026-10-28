@@ -31,7 +31,7 @@ volumes:
   database: { class: fast, owner: 999 }
   # Redis is a cache here (`REDIS_PREFIX=lobehub`) but upstream persists it, so it gets a
   # volume and no backup: everything in it is regenerable by definition. 999 is the
-  # `redis` user in `redis:7-alpine`.
+  # `redis` user in `redis:alpine`.
   cache: { class: fast, owner: 999 }
   # No `owner`: written by the dump timer's `podman exec` with no `-u`, i.e. container
   # root, which is the service user. `pool` for the usual reason -- a write-once nightly
