@@ -54,6 +54,8 @@ for ref in sys.argv[1:]:
         print("  Entrypoint:", c.get("Entrypoint"))
         print("  Cmd:       ", c.get("Cmd"))
         print("  Ports:     ", sorted((c.get("ExposedPorts") or {}).keys()))
+        # Env is filtered to the keys that have mattered so far -- add yours here when a
+        # service's version lives in its environment, or this prints no Env at all.
         for e in (c.get("Env") or []):
             if any(k in e.upper() for k in ("PHP_VERSION", "NEXTCLOUD_VERSION", "NODE_VERSION", "APP_VERSION")):
                 print("  Env:       ", e)
