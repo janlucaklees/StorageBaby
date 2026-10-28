@@ -5,7 +5,7 @@ Description=LobeHub agent gateway
 {# Pinned to what upstream's compose pins at the app's own release tag (v2.2.19), not to
    the newest tag in the registry: 0.4.0 and 0.5.0 exist and are not what this app version
    was shipped against. A bump moves both lines together. #}
-Image=ghcr.io/lobehub/lobehub-gateway:0.3.2
+Image=ghcr.io/lobehub/lobehub-gateway:0.5.0
 ContainerName=lobehub-gateway
 Pod=lobehub.pod
 Environment=TZ={{ tz }}

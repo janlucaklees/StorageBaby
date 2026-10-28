@@ -4,7 +4,7 @@ After=lobehub-database.service lobehub-cache.service lobehub-files.service lobeh
 Wants=lobehub-database.service lobehub-cache.service lobehub-files.service lobehub-search.service
 
 [Container]
-Image=docker.io/lobehub/lobehub:2.2.19
+Image=docker.io/lobehub/lobehub:2.2.20
 ContainerName=lobehub-app
 Pod=lobehub.pod
 Environment=TZ={{ tz }}
