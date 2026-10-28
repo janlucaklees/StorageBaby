@@ -108,7 +108,7 @@ Three consequences, all of them things to know before touching this service:
 
 ## The secrets, and how to fill them
 
-Nine, in one file — set on storagebaby, and this is what to regenerate them with:
+Ten, in one file — set on storagebaby, and this is what to regenerate them with:
 
 ```sh
 mise run sops hosts/StorageBaby/services/librechat/secrets.sops.yaml
@@ -125,6 +125,7 @@ mise run sops hosts/StorageBaby/services/librechat/secrets.sops.yaml
 | `jwt_refresh_secret` | signs the refresh token                                            | `openssl rand -hex 32`  |
 | `openai_api_key`     | the **embeddings** key, for file uploads only                      | from the OpenAI account |
 | `cliproxy_api_key`   | the chat provider — the same value as cliproxy's `client_api_key`  | copied, not generated   |
+| `stt_api_key`        | transcription's key — Whisper, see "Speech to text" below          | from the OpenAI account |
 
 Hex throughout, and for one of them that is a requirement rather than a habit:
 `mongo_password` is composed into a URL, so a base64 value's `+`, `/` or `=` could change
@@ -155,6 +156,19 @@ not a tidiness choice: cliproxy offers CLI subscriptions, which have no embeddin
 endpoint at all — it registers `/v1/chat/completions` and `/v1/messages` and no
 `/v1/embeddings` — so an upload still costs OpenAI tokens while a conversation costs
 nothing beyond the subscription.
+
+`stt_api_key` is a third key of the same shape, and it exists because a _name_ here
+decides a feature. It may hold the same string as `openai_api_key` — transcription is
+OpenAI's endpoint and that is an OpenAI key — but it cannot _be_ `openai_api_key`, because
+the container that needs it is the app, and the app's own secret of that name would be
+mounted as `OPENAI_API_KEY`: the one variable that puts the built-in OpenAI endpoint back
+in the selector. `STT_API_KEY` buys audio and nothing else. Nor can it be
+`cliproxy_api_key`, for the reason the paragraph above gives about embeddings: CLI
+subscriptions register no `/v1/audio/transcriptions` any more than they do
+`/v1/embeddings`. There is one more reason to keep the two OpenAI keys distinct even when
+the value is the same — a project key can be **scoped to a subset of the API**, so a key
+that answers embeddings can answer transcription with a 401, and two names make that a key
+to replace rather than a feature to debug.
 
 ## The chat provider is cliproxy, and the model list is not in git
 
@@ -234,6 +248,88 @@ converge brings the file up and the UI still refuses the name, `allowedAddresses
 other key, and declaring the hub in this file's `mcpServers` block with the token as a
 secret is the fallback that bypasses the UI's check entirely.
 
+## Speech to text
+
+She presses the microphone in the composer, speaks, presses it again, and the words appear
+in the message box. The recording goes to this server, this server posts it to OpenAI's
+`whisper-1`, and the transcript comes back — nothing is transcribed in the browser.
+
+That takes **two** settings in `config/librechat.yaml`, and either one alone does nothing:
+
+| setting                                   | what it decides                                     |
+| ----------------------------------------- | --------------------------------------------------- |
+| `speech.stt.openai`                       | what this server does with a recording it is handed |
+| `speech.speechTab.speechToText.engineSTT` | whether the browser hands it over at all            |
+
+The second is the one that is easy to miss. The client's own default is `engineSTT:
+browser` — the Web Speech API, which transcribes inside the browser, sends this server
+nothing and reaches no provider. A `speech.stt` block with the browser engine still
+selected is configuration that costs nothing and does nothing.
+
+And it is a **default**, not a setting: the client applies what the server reports only for
+keys the browser's local storage does not already hold
+(`client/src/hooks/Config/useSpeechSettingsInit.ts`). An account that has already opened
+Settings → Speech and changed something there keeps its own choice, and has to pick
+**External** in that tab once. A fresh browser profile picks it up on the first load.
+
+No language is pinned, so Whisper detects one per recording. The Speech tab has a language
+dropdown, and naming a language there is worth trying if detection mishears her.
+
+### The key, and how it fails
+
+`apiKey: '${STT_API_KEY}'` is a _reference_: `config/` is copied verbatim into
+`/etc/cradle/librechat/` and never templated, so it can hold no value. The name is the
+podman secret `stt_api_key`, mounted `type=env` in the app's unit, and the app resolves the
+`${…}` from its own environment when the request is made.
+
+**Do not simplify this to `OPENAI_API_KEY`**, however much it looks like the same key under
+a longer name. That variable is what LibreChat reads to offer its built-in OpenAI endpoint,
+which this host deliberately does not — "The chat provider is cliproxy" above — so
+mounting the existing `openai_api_key` into the app container would bring the endpoint back
+as a side effect of configuring a microphone. The two may hold the same string; they may
+not share a variable.
+
+What that costs is the failure mode, and it is worth knowing before debugging it: a `${…}`
+whose variable is unset resolves to **the literal string**, which is then sent as the
+bearer token (`extractEnvVariable`, `packages/data-provider/src/utils.ts`). So a missing or
+wrong key is a **401 at her first dictation** — not a startup error, and nothing in the
+app's log at boot. The platform catches the absent _secret_ before that: a name in
+`service.yml`'s `secrets` with no key in `secrets.sops.yaml` fails the converge with
+`missing in secrets file: ['stt_api_key']`. It cannot catch a key that is merely wrong.
+
+Two things upstream refuses, both of which would be silent if they were not:
+
+- **More than one provider.** The service counts the configured providers of the `stt`
+  block and throws "Multiple providers are set" unless exactly one survives
+  (`listConfiguredSpeechProviders`). An Azure block would replace this one, not join it.
+- **`allowedAddresses` with a public address.** That key is a transport exemption for a
+  self-hosted transcription endpoint on a private address, and its schema refuses public IP
+  literals outright. It has nothing to do with reaching `api.openai.com`, which needs no
+  entry.
+
+### Verifying it
+
+Two questions, and the first one is answerable from the host. Did the file arrive and
+parse? A `librechat.yaml` the loader rejects costs one **error-level** line and the app
+then runs on its defaults — it does not exit — so "the pod is healthy" says nothing about
+this file:
+
+```sh
+journalctl CONTAINER_NAME=librechat-app --since today | grep -i 'config file'
+```
+
+`CONTAINER_NAME=` and a bounded `--since`, not `cradle-svc logs librechat`: that wrapper
+is `journalctl -f`, which tails and never shows a line written at the last restart.
+
+The second question — does the server offer the external engine — is
+`/api/files/speech/config/get`, which answers `sttExternal: true` and `engineSTT:
+external` once this is in place. It needs her session, so it is read in the browser's
+devtools rather than with curl.
+
+Neither proves the key. **The first dictation is the only test of that**, and a key the
+account has scoped away from audio fails it with a 401 while everything above still looks
+right.
+
 ## Backups
 
 The sidecar carries `images`, `uploads`, `skill` and `backups` at 03:00. `backups` holds
@@ -280,9 +376,10 @@ avoids the problem entirely, which is why it is the documented one.
 
 ## What is not here, and why
 
-- **A `librechat.yaml` with one setting.** The app runs on its defaults otherwise, which is
-  enough for one user and one provider; the file exists for the MCP allowlist above, and a
-  restricted model list or a different file-upload policy would be written in it too.
+- **A `librechat.yaml` with more in it.** The app runs on its defaults beyond the three
+  blocks it carries — the MCP allowlist, the cliproxy endpoint and the speech provider,
+  all three above; a restricted model list or a different file-upload policy would be
+  written in it too.
 
   Before it existed, its absence cost one **error-level log line**, at startup and in every
   `podman exec` of a `config/` script, and the line was noise rather than a fault:

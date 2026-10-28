@@ -25,9 +25,10 @@ Environment=PORT={{ container_port }}
    rather than the loopback it dialled, so this has to be the public one. #}
 Environment=DOMAIN_CLIENT=https://{{ fqdn }}
 Environment=DOMAIN_SERVER=https://{{ fqdn }}
-{# The app's own configuration file, out of the read-only config mount below. Its one
-   setting today is the MCP allowlist that lets her hub's name through -- the file's own
-   comment says why a name on this host needs listing. #}
+{# The app's own configuration file, out of the read-only config mount below. Three
+   blocks today: the MCP allowlist that lets her hub's name through, the cliproxy chat
+   endpoint, and the speech-to-text provider -- the file's own comments say why each one
+   is there. #}
 Environment=CONFIG_PATH=/config/librechat.yaml
 {# Exactly one proxy in front, which is Traefik: with this set the app reads the client's
    address from X-Forwarded-For, and the login throttle and the rate limits are per
@@ -66,8 +67,8 @@ Environment=SCHEDULES_SINGLE_PROCESS=true
    the shape openproject and openarchiver already solved here. The script's own comment
    says why it is sourced rather than exported from this line. #}
 Secret=mongo_password
-{# `type=env` for these six, which is the fallback and not the preference: LibreChat reads
-   no `_FILE` variant of any of them. `meili_master_key` is the same value the search
+{# `type=env` for these seven, which is the fallback and not the preference: LibreChat
+   reads no `_FILE` variant of any of them. `meili_master_key` is the same value the search
    container gets, `jwt_secret` the same the RAG service gets -- one podman secret each,
    mounted into both. #}
 Secret=meili_master_key,type=env,target=MEILI_MASTER_KEY
@@ -85,6 +86,17 @@ Secret=jwt_refresh_secret,type=env,target=JWT_REFRESH_SECRET
    registers no `/v1/embeddings`), so a file upload still pays OpenAI per token while a
    conversation does not. The service README says what that costs. #}
 Secret=cliproxy_api_key,type=env,target=CLIPROXY_API_KEY
+{# Transcription's key, under a name of its own, and the line above is the reason it has
+   to be. The value may be the same string as `openai_api_key` -- transcription is
+   OpenAI's endpoint and that is OpenAI's key -- but mounting *that secret* here means
+   mounting it as `OPENAI_API_KEY`, which is the one variable that puts the built-in
+   OpenAI endpoint back in the selector. `STT_API_KEY` gives the app a key for audio and
+   nothing else. `config/librechat.yaml` references the variable by name as
+   `${STT_API_KEY}`: that file is copied verbatim and can hold no value, only a
+   reference. Not `cliproxy_api_key` either -- cliproxy serves CLI subscriptions and
+   registers no `/v1/audio/transcriptions`, for the same reason it serves no
+   `/v1/embeddings`. #}
+Secret=stt_api_key,type=env,target=STT_API_KEY
 Volume={{ volumes.images }}:/app/client/public/images
 Volume={{ volumes.uploads }}:/app/uploads
 Volume={{ volumes.skill }}:/app/skill

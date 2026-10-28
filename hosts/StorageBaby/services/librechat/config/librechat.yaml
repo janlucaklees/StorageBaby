@@ -2,9 +2,9 @@
 # Copied verbatim into /etc/cradle/librechat/, never templated, and read once at startup.
 #
 # `version` is the one required key, and a version bump of the image keeps it in step.
-# Everything else stays on the app's defaults, which are enough for one user and one
-# provider; a restricted model list or a different file-upload policy would be written
-# here too.
+# Everything else is the three blocks below -- the MCP allowlist, the cliproxy chat
+# endpoint and speech-to-text. A restricted model list or a different file-upload policy
+# would be written here too.
 version: 1.3.15
 
 # The MCP allowlist. On its defaults LibreChat allows a public MCP URL and refuses one that
@@ -52,3 +52,43 @@ endpoints:
       titleConvo: true
       titleModel: 'current_model'
       modelDisplayLabel: 'CLIProxy'
+
+# Speech-to-text through OpenAI's Whisper, and it takes two halves rather than one.
+#
+# `stt.openai` is what this *server* does with a recording: POST it to
+# `https://api.openai.com/v1/audio/transcriptions` as `whisper-1`. `url` is left out
+# because that endpoint is the provider's own default (`openAIProvider` in
+# `api/server/services/Files/Audio/STTService.js`); `apiKey` and `model` are the schema's
+# two required keys and everything else in it is optional. Exactly one provider may be
+# named here -- the service counts the keys of this block and refuses two with "Multiple
+# providers are set" (`listConfiguredSpeechProviders`), so an Azure block would replace
+# this one rather than sit beside it.
+#
+# `speechTab.speechToText.engineSTT` is what the *browser* does with the microphone, and
+# without it the block above is dead weight: the client's `engineSTT` defaults to
+# `browser`, the Web Speech API, which transcribes in the browser and never asks this
+# server for anything (`client/src/store/settings.ts`). `external` is the canonical name
+# for "whatever the server configured"; `openai` is still accepted and normalised to it.
+# It is a *default* and not a setting -- the client applies it only when that key is
+# absent from the browser's local storage, so an account that has already touched the
+# Speech tab keeps what it chose there (`client/src/hooks/Config/useSpeechSettingsInit.ts`).
+#
+# `${STT_API_KEY}` is resolved from the app's environment when a request is made, which is
+# what lets a file copied verbatim carry a secret by reference: the value is the podman
+# secret of that name, mounted `type=env` in the app's unit. A `${...}` whose variable is
+# unset resolves to the literal string and is then sent as the bearer token -- so a
+# missing secret is a 401 at the first dictation and not a startup error
+# (`extractEnvVariable`, `packages/data-provider/src/utils.ts`). API keys are deliberately
+# exempt from the sensitive-variable list that refuses this substitution for `JWT_SECRET`
+# and `CREDS_KEY`, so the mechanism is upstream's intent and not a gap in it.
+#
+# No language is pinned, so Whisper detects one per recording. The Speech tab carries a
+# language dropdown if naming one turns out to be better than detecting it.
+speech:
+  stt:
+    openai:
+      apiKey: '${STT_API_KEY}'
+      model: whisper-1
+  speechTab:
+    speechToText:
+      engineSTT: external
