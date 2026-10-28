@@ -30,7 +30,7 @@ volumes:
 config:
   database_name: nextcloud
   database_user: oc_jlk
-  version: 33-fpm-alpine
+  version: 34-fpm-alpine
   # Empty on purpose, and measured: see "Trusted proxies" in the README. A host that
   # really does sit behind a second proxy sets it through `service_config.nextcloud`.
   trusted_proxies: ''
