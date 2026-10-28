@@ -17,6 +17,6 @@ FROM docker.io/mikefarah/yq:4.54.1 AS yq
 # Pinned, and bumped in git: upstream ships several releases a day -- v8.0.26 to v8.0.39
 # between 2026-10-12 and 2026-10-22 -- which is a cadence for a human to pick from, not
 # for `podman-auto-update.timer`. Hence no `AutoUpdate=registry` on the container either.
-FROM docker.io/eceasy/cli-proxy-api:v8.0.39
+FROM docker.io/eceasy/cli-proxy-api:v8.0.46
 
 COPY --from=yq /usr/bin/yq /usr/local/bin/yq
