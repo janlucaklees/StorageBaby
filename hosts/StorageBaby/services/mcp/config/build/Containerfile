@@ -10,7 +10,7 @@
 # Installing it here instead pins the version in git, bakes it into an image, and moves a
 # registry outage from an unattended 03:00 start to a converge the deploy timer retries
 # and the journal records.
-FROM ghcr.io/ni-c/mcp-hub:0.11.6
+FROM ghcr.io/ni-c/mcp-hub:0.11.7
 
 # The base image ends on `USER node`, and a global install writes to
 # /usr/local/lib/node_modules, which uid 1000 cannot. Root for the install, back to the
