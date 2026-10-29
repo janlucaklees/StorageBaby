@@ -4,7 +4,7 @@ After=mailflow-database.service mailflow-broker.service
 Wants=mailflow-database.service mailflow-broker.service
 
 [Container]
-Image=ghcr.io/maathimself/mailflow-backend:4.0.5
+Image=ghcr.io/maathimself/mailflow-backend:4.1.0
 ContainerName=mailflow-backend
 Pod=mailflow.pod
 Environment=TZ={{ tz }}

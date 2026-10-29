@@ -2,10 +2,16 @@
 Description=Paperless tika (document text extraction)
 
 [Container]
-Image=docker.io/apache/tika:latest
+{# Pinned, and the `-full` variant, which is the one tika this host runs: openarchiver
+   needs the extra parsers, and `apache/tika:latest` is byte-identical to `4.1.0`
+   (both sha256:fe2c6e3f...), so this is the version paperless already ran -- the
+   minimal variant traded for a superset, not a version change. One tag means one set
+   of layers on the machine instead of two.
+   `AutoUpdate=registry` is gone with the floating tag: tika now moves as a line in
+   git, the same way openarchiver's side of it always has. #}
+Image=docker.io/apache/tika:4.1.0-full
 ContainerName=paperless-tika
 Pod=paperless.pod
-AutoUpdate=registry
 Environment=TZ={{ tz }}
 {# The tika image carries neither curl nor wget, so the probe is a bare TCP connect
    through bash's /dev/tcp -- and it has to say `bash`, because podman runs a HealthCmd

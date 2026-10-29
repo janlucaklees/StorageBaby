@@ -18,7 +18,7 @@ RUN npm install -g corepack@latest --force && corepack enable && corepack prepar
 WORKDIR /app
 
 # The source, at a pinned tag. `ADD` does not extract a remote archive, so tar does it.
-ADD https://github.com/Ivan-Malinovski/calino/archive/refs/tags/v0.39.1.tar.gz /src.tgz
+ADD https://github.com/Ivan-Malinovski/calino/archive/refs/tags/v0.41.0.tar.gz /src.tgz
 RUN tar -xzf /src.tgz --strip-components=1 -C /app && rm /src.tgz
 
 # The whole build context, which is this service's `config/build/` as the role deployed it.

@@ -4,11 +4,16 @@ After=paperless-database.service paperless-broker.service
 Wants=paperless-database.service paperless-broker.service
 
 [Container]
-Image=ghcr.io/paperless-ngx/paperless-ngx:2.20.15
+Image=ghcr.io/paperless-ngx/paperless-ngx:3.3.4
 ContainerName=paperless-app
 Pod=paperless.pod
 Environment=TZ={{ tz }}
 Environment=PAPERLESS_REDIS=redis://127.0.0.1:6379
+{# Required since v3: the engine is no longer inferred from the presence of DBHOST, and
+   the image's own `manage.py check --tag compatibility` refuses to start without it.
+   `postgresql` and not `postgres` -- the accepted values are sqlite, postgresql and
+   mariadb. #}
+Environment=PAPERLESS_DBENGINE=postgresql
 Environment=PAPERLESS_DBHOST=127.0.0.1
 Environment=PAPERLESS_DBNAME={{ service.config.database_name }}
 Environment=PAPERLESS_DBUSER={{ service.config.database_user }}
@@ -17,13 +22,26 @@ Environment=PAPERLESS_TIKA_ENABLED=1
 Environment=PAPERLESS_TIKA_GOTENBERG_ENDPOINT=http://127.0.0.1:3000
 Environment=PAPERLESS_TIKA_ENDPOINT=http://127.0.0.1:9998
 Environment=PAPERLESS_OCR_LANGUAGE={{ service.config.ocr_language }}
+{# v3 split OCR from archiving: `OCR_MODE` now only decides whether OCR runs, and a new
+   `ARCHIVE_FILE_GENERATION` decides whether an archive PDF is written. Its default,
+   `auto`, skips the archive for a born-digital PDF -- v2's default always wrote one.
+   `always` is therefore not a new choice but the old behaviour stated explicitly, so a
+   major bump does not quietly change what is on disk for new documents. #}
+Environment=PAPERLESS_ARCHIVE_FILE_GENERATION=always
+{# Also a restored v2 default: v3 accepts a duplicate and flags it in the UI instead of
+   refusing it. This inbox is fed by a scanner that can re-send a page, so rejection is
+   what keeps a re-scan from becoming a second document. #}
+Environment=PAPERLESS_CONSUMER_DELETE_DUPLICATES=true
 Environment=PAPERLESS_URL=https://{{ routes[0].fqdn }}
 Environment=PAPERLESS_CONSUMPTION_DIR=/usr/src/paperless/consume
 {# Polling, not inotify: the file is written by another container of this pod through the
    same bind mount, and an inotify watch does not reliably see a write that came from the
    other side of a second mount namespace. 10 s is the scanner's latency budget, not the
-   platform's. #}
-Environment=PAPERLESS_CONSUMER_POLLING=10
+   platform's.
+   Renamed in v3: the consumer moved to `watchfiles` and `CONSUMER_POLLING` became
+   `CONSUMER_POLLING_INTERVAL`. The old name is not read, so the rename is the whole of
+   what keeps polling at 10 s instead of silently falling back to the default. #}
+Environment=PAPERLESS_CONSUMER_POLLING_INTERVAL=10
 {# The scanner drops files in the top of the directory and nothing creates
    subdirectories in it. Explicit because it is also the default: a recursive watch over a
    spool the FTP user can create directories in is a larger surface than this needs. #}
@@ -46,7 +64,15 @@ Volume={{ volumes.media }}:/usr/src/paperless/media
 Volume={{ volumes.consume }}:/usr/src/paperless/consume
 HealthCmd=curl -fs -S --max-time 2 http://127.0.0.1:8000 || exit 1
 HealthOnFailure=kill
-HealthStartPeriod=120s
+{# 1800 s, and the number is the v3 upgrade's: the image's s6 chain does not open port
+   8000 until `init-migrations` and `init-search-index` have finished, and v3's
+   `0016_sha256_checksums` is a blocking data migration that re-hashes every original
+   and archive file (2.3 G over 4256 files here, on the pool's spinning disks) before
+   the Whoosh index is rebuilt from scratch as Tantivy. At 120 s podman killed the
+   container mid-migration and the next start began the same work again. A start period
+   only bounds the *first* healthy report, so an ordinary restart is unaffected: the
+   check passes in seconds and the container is healthy then, not at 1800 s. #}
+HealthStartPeriod=1800s
 
 [Service]
 Restart=always

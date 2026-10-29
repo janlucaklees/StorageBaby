@@ -16,7 +16,7 @@ routes:
     }
 volumes:
   # 82, not 33: `www-data` is uid 82 in `php:*-fpm-alpine`, and the 33 in
-  # `nextcloud:33-fpm-alpine` is the Nextcloud version.
+  # `nextcloud:35-fpm-alpine` is the Nextcloud version.
   # The installation -- code, config, apps -- is `html` on the SSD, and the user files
   # are `data` on the pool, mounted over `/var/www/html/data` inside it. `datadirectory`
   # in config.php stays `/var/www/html/data`, so Nextcloud never sees the split.
@@ -30,7 +30,7 @@ volumes:
 config:
   database_name: nextcloud
   database_user: oc_jlk
-  version: 33-fpm-alpine
+  version: 35-fpm-alpine
   # Postgres' own default is 128M, which is what initdb wrote into this database's
   # postgresql.conf when it was created. A host with less memory than this one
   # overrides it through `service_config.nextcloud`; the database unit has the

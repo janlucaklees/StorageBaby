@@ -4,7 +4,7 @@ Description=LobeHub web search
 [Container]
 {# A dated tag, because this image publishes nothing else: `latest` is what upstream's
    compose runs and it would move under the service on any converge that pulled. #}
-Image=docker.io/searxng/searxng:2026.10.15-b00212a83
+Image=docker.io/searxng/searxng:2026.10.28-c360868e5
 ContainerName=lobehub-search
 Pod=lobehub.pod
 Environment=TZ={{ tz }}

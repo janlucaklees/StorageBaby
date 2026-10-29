@@ -2,11 +2,24 @@
 Description=LibreChat search index
 
 [Container]
-Image=docker.io/getmeili/meilisearch:v1.35.1
+{# One meilisearch for the host: openarchiver's side carries the same tag. #}
+Image=docker.io/getmeili/meilisearch:v1.56
 ContainerName=librechat-search
 Pod=librechat.pod
 Environment=TZ={{ tz }}
 Environment=MEILI_NO_ANALYTICS=true
+{# The whole of what makes a version bump of this image converge by itself.
+   meilisearch refuses to open an index written by an older version, so before this
+   line a bump was a crash-loop that an operator had to clear by hand. `--upgrade-db`
+   (stabilised in v1.51 from `--experimental-dumpless-upgrade`, same behaviour)
+   migrates the index in place on the first start of a new version and does nothing
+   at all while the version is unchanged -- so it is idempotent, it stays, and every
+   future bump is automatic too. It cannot read an index written before v1.12, which
+   is far behind what this volume holds.
+   The migration is NOT atomic: a kill in the middle can leave the index corrupt.
+   That is what the start period below is for, and the floor is a reindex rather than
+   data loss -- this index is derived from data that lives elsewhere. #}
+Environment=MEILI_UPGRADE_DB=true
 {# `production` and not the default `development`: it makes the master key mandatory
    instead of optional, which is the difference between a keyed index and one any process
    in this pod could reindex. #}
@@ -20,6 +33,11 @@ Volume={{ volumes.search }}:/meili_data
    `/health` is meilisearch's own endpoint, which answers without the master key. #}
 HealthCmd=curl -fs -S --max-time 2 http://127.0.0.1:7700/health || exit 1
 HealthOnFailure=kill
+{# The index migration runs before the HTTP listener comes up, so /health answers
+   nothing until it is done. With no start period at all podman killed the container
+   mid-upgrade -- exactly the non-atomic case above. A start period only bounds the
+   first healthy report, so an ordinary start is unaffected. #}
+HealthStartPeriod=600s
 
 [Service]
 Restart=always

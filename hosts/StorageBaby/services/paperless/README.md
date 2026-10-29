@@ -351,28 +351,25 @@ paperless@test-a:/data/media
 paperless@test-a:/data/backups
 ```
 
-## The after-change hook
+## No after-change hook
 
-```yaml
-hooks:
-  after_change:
-    - { container: paperless-app, command: 'touch /tmp/.hook-ran' }
-```
+This service declares none, and that is the whole of what `service.yml` says about it.
 
-A marker, not a maintenance command: paperless needs no post-upgrade step of its
-own (the image runs its migrations from the entrypoint). It is here because the
-hook mechanism needs something observable to be testable at all, and `touch` is
-the one hook shape the integration suite can check — the harness removes
-`/tmp/.hook-ran` with `podman exec`, pushes a change to the app unit, deploys,
-and asserts the marker came back. Nextcloud's hooks, which do real work, ride the
-same machinery.
+It used to carry one, `touch /tmp/.hook-ran` on `paperless-app` -- a marker rather than a
+maintenance command, because paperless needs no post-upgrade step of its own: the image's
+own s6 init chain runs `manage.py migrate` and `document_index reindex --if-needed` before
+it opens its port. The marker existed so that Cradle's integration suite had something
+observable to assert the hook mechanism with at all.
 
-`/tmp` **inside the container**, not a path under a volume, and both halves of
-that matter. A marker under `data/` would be a stray file in one of the three
-trees the Kopia sidecar snapshots — backed up nightly, restored with the data,
-forever. And container-local is the stronger claim for the harness: `/tmp` is
-gone when the container is recreated, so a marker found after a deploy that
-restarted the app can only have been written after that restart.
+That suite is Cradle's now and converges Cradle's own fixture host, where a `stack` fixture
+carries the hook that proves the mechanism. Nothing read the marker here any more, so it was
+removed on 2026-10-29.
+
+Removing it was not only tidying. The role waits for a container's health check before
+running each of its hooks, capped at 60 x 10 s, so declaring any hook on `paperless-app`
+made every converge block until the pod reported healthy. With v3's migration re-hashing the
+whole corpus that wait could run out and report a failure for an upgrade that was in fact
+progressing. With no hook, the role does not wait.
 
 What it costs on storagebaby is the health wait: **any** hook attaches one to its
 service's converge. Before running a hook the role waits for
