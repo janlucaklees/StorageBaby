@@ -74,9 +74,25 @@ Volume={{ volumes.data }}:/var/www/html/data
    everything under it keeps the modes the image gives it, and `data/` stays 0770. #}
 Entrypoint=/bin/sh
 Exec=-c 'chmod 0755 /var/www/html; exec /entrypoint.sh php-fpm'
-{# The two php files the compose stack mounted, from this service's `config/`. #}
+{# The two php files the compose stack mounted, from this service's `config/`. Both
+   are still its own files and not the image's: opcache.ini is read after the image's
+   opcache-recommended.ini and wins, and www.conf replaces the pool config outright. #}
 Volume={{ config_dir }}/www.conf:/usr/local/etc/php-fpm.d/www.conf:ro
 Volume={{ config_dir }}/opcache.ini:/usr/local/etc/php/conf.d/opcache.ini:ro
+{# APCu's shared memory, 128M against PHP's 32M default. `zz-` so it is read after the
+   image's own docker-php-ext-apcu.ini, the file that loads the extension itself. #}
+Volume={{ config_dir }}/zz-apcu.ini:/usr/local/etc/php/conf.d/zz-apcu.ini:ro
+{# `loglevel` and `log_type`, declared as a file rather than written into config.php by
+   an `occ` hook. Nextcloud reads config.php and then every *.config.php beside it in
+   natural sort order, later winning, so `zz-` makes this the last word on both --
+   including over a value set from the admin UI, which writes config.php. Mounted
+   read-only: Nextcloud only ever writes config.php, which is what its own
+   "configuration file is writable" check reads.
+
+   Nested inside the `html` volume, which works for the same reason `data` does:
+   podman sorts mounts by target path, so the volume lands first and this file on top
+   of it. #}
+Volume={{ config_dir }}/zz-cradle.config.php:/var/www/html/config/zz-cradle.config.php:ro
 {# php-fpm speaks FastCGI, not HTTP, so the most this can ask is whether anything is
    listening on 9000 -- nginx's /status.php probe below is the one that proves the two
    talk. The image is Alpine: no bash, so no /dev/tcp, no curl and no cgi-fcgi. The
