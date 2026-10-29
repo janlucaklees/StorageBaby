@@ -328,12 +328,15 @@ and the rest of its § 7 is about the engine, which is no longer this repository
    out of its own folder for one consumer. The cost is the rotation. Changing one file and
    not the other leaves a proxy that is up and healthy and a chat that answers 401 to
    every message, and nothing reports it.
-7. **Paperless carries a hook that only a test ever wanted.**
-   `hosts/StorageBaby/services/paperless/service.yml` declares a
-   `touch /tmp/.hook-ran` after-change hook that existed only for
-   `test_deploy_runs_after_change_hooks`. That test is Cradle's now and runs against
-   Cradle's own fixtures, so the hook is dead weight on this host and runs on every
-   deploy that restarts the pod.
+   Resolved and kept here because the reasoning is worth not losing: paperless used to carry
+   a `touch /tmp/.hook-ran` after-change hook that existed only for
+   `test_deploy_runs_after_change_hooks`. That test went to Cradle with the engine and runs
+   against Cradle's own fixtures, whose `stack` service now proves the hook mechanism, so
+   nothing read the marker here. **Removed on 2026-10-29.** It was not only dead weight: the
+   role waits for a container's health check before each of its hooks, capped at 60 x 10 s, so
+   a hook that did nothing was the only reason a converge blocked on that pod reporting
+   healthy — which, with the paperless v3 migration, could run out and report a failure for an
+   upgrade that was progressing normally.
 
 ## Operator steps before and right after the first storagebaby deploy
 
