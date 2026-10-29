@@ -35,19 +35,30 @@ exists for desktop and CLI clients joined with `lh connect` and has none here.
 
 | container          | image                           | what it is                                   |
 | ------------------ | ------------------------------- | -------------------------------------------- |
-| `lobehub-app`      | `lobehub/lobehub:2.2.19`        | the Next.js application and its API          |
+| `lobehub-app`      | `lobehub/lobehub:2.2.20`        | the Next.js application and its API          |
 | `lobehub-gateway`  | `lobehub-gateway:0.3.2`         | relays server-side agent runs to the browser |
-| `lobehub-database` | `paradedb/paradedb:0.26.1-pg17` | postgres with `pg_search` and `pg_cron`      |
+| `lobehub-database` | `paradedb/paradedb:0.26.3-pg17` | postgres with `pg_search` and `pg_cron`      |
 | `lobehub-cache`    | `redis:alpine`                  | cache, prefix `lobehub`                      |
-| `lobehub-files`    | `rustfs/rustfs:1.0.1`           | the S3-compatible attachment store           |
-| `lobehub-search`   | `searxng/searxng:2026.10.15-…`  | the agent's web search backend               |
+| `lobehub-files`    | `rustfs/rustfs:1.0.4`           | the S3-compatible attachment store           |
+| `lobehub-search`   | `searxng/searxng:2026.10.28-…`  | the agent's web search backend               |
 
 ParadeDB is not interchangeable with plain postgres: the app's full-text search is
 `pg_search`, which only this image ships. Its tag is pinned to a version rather than
 upstream's `latest-pg17` so that a converge cannot move the cluster's extensions on its own.
-The gateway is pinned to what upstream's compose pins **at the app's own release tag** —
-0.4.0 and 0.5.0 exist in the registry and are not what 2.2.19 shipped against; a bump moves
-both lines together.
+The `-pg17` half of that tag never moves on its own either, and for a different reason: a
+postgres major has no on-disk compatibility, so it is a dump-and-restore rather than a tag.
+The ParadeDB version in front of it is an ordinary patch bump — and it is only half the
+upgrade, because replacing the image moves `pg_search`'s binary and leaves its _SQL_
+version behind. The `ALTER EXTENSION pg_search UPDATE` hook in `service.yml` is the other
+half; ParadeDB's upgrade docs call that step required regardless of environment. It is
+idempotent, so it runs on every converge that restarts the pod without caring whether there
+is anything to do.
+
+The gateway is pinned to what upstream's compose pins **at the app's own release tag**, and
+that is a rule rather than a snapshot: 0.4.0 and 0.5.0 exist in the registry and are not
+what the app ships against. 2.2.20's compose still pins **0.3.2**, so the app moved and the
+gateway did not. A gateway bump happens when upstream's compose moves it, and then both
+lines move together.
 
 Elasticsearch, which upstream offers as an optional full-text backend behind a compose
 profile, is deliberately absent: `pg_search` in the database above is the default path and
