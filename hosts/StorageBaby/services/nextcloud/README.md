@@ -15,7 +15,7 @@ timers and a real `hooks.after_change`.
 
 | Part                  | Image                                       | Port | Updates       |
 | --------------------- | ------------------------------------------- | ---- | ------------- |
-| `nextcloud-app`       | `docker.io/library/nextcloud:33-fpm-alpine` | 9000 | pinned in git |
+| `nextcloud-app`       | `docker.io/library/nextcloud:35-fpm-alpine` | 9000 | pinned in git |
 | `nextcloud-nginx`     | `docker.io/library/nginx:alpine`            | 80   | auto          |
 | `nextcloud-database`  | `docker.io/library/postgres:17-alpine`      | 5432 | auto          |
 | `nextcloud-cache`     | `docker.io/library/redis:alpine`            | 6379 | auto          |
@@ -136,7 +136,7 @@ runs `podman healthcheck run` against each of them. Three are worth a note:
 
 - **`nextcloud-app` speaks FastCGI, not HTTP**, so there is no URL to ask. The
   most a probe can establish is that php-fpm is listening on 9000, and on this
-  image that is harder than it sounds: `nextcloud:33-fpm-alpine` is Alpine, so
+  image that is harder than it sounds: `nextcloud:35-fpm-alpine` is Alpine, so
   `/bin/sh` is busybox ash, which has no `/dev/tcp`; there is no `bash`, no
   `curl` and no `cgi-fcgi`. What is always there is the interpreter the container
   exists for, so it does the connect:
@@ -496,6 +496,43 @@ restored out of a Kopia snapshot of the `backups` volume. What plain SQL costs i
 `pg_restore`'s selective and parallel restore; for a 100 MB dump on this host that is
 nothing, and the reasoning is in the role README.
 
+## What a major version bump actually does
+
+Measured on the 33 → 34 converge of 2026-10-29, because none of it is obvious from the diff.
+
+**One major per converge, and the image enforces it.** `docker-entrypoint.sh` refuses to start
+when the image's major is more than one above the installed one, printing both versions. So 33 →
+35 is not a thing you can do by editing the tag once; it is two converges. Going to 35 also wants
+the newest 34.0.x first, which the major tag plus `Pull=newer` gives for free.
+
+**The image performs the upgrade.** Its entrypoint runs `occ upgrade` between its own pre- and
+post-upgrade hooks. The five `occ` commands below run after that, which is what they are for.
+
+**Third-party apps go down and come back.** Nextcloud disables any app that does not declare the
+new major, and the log says so plainly:
+
+```
+Disabled incompatible app: deck
+Disabled incompatible app: groupfolders
+Disabled incompatible app: richdocuments
+```
+
+They are then updated to a release that does declare it and re-enabled, which is why
+`occ app:list` afterwards showed all three enabled again. This is normal and not a failure, but
+it is a real window in which Collabora editing, Deck and group folders are off — so a major is
+worth doing when nobody is mid-document. Only six apps here come from the app store at all
+(`deck`, `groupfolders`, `notes`, `notify_push`, `richdocuments`, `twofactor_webauthn`); the other
+44 ship inside the server release and move with it.
+
+**Checking before a bump** is therefore a question about those six, and the app store answers it:
+`https://apps.nextcloud.com/api/v1/platform/<version>.0.0/apps.json` lists every app with a
+release declaring that platform. An enabled store app missing from that list is one that will be
+disabled and stay disabled.
+
+**`wopi_url` survives**, because its hook is `when: always` rather than `when: unit_changed` —
+after the 34 upgrade `occ config:app:get richdocuments wopi_url` still answered
+`https://collabora.klees.io`.
+
 ## The after-change hooks
 
 ```yaml
@@ -625,7 +662,7 @@ its own:
 
 The repo's root README has the recipe and the ownership rules; the trees are not
 chowned by hand any more. The nextcloud image runs the app as its own
-in-container user — `www-data`, uid **82**, because `nextcloud:33-fpm-alpine`
+in-container user — `www-data`, uid **82**, because `nextcloud:35-fpm-alpine`
 builds on `php:*-fpm-alpine` and 82 is Alpine's standard uid for www-data (the
 `33` in the tag is the Nextcloud version, not a uid) — so `html` declares
 `owner: 82` and `database` declares `owner: 70`, postgres's uid in
