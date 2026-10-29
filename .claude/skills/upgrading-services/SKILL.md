@@ -88,7 +88,7 @@ Columns: where the version lives, what to read, and what bit us.
 | **immich**                                                                      | `service.yml` → `config.version`                                              | `github.com/immich-app/immich/releases`                                                                                                                                     | Self, on server start                                                                                                                                                    | Server and ML share the one value. The database is a separate, digest-pinned VectorChord image — see standing decisions                                                                                                                                                                               |
 | **openarchiver**                                                                | `quadlet/openarchiver-app.container.j2`                                       | `github.com/LogicLabs-OU/OpenArchiver` (note the org name) + its `docker-compose.yml`                                                                                       | Self                                                                                                                                                                     | Its compose is the reference for the sidecars' versions. Needs meilisearch ≥ 1.14                                                                                                                                                                                                                     |
 | **mailflow**                                                                    | backend **and** frontend units                                                | `github.com/maathimself/mailflow/releases`                                                                                                                                  | Self, on backend start                                                                                                                                                   | The two must move together. Downgrading past 4.1.0 needs the scheduled-message tables dropped by hand                                                                                                                                                                                                 |
-| **lobehub**                                                                     | app, gateway, files, search units                                             | per-component releases                                                                                                                                                      | Self                                                                                                                                                                     | rustfs is the object store — check for an on-disk format change before moving it. Gateway states a minimum LobeHub version                                                                                                                                                                            |
+| **lobehub**                                                                     | app, gateway, files, search units                                             | per-component releases                                                                                                                                                      | Self                                                                                                                                                                     | the **gateway does not move on its own**: lobehub/README.md pins it to what upstream's compose pins at the app's release tag (2.2.20 still ships 0.3.2). rustfs is the object store — check for an on-disk format change. paradedb: patch-bump it and run the `pg_search` hook; `-pg17` never moves   |
 | **openproject**                                                                 | web **and** worker units                                                      | `github.com/opf/openproject/releases`                                                                                                                                       | Self — the unit sets `MIGRATE=true`                                                                                                                                      | Both units share the tag                                                                                                                                                                                                                                                                              |
 | **mealie**                                                                      | `quadlet/mealie-app.container.j2`                                             | `github.com/mealie-recipes/mealie/releases`                                                                                                                                 | Self (alembic on start)                                                                                                                                                  | —                                                                                                                                                                                                                                                                                                     |
 | **librechat**                                                                   | app, database, rag, search, vectordb units                                    | `github.com/danny-avila/LibreChat/releases`                                                                                                                                 | Self                                                                                                                                                                     | Mongo stays on the **8.0** line; 8.1+ is a major                                                                                                                                                                                                                                                      |
@@ -137,9 +137,43 @@ would cost, and move on.
 A pg major that moves silently is a service that will not start and a data directory that needs a
 restore from the 02:30 dump. There is no version of this that belongs in a nightly converge.
 
-A bump that **keeps** the pg major — a pgvector or paradedb extension release on the same
-postgres — is a different thing and not forbidden by the rule above, but it is still his call:
-the standing default since 2026-10-28 is to touch nothing postgres-related and report it.
+### Non-major postgres bumps are wanted
+
+The rule above is about the **major only**. Bug-fix and minor releases that keep the pg major
+are appreciated, and should be taken wherever they are not already happening by themselves
+(2026-10-29, JLK). Three different cases, and they are not interchangeable:
+
+| Instance                                                  | Case                             | What to do                                                                      |
+| --------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------- |
+| the six plain `postgres:17-alpine`                        | floating + `AutoUpdate=registry` | **nothing** — Podman's timer already takes every 17.x patch                     |
+| lobehub's `paradedb:*-pg17`                               | pinned, pg17                     | **bump the ParadeDB version**, keep `-pg17`, and run the `pg_search` hook below |
+| immich's `14-vectorchord*`, librechat's `pgvector:*-pg15` | the two odd ones out             | **touch nothing** unless the app documents a newer image — see below            |
+
+**The two odd ones out stay as they are.** immich is on pg14 and librechat's vector store on
+pg15 because that is what those applications ship against, not because nobody got round to
+them. The test is the app's own documentation, and both were checked on 2026-10-29:
+
+- Immich's `docker/docker-compose.yml` still pins `ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0`.
+  Newer VectorChord tags exist (`14-vectorchord1.1.1`); Immich does not use them. Leave it.
+- LibreChat's `docker-compose.yml` **and** `deploy-compose.yml` both pin
+  `pgvector/pgvector:0.8.0-pg15-trixie` — the exact tag we run, although 0.8.7-pg15 exists. Leave it.
+
+So: re-read those two composes each run. If the app has moved, the bump is on; if it still pins
+what we run, there is nothing to do and nothing to report.
+
+**Swapping the image is only half of an extension bump.** A new binary does not move the
+extension's registered SQL version, so the cluster ends up running new code against an old
+registration. The fix is `ALTER EXTENSION <name> UPDATE`, which ParadeDB's upgrade docs call
+required regardless of environment and pgvector's README documents the same way.
+
+**It is idempotent — measured, not assumed.** Run against an extension that is already current,
+postgres answers `NOTICE: version "x" of extension "y" is already installed` and exits 0. That
+is postgres-level behaviour, not extension-specific, so such a hook is safe on every converge.
+lobehub's `service.yml` has the worked example.
+
+Update only the extension that tracks the image's version (`pg_search` for ParadeDB). ParadeDB
+also bundles postgis, vector and pg_ivm, which carry their own versions; a newer shared object
+under an older registered version is normal and supported for those.
 
 ### The others
 
