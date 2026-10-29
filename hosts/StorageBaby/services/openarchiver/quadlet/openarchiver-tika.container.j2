@@ -3,8 +3,13 @@ Description=OpenArchiver tika (attachment text extraction)
 
 [Container]
 {# Pinned, and the `-full` variant: OpenArchiver extracts text from mail attachments,
-   which needs tika's OCR and the extra parsers the slim image leaves out. #}
-Image=docker.io/apache/tika:3.2.2.0-full
+   which needs tika's OCR and the extra parsers the slim image leaves out.
+   4.x because upstream's own compose pins `apache/tika:4.1.0-full` and its v0.6.1
+   notes say both tika 3.x and 4.x are supported with automatic version detection.
+   The same tag paperless now carries, so the host holds one tika. The probe below is
+   unchanged and still correct: 4.1.0-full ships bash 5.3.9 and /bin/sh is still
+   dash, checked by running the image. #}
+Image=docker.io/apache/tika:4.1.0-full
 ContainerName=openarchiver-tika
 Pod=openarchiver.pod
 Environment=TZ={{ tz }}

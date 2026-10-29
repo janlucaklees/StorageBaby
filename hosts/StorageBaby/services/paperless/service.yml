@@ -38,9 +38,11 @@ config:
   # are the whole of what the scanner is configured with.
   ftp_user: scanner
 secrets: [database_password, secret_key, ftp_password]
-hooks:
-  after_change:
-    - { container: paperless-app, command: 'touch /tmp/.hook-ran' }
+# No `hooks:` on purpose. Paperless has no post-upgrade step of its own -- the image's
+# s6 chain runs its migrations and rebuilds its search index from the entrypoint -- and
+# declaring one is not free: the role waits for the container's health check before each
+# hook, capped at 60 x 10 s, so a hook that does nothing was the only reason a converge
+# blocked on this pod coming up.
 backup:
   paths: [data, media, backups]
   schedule: '03:00'

@@ -4,7 +4,7 @@ After=openarchiver-database.service openarchiver-cache.service openarchiver-meil
 Wants=openarchiver-database.service openarchiver-cache.service openarchiver-meilisearch.service openarchiver-tika.service
 
 [Container]
-Image=docker.io/logiclabshq/open-archiver:v0.6.0
+Image=docker.io/logiclabshq/open-archiver:v0.6.2
 ContainerName=openarchiver-app
 Pod=openarchiver.pod
 Environment=TZ={{ tz }}

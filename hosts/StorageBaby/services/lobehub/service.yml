@@ -79,6 +79,22 @@ secrets:
 # success, and both the policy and the CORS rule are whole-document PUTs.
 hooks:
   after_change:
+    # ParadeDB's documented upgrade step, and the database comes before the app because
+    # the app queries what this aligns. Replacing the image moves `pg_search`'s binary
+    # but not its SQL version -- ParadeDB's upgrade docs call this "required regardless
+    # of the environment" -- so without it the cluster runs 0.26.3 code against an
+    # extension still registered as 0.26.1. Idempotent: postgres answers an UPDATE that
+    # has nothing to do with `NOTICE: version "x" is already installed` and exit 0,
+    # measured, so it is safe on every converge that restarts the pod.
+    # `$POSTGRES_DB` is read inside the container: a hook is `sh -c` there and
+    # `podman exec` inherits the unit's Environment= lines.
+    # Only `pg_search`. The image also bundles postgis, vector and pg_ivm, which carry
+    # their own versions and are not what a ParadeDB patch release moves; a newer .so
+    # under an older registered version is normal and supported for those.
+    - {
+        container: lobehub-database,
+        command: 'psql -U postgres -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "ALTER EXTENSION pg_search UPDATE"'
+      }
     - { container: lobehub-app, command: '/bin/node /config/s3-init.js' }
 backup:
   # `database` is absent on purpose: a postgres data directory is never snapshotted, the

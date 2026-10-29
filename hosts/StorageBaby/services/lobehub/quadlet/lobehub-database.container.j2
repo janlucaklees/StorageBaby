@@ -5,8 +5,12 @@ Description=LobeHub database
 {# ParadeDB and not plain postgres, and it is not interchangeable: the app's full-text
    search is `pg_search`, which this image ships and the official postgres image does not.
    A versioned tag rather than upstream's `latest-pg17`, so a converge cannot move the
-   cluster's major extension version on its own. #}
-Image=docker.io/paradedb/paradedb:0.26.1-pg17
+   cluster's major extension version on its own.
+   `-pg17` is the part that never moves here: a postgres major has no on-disk
+   compatibility, so it is a dump-and-restore rather than a tag. The ParadeDB version in
+   front of it is an ordinary patch bump, and the `pg_search` hook in `service.yml` is
+   what finishes it -- swapping the binary leaves the extension's SQL version behind. #}
+Image=docker.io/paradedb/paradedb:0.26.3-pg17
 ContainerName=lobehub-database
 Pod=lobehub.pod
 Environment=TZ={{ tz }}

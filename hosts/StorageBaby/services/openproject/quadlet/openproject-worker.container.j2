@@ -9,7 +9,7 @@ After=openproject-database.service openproject-web.service
 Wants=openproject-database.service
 
 [Container]
-Image=docker.io/openproject/openproject:17.9.1-slim
+Image=docker.io/openproject/openproject:17.9.4-slim
 ContainerName=openproject-worker
 Pod=openproject.pod
 Environment=TZ={{ tz }}
