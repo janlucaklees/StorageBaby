@@ -195,9 +195,15 @@ placed.
 What the `shared_buffers` bump does **not** do is clear Nextcloud's
 `pg.cache_hit_ratio` warning. That figure is cumulative since the database was
 created, with no stats reset recorded, so a change moves its slope and not its
-value — and the blocks it counts as misses were being served out of the host's
-13G of page cache rather than off a disk, which is a copy saved per block and not
-a seek.
+value.
+
+It does more than the ratio suggests, though, and this part was measured rather
+than assumed: `fincore` over the data tree found **33M of 752M resident** in the
+host's page cache — 4.4%. The blocks Postgres counts as misses are therefore
+mostly real reads off the SSD, not copies out of page cache; this host keeps far
+too little of the tree cached for that, which is the same memory pressure that
+makes dropping php-fpm's idle workers worth doing. 512M of shared buffers holds
+the hot part inside Postgres' own memory, where nothing can evict it.
 
 Its `pg.tables_without_index_use` warning is a false positive, and nothing here
 addresses it. `oc_users` and `oc_share` are one 8K page each and already carry two
