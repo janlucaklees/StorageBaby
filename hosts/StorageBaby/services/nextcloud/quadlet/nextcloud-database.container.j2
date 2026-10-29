@@ -11,6 +11,16 @@ Environment=POSTGRES_DB={{ service.config.database_name }}
 Environment=POSTGRES_USER={{ service.config.database_user }}
 Environment=POSTGRES_PASSWORD_FILE=/run/secrets/database_password
 Secret=database_password
+{# The image's Entrypoint is docker-entrypoint.sh and its Cmd is `postgres`, and that
+   script ends in `exec gosu postgres "$@"` -- so a flag appended to the command
+   reaches the server, which is the form the image documents.
+
+   512M against the 128M initdb wrote into this database's own postgresql.conf: the
+   database is 730M, 523M of it `oc_filecache`, the table every directory listing
+   reads, so the hot set does not come close to fitting. The misses were being served
+   out of the host's page cache rather than off a disk, so what this buys is a syscall
+   and a copy per block, not a seek -- real, and modest. #}
+Exec=postgres -c shared_buffers={{ service.config.database_shared_buffers }}
 Volume={{ volumes.database }}:/var/lib/postgresql/data
 {# The dump timer writes here, and the backup sidecar mounts the same volume read-only:
    a database is backed up as a dump, never as its data directory. #}

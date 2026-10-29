@@ -106,20 +106,37 @@ inside a container to the host's own LAN address is refused.
 
 ## `config/`
 
-Three files, copied to `/etc/cradle/nextcloud/` by the role and mounted
-read-only where the compose stack mounted them:
+Five files, copied to `/etc/cradle/nextcloud/` by the role and mounted read-only
+where each unit says they go:
 
-| File          | Mounted at                              | In    |
-| ------------- | --------------------------------------- | ----- |
-| `nginx.conf`  | `/etc/nginx/nginx.conf`                 | nginx |
-| `www.conf`    | `/usr/local/etc/php-fpm.d/www.conf`     | app   |
-| `opcache.ini` | `/usr/local/etc/php/conf.d/opcache.ini` | app   |
+| File                   | Mounted at                                  | In    |
+| ---------------------- | ------------------------------------------- | ----- |
+| `nginx.conf`           | `/etc/nginx/nginx.conf`                     | nginx |
+| `www.conf`             | `/usr/local/etc/php-fpm.d/www.conf`         | app   |
+| `opcache.ini`          | `/usr/local/etc/php/conf.d/opcache.ini`     | app   |
+| `zz-apcu.ini`          | `/usr/local/etc/php/conf.d/zz-apcu.ini`     | app   |
+| `zz-cradle.config.php` | `/var/www/html/config/zz-cradle.config.php` | app   |
 
-They are the old stack's files, flattened out of
+The first three are the old stack's files, flattened out of
 `config/<service>/<absolute path>/` into one directory, because the role copies
 `config/` as it is and the unit says where each file goes. `nginx.conf` differs
-from the compose version in exactly one line, the upstream; `www.conf` and
-`opcache.ini` are unchanged.
+from the compose version in exactly one line, the upstream; `opcache.ini` is
+unchanged; `www.conf` was the compose file untouched until its `pm.*` block was
+sized for this host — "The three sizes" below.
+
+The two `zz-` files are this platform's, and the prefix is load order in both
+cases. PHP reads `conf.d/*.ini` in sort order, so `zz-apcu.ini` lands after the
+image's own `docker-php-ext-apcu.ini`, which is the file that loads the extension.
+Nextcloud reads `config/config.php` and then every `config/*.config.php` beside it
+in natural sort order with later files winning, so `zz-cradle.config.php` comes
+after the image's seven and is the last word on what it sets — including over a
+value written from the admin UI, which lands in `config.php`.
+
+`zz-cradle.config.php` is mounted **into** the `html` volume, nested the same way
+`data` is: podman sorts mounts by target path, so the volume lands first and the
+file on top of it. Read-only is safe because Nextcloud only ever writes
+`config.php`, which is also the one file its own "configuration file is writable"
+setup check looks at.
 
 Only `nginx.conf` is replaced in the nginx image — `mime.types` and
 `fastcgi_params`, which it includes, stay the image's own.
@@ -128,6 +145,65 @@ Only `nginx.conf` is replaced in the nginx image — `mime.types` and
 half of the installation straight off the tree php-fpm owns, and has no business
 writing into it. It does not mount `data` at all — its config denies `/data`, and
 the user files only ever pass through php-fpm.
+
+## Logging goes to the journal, not to the pool
+
+`log_type` is `errorlog` and `loglevel` is 2, both out of
+`zz-cradle.config.php`. Read it with `cradle-svc logs nextcloud`.
+
+Nextcloud's default is `file`, and this installation had been left on loglevel 0
+— debug. `file` writes `<datadirectory>/nextcloud.log`, and `datadirectory` is
+`/var/www/html/data`: the `data` volume, class `pool`, a mergerfs union over the
+WD Reds. Measured 2026-10-29, before the change — 19212 entries in six and a
+half hours across 4975 distinct requests, so about four per page view, with one
+single request accounting for 620 of them, against **one** real warning in the
+whole week `occ setupchecks` looked back over. Every entry was an open, flock,
+append and close on a spinning disk through FUSE, on every click.
+
+The `html` / `data` split below was never wrong: the installation and the
+database are both on the SSD. Nextcloud's log simply defaults into the pool half
+of it. `errorlog` takes it off disk altogether — PHP's `error_log` is
+`/proc/self/fd/2` in this image, set by its own `php-fpm.d/docker.conf`, which is
+the container's stderr and therefore the journal.
+
+Two consequences. The `logreader` app, which is the admin UI's log viewer, reads
+that file and now has none. And the `nextcloud.log` and `nextcloud.log.1` already
+on the pool stay there as dead files — `OC\Log\Rotate` has nothing to rotate any
+more, so nothing will ever remove them.
+
+Turning debug back on is a change to `zz-cradle.config.php` in git, not a click
+in the admin UI: the file is read after `config.php` and wins over it.
+
+## The three sizes
+
+All three were PHP's, Postgres' or the compose stack's own default, and none had
+ever been weighed against this machine. Measured 2026-10-29.
+
+| Setting                | Was  | Now  | Why                                                                                                                            |
+| ---------------------- | ---- | ---- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `pm.max_children`      | 56   | 28   | A worker's resident size here is 146M, so 56 was an 8G ceiling on a 31G host that had already pushed 3.5G into swap            |
+| `pm.min_spare_servers` | 14   | 4    | php-fpm keeps that many workers alive and idle whether or not anybody is logged in — 2G resident for nothing                   |
+| `apc.shm_size`         | 32M  | 128M | PHP's default. APCu is Nextcloud's `memcache.local` and holds the appconfig of some fifty apps; 128M is Nextcloud's own figure |
+| `shared_buffers`       | 128M | 512M | What initdb wrote. The database is 730M, 523M of it `oc_filecache` — the table every directory listing reads                   |
+
+`pm.start_servers` and `pm.max_spare_servers` follow `max_children` down, to 6
+and 12. `shared_buffers` is `service.config.database_shared_buffers`, so a host
+with less memory than this one overrides it through `service_config.nextcloud`;
+the two PHP values live in static files and are the same wherever this service is
+placed.
+
+What the `shared_buffers` bump does **not** do is clear Nextcloud's
+`pg.cache_hit_ratio` warning. That figure is cumulative since the database was
+created, with no stats reset recorded, so a change moves its slope and not its
+value — and the blocks it counts as misses were being served out of the host's
+13G of page cache rather than off a disk, which is a copy saved per block and not
+a seek.
+
+Its `pg.tables_without_index_use` warning is a false positive, and nothing here
+addresses it. `oc_users` and `oc_share` are one 8K page each and already carry two
+and nine indexes respectively; Postgres scans them sequentially because reading a
+single page beats looking anything up in an index, and no index anybody could add
+would change that.
 
 ## Health checks
 

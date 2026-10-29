@@ -31,6 +31,11 @@ config:
   database_name: nextcloud
   database_user: oc_jlk
   version: 33-fpm-alpine
+  # Postgres' own default is 128M, which is what initdb wrote into this database's
+  # postgresql.conf when it was created. A host with less memory than this one
+  # overrides it through `service_config.nextcloud`; the database unit has the
+  # measurement behind the number.
+  database_shared_buffers: 512MB
   # Empty on purpose, and measured: see "Trusted proxies" in the README. A host that
   # really does sit behind a second proxy sets it through `service_config.nextcloud`.
   trusted_proxies: ''
