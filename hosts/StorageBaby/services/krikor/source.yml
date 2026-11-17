@@ -1,0 +1,7 @@
+# Krikor (the Leistungsphase6 landing page) lives in its own repository; this folder only
+# says where. The contract is deploy/storagebaby/ there, and `stable` is the branch its CI
+# promotes once the type check passed and the `:stable` image was pushed, so the host never
+# fetches a contract whose image does not exist yet.
+repo: https://github.com/janlucaklees/krikor
+ref: stable
+path: deploy/storagebaby
