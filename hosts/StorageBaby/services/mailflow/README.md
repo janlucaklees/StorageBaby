@@ -3,23 +3,29 @@
 Self-hosted unified webmail — several IMAP/SMTP accounts in one inbox.
 <https://mailflow.klees.io>. Upstream: <https://github.com/maathimself/mailflow>.
 
+**This host runs JLK's fork**, <https://github.com/janlucaklees/mailflow>: upstream plus the
+archive structure (Settings → Accounts → Folder mappings → Archive structure: Single folder,
+By year, By year and month), which is meant to go upstream as a pull request. The images are
+`ghcr.io/janlucaklees/mailflow-{backend,frontend}`, private, hence `registries: [ghcr.io]`.
+Once upstream ships the feature, this goes back to `ghcr.io/maathimself/` and the
+`registries` line goes.
+
 Moved off the VPS (`CloudBaby/mailflow`). It comes up **empty**: this folder is the service,
 not the data. The migration is a separate step, and the one thing it must carry is
 `encryption_key` (below).
 
 ## Stack
 
-One pod, four containers and a timer:
+One pod, three containers and a timer:
 
-- `mailflow-frontend` — nginx plus the built SPA, container port 80. The only part the route
+- `mailflow-frontend` — Caddy plus the built SPA, container port 80. The only part the route
   reaches; it proxies every API path to the backend.
 - `mailflow-backend` — the Node API on 3000, pod-internal.
 - `mailflow-database` — Postgres 17. The only copy of anything that matters.
-- `mailflow-broker` — redis, sessions and cache. The sessions are the reason it has a volume
-  at all, unlike every other redis on this host; see Volumes.
 - `mailflow-dump.timer` — `pg_dump` into `backups` at 02:30.
 
-The frontend and the backend are two halves of one release and carry the same tag, **4.0.5**;
+The frontend and the backend are two halves of one release and carry the same tag, **4.4.1-archive.2**
+(upstream 4.4.0 plus its unreleased commits up to `c2e56144`, plus the archive structure);
 they are bumped together, never one at a time.
 
 ## Three settings that come from reading the image, not the compose file
@@ -27,41 +33,30 @@ they are bumped together, never one at a time.
 Upstream's `docker-compose.yml` is written for Docker, and three of its assumptions are wrong
 here. All three have supported escape hatches, so none of this needs a patched config:
 
-- **`BACKEND_HOST=127.0.0.1`, `BACKEND_PORT=3000`.** The shipped `nginx.conf` hard-codes
-  `proxy_pass http://mailflow_api` with the Compose service name `backend:3000`, which does
-  not resolve in a pod. The entrypoint script `17-set-backend.sh` rewrites that one marked
-  line from these variables, and its own comment names the case: the Compose default "is
-  wrong everywhere the backend is named something else — Kubernetes services, **Podman
-  pods**, split hosts". So no `AddHost=backend:127.0.0.1` alias is needed here, unlike immich.
-- **`NGINX_TLS=off`.** The image ships two server blocks: 443 with a self-signed certificate
-  it generates on start, and 80 "intended for deployments behind a reverse proxy that
-  terminates TLS upstream". `18-set-tls.sh` comments the HTTPS half out. Hence a plain-HTTP
-  route with no `scheme: https` and no `insecure_skip_verify` — kopia and collabora need
-  those because their protocols do, and this does not.
-- **`TRUST_PROXY_HOPS=2`.** Traefik, then this pod's nginx. Upstream permits 2 only "if
+- **`BACKEND_HOST=127.0.0.1`, `BACKEND_PORT=3000`.** The frontend's start script
+  (`frontend/caddy/start.sh` upstream, `/usr/local/bin/mailflow-start` in the image) points
+  Caddy's proxy at these, defaulting to the Compose service name `backend:3000`, which does
+  not resolve in a pod. Its own comment names the case: "for Kubernetes, Podman and split
+  hosts". So no `AddHost=backend:127.0.0.1` alias is needed here, unlike immich.
+- **`TLS_MODE=off`.** Caddy serves HTTP on port 80 only, with no 443 listener and no
+  self-signed certificate. Hence a plain-HTTP route with no `scheme: https` and no
+  `insecure_skip_verify` — kopia and collabora need those because their protocols do, and
+  this does not. (`NGINX_TLS=off`, the name before 4.4, still means the same.)
+- **`TRUST_PROXY_HOPS=2`.** Traefik, then this pod's frontend. Upstream permits 2 only "if
   clients cannot reach MailFlow's ports except through it", because otherwise a client
   connecting directly chooses the address it is rate-limited and logged under. On this
   platform that condition is structural: the pod publishes on `127.0.0.1` alone — the
   port being the one Cradle derives for the route — and
   Cradle's `tests/static/test_quadlet_conventions.py` refuses any other bind.
 
-Neither image ships `curl`, so upstream's own compose healthchecks cannot be working. Both
-health checks here use busybox `wget`, which is in `nginx:alpine` and `node:22-alpine` alike.
+Neither image ships `curl`. Both health checks use busybox `wget`, which is in `caddy:2-alpine`
+and `node:22-alpine` alike; the frontend's probes Caddy's own `127.0.0.1:2080/healthz`, as
+upstream's compose does.
 
-All three were verified on test-a rather than reasoned about, and re-verified against the
-4.0.5 images: `set-backend.sh`, `set-tls.sh` and the two marker lines in `nginx.conf` are
-unchanged, and the frontend still has `wget` and no `curl`. What a correctly configured
-frontend looks like from inside the container:
-
-```sh
-podman exec mailflow-frontend grep -A8 'upstream mailflow_api' /etc/nginx/conf.d/default.conf
-#   server 127.0.0.1:3000 resolve; # mailflow-backend-managed   <- BACKEND_HOST/PORT applied
-#   resolver 169.254.1.1 …         # mailflow-managed           <- detect-resolver.sh applied
-# and the HTTPS server block's lines each carry a `#tls-off#` prefix                <- NGINX_TLS=off
-```
-
-The end-to-end check is the API path, not `/` — the SPA answers `/` whether or not nginx
-proxies anything:
+Verified against a local build of the 4.4.1-archive.2 source: with these three variables the
+start script logs `HTTP on port 80 only (TLS_MODE=off)`, `/healthz` and `/` answer, and 443
+refuses. The end-to-end check is the API path, not `/` — the SPA answers `/` whether or not
+the proxy reaches the backend:
 
 ```sh
 curl -sk -H 'Host: mailflow.klees.io' https://127.0.0.1/api/health # {"status":"ok"}
@@ -82,25 +77,21 @@ the database gives a working instance with every stored account unreadable.
 | volume        | class | owner | what it holds                            |
 | ------------- | ----- | ----- | ---------------------------------------- |
 | `database`    | fast  | 70    | the Postgres data directory              |
-| `sessions`    | fast  | 999   | redis's snapshot: who is signed in       |
 | `image_cache` | fast  | 1000  | remote images the image proxy has fitted |
 | `backups`     | pool  | —     | the nightly dump, written by the timer   |
 
-### Redis keeps its data here, unlike everywhere else on this platform
+### No redis since 4.4
 
-MailFlow's sessions are neither cookies carrying their own state nor rows in Postgres:
-express-session stores them through `connect-redis`, so redis's dataset _is_ the list of who
-is signed in. Until 2026-10-27 this service followed paperless, nextcloud and openarchiver
-and gave its redis no volume — and so every restart, whether a deploy, a redis auto-update or
-a reboot, signed everyone out. That is what the `sessions` volume fixes, with upstream's own
-`--save 60 1`: one snapshot sixty seconds after a change, so a hard kill loses at most the
-last minute's sign-ins and a graceful stop loses none.
+Sessions and short-lived keys moved into Postgres (migration 0076), so the `mailflow-broker`
+container and its `sessions` volume are gone. The upgrade signs everyone out once; after that
+a restart no longer does, because the sessions are in `database`. The old `sessions`
+directory stays on disk, as every volume a service stops declaring does, and holds nothing
+anyone reads.
 
-Two consequences worth knowing. Nothing snapshots this volume — a session is not state a
-restore wants back, and losing it costs one sign-in. And persistence buys the failure mode
-nextcloud's unit avoids on purpose: a redis that cannot write its snapshot stops accepting
-writes, which here means nobody can sign in. The dataset is kilobytes and it sits on `fast`,
-so that needs the SSD to be full before it bites.
+The rendered `mailflow-broker.container` stays too: Cradle leaves a unit file a service stops
+carrying where it is. It is not inert, though — it still says `Pod=mailflow.pod` and the
+generated pod unit `Wants=` it, so a redis keeps running in the pod that nothing talks to.
+Harmless, and gone with `/etc/containers/systemd/users/<uid>/mailflow-broker.container`.
 
 ## Upgrading is a tag bump and nothing else
 
@@ -115,7 +106,9 @@ otherwise restart the container in the middle of an upgrade.
 Two things a bump can still ask for, both of which have to be read out of the release notes
 before it goes out: a new volume (4.0.0 added one, for the image proxy's cache) and a new
 setting (4.0.5 added the Microsoft app switch). 3.8.3 → 4.0.5 carried migrations 0063–0070
-and needed both.
+and needed both. 4.1.0 → 4.4 carried 0072–0081 and asked for the opposite: a container
+taken away (redis) and a setting renamed (`NGINX_TLS` → `TLS_MODE`). Read the release notes'
+"Upgrading" sections across the whole gap, not just the newest.
 
 ## Secrets
 
