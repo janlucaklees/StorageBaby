@@ -2,14 +2,8 @@ name: mailflow
 container_port: 80
 domain: mailflow.klees.io
 volumes:
+  # Since 4.4 this also holds the sessions (migration 0076), which lived in redis before.
   database: { class: fast, owner: 70 }
-  # Redis, and the one place this service's storage departs from paperless's, nextcloud's
-  # and openarchiver's. Theirs is a queue or a cache and is thrown away on purpose; this
-  # one is the session store -- express-session writes through `connect-redis`, so redis's
-  # dataset is the list of who is signed in -- and with no volume every restart signed
-  # everyone out. Not in `backup.paths`: a session is not state a restore wants back.
-  # 999 is the `redis` user in `redis:alpine`.
-  sessions: { class: fast, owner: 999 }
   # 4.0.0's image proxy keeps the images it has fitted, so a second device or a later view
   # shows them at once. Upstream's compose file gives it a named volume; without one the
   # cache grows inside the container's writable layer and is thrown away on every restart.
@@ -24,7 +18,7 @@ volumes:
 config:
   database_name: mailflow
   database_user: mailflow
-  # Traefik and mailflow's own nginx, so the backend reads the client address two hops back
+  # Traefik and mailflow's own frontend (Caddy since 4.4, nginx before), so the backend reads the client address two hops back
   # in X-Forwarded-For. Upstream allows 2 only "if clients cannot reach MailFlow's ports
   # except through it", because otherwise a direct client picks the address it is
   # rate-limited and logged under. That holds here by construction: the pod publishes on
@@ -39,6 +33,9 @@ config:
   # UI under Settings > Email providers, so turning it on does not need a deploy.
   ms_builtin_app: false
 secrets: [database_password, session_secret, encryption_key]
+# Both images are JLK's fork (janlucaklees/mailflow), which is private on ghcr.io. The host
+# offers ghcr.io and holds the login.
+registries: [ghcr.io]
 backup:
   # Only the dump. Every byte of mailflow's state is in Postgres: there is no upload tree,
   # no index and no cache worth carrying.

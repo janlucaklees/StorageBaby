@@ -4,26 +4,26 @@ After=mailflow-backend.service
 Wants=mailflow-backend.service
 
 [Container]
-Image=ghcr.io/maathimself/mailflow-frontend:4.1.0
+{# The same fork and tag as the backend; the two always move together. #}
+Image=ghcr.io/janlucaklees/mailflow-frontend:4.4.1-archive.2
 ContainerName=mailflow-frontend
 Pod=mailflow.pod
 Environment=TZ={{ tz }}
-{# The image's nginx.conf ships `proxy_pass http://mailflow_api` with the Docker Compose
-   service name baked in, and `17-set-backend.sh` rewrites that one marked line from these
-   two variables. Upstream added them for this exact case -- its comment names "Podman
-   pods" -- which is why this service needs no `AddHost=backend:127.0.0.1` alias of the
-   kind immich uses. #}
+{# Since 4.4 the frontend is Caddy, not nginx. Its start script (`mailflow-start`, from
+   upstream's `frontend/caddy/start.sh`) points the proxy at BACKEND_HOST:BACKEND_PORT,
+   defaulting to the Compose name `backend:3000`, which does not resolve in a pod. Upstream
+   added the two variables for this case -- its comment names "Podman" -- so no
+   `AddHost=backend:127.0.0.1` alias of the kind immich uses. #}
 Environment=BACKEND_HOST=127.0.0.1
 Environment=BACKEND_PORT=3000
-{# `18-set-tls.sh` comments out the whole HTTPS server block, so nginx stops serving 443
-   and generates no self-signed certificate. The port-80 block that remains is, in the
-   image's own words, "intended for deployments behind a reverse proxy that terminates TLS
-   upstream" -- so this route is plain HTTP, unlike kopia and collabora, which keep their
-   own TLS because their protocols leave them no choice. #}
-Environment=NGINX_TLS=off
-{# busybox wget, not curl: this image is nginx on alpine plus openssl, and curl is not in
-   it -- upstream's own compose healthcheck calls curl and cannot be working. #}
-HealthCmd=wget -q --spider http://127.0.0.1/ || exit 1
+{# HTTP on port 80 only: no 443 listener and no self-signed certificate, for a reverse
+   proxy that terminates TLS in front. So this route is plain HTTP, unlike kopia and
+   collabora, which keep their own TLS because their protocols leave them no choice.
+   `NGINX_TLS=off` would still mean the same; TLS_MODE is the name since 4.4. #}
+Environment=TLS_MODE=off
+{# Caddy's own health endpoint, bound to loopback inside the container -- upstream's compose
+   healthcheck. busybox wget, which caddy:2-alpine has; it has no curl. #}
+HealthCmd=wget -q --spider http://127.0.0.1:2080/healthz || exit 1
 HealthOnFailure=kill
 
 [Service]

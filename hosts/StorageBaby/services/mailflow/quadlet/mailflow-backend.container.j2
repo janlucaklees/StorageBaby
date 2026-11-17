@@ -1,10 +1,13 @@
 [Unit]
 Description=Mailflow backend
-After=mailflow-database.service mailflow-broker.service
-Wants=mailflow-database.service mailflow-broker.service
+After=mailflow-database.service
+Wants=mailflow-database.service
 
 [Container]
-Image=ghcr.io/maathimself/mailflow-backend:4.1.0
+{# JLK's fork: upstream 4.4.0 plus its unreleased commits up to c2e56144, plus the archive
+   structure (Archive/2026, Archive/2026/11). Built by the fork's own publish workflow from
+   the tag of the same name. #}
+Image=ghcr.io/janlucaklees/mailflow-backend:4.4.1-archive.2
 ContainerName=mailflow-backend
 Pod=mailflow.pod
 Environment=TZ={{ tz }}
@@ -24,8 +27,9 @@ Environment=DB_HOST=127.0.0.1
 Environment=DB_PORT=5432
 Environment=DB_NAME={{ service.config.database_name }}
 Environment=DB_USER={{ service.config.database_user }}
-Environment=REDIS_URL=redis://127.0.0.1:6379
-{# Two proxies in front of the backend: Traefik, then the pod's own nginx. See the comment
+{# No REDIS_URL: since 4.4 sessions and short-lived keys are in Postgres, and the backend
+   ignores the variable. #}
+{# Two proxies in front of the backend: Traefik, then the pod's own frontend. See the comment
    on `trust_proxy_hops` in service.yml for why this value is safe here and would not be on
    a host that published these ports anywhere but loopback. #}
 Environment=TRUST_PROXY_HOPS={{ service.config.trust_proxy_hops }}
@@ -60,7 +64,9 @@ HealthOnFailure=kill
    transaction behind a session advisory lock and is retried, but a loop that never gets
    anywhere if the margin is always too small. 4.0.4's 0068 is the long one between 3.8.3
    and 4.0.5: it re-threads every subject-grouped conversation in the database, which
-   upstream puts at a few seconds on a large mailbox. #}
+   upstream puts at a few seconds on a large mailbox. 4.1.0 → 4.4 carries 0072-0081, all
+   quick: 0080's full-body search index is filled by a throttled job after start, not by
+   the migration. #}
 HealthStartPeriod=300s
 
 [Service]
