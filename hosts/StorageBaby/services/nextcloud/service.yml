@@ -1,11 +1,12 @@
 name: nextcloud
-# Two hostnames, so the `routes` list rather than the `domain:` + `container_port:`
-# shorthand: nginx serves Nextcloud itself and Collabora serves the office backend, and the
-# browser has to reach both under their own names. They differ in how Traefik reaches
-# them, which is what a per-entry backend option is for: nginx answers plain HTTP,
-# Collabora keeps the TLS the image serves by default -- with a certificate it made
-# for itself, which nothing can verify and nothing has to, the hop being to 127.0.0.1.
-# The collabora unit has the why; kopia is the other service that does this.
+# Three hostnames, so the `routes` list rather than the `domain:` + `container_port:`
+# shorthand: nginx serves Nextcloud itself, Collabora serves the office backend and the
+# Talk signaling server serves calls, and the browser has to reach each under its own
+# name. They differ in how Traefik reaches them, which is what a per-entry backend option
+# is for: nginx and the signaling server answer plain HTTP, Collabora keeps the TLS the
+# image serves by default -- with a certificate it made for itself, which nothing can
+# verify and nothing has to, the hop being to 127.0.0.1. The collabora unit has the why;
+# kopia is the other service that does this.
 routes:
   - { domain: nextcloud.klees.io, container_port: 80 }
   - {
@@ -14,6 +15,25 @@ routes:
       scheme: https,
       insecure_skip_verify: true
     }
+  # Two labels under klees.io, so the host's `cert_zones` carries `nextcloud.klees.io` for
+  # it: `*.klees.io` is one label deep. `/` is a 404 on the signaling server -- it
+  # registers `/spreed` and `/api/v1/...` and nothing above them -- so the probe asks the
+  # one unauthenticated endpoint it answers, measured against the pinned image.
+  - {
+      domain: signaling.nextcloud.klees.io,
+      container_port: 8081,
+      probe_path: /api/v1/welcome
+    }
+# TURN, for Talk: eturnal in nextcloud-talk, on both protocols, because a browser tries
+# UDP first and falls back to TCP on a network that blocks it. 3478 is TURN's registered
+# port and what Talk's `turn_servers` hands to clients. No relay range is published: the
+# only peer a browser's allocation ever reaches is Janus, in this same pod, so the relayed
+# media never leaves the namespace -- measured with an authenticated Allocate through the
+# pod's loopback publish on both protocols.
+tcp_ports:
+  - { port: 3478 }
+udp_ports:
+  - { port: 3478 }
 volumes:
   # 82, not 33: `www-data` is uid 82 in `php:*-fpm-alpine`, and the 33 in
   # `nextcloud:35-fpm-alpine` is the Nextcloud version.
@@ -45,7 +65,10 @@ secrets:
     collabora_username,
     collabora_password,
     admin_user,
-    admin_password
+    admin_password,
+    signaling_secret,
+    turn_secret,
+    internal_secret
   ]
 # The old stack's `make upgrade` ran the first five by hand after every image bump. The
 # image itself runs `occ upgrade` from its entrypoint; these are the steps that came
@@ -96,6 +119,42 @@ hooks:
         user: www-data,
         when: always,
         command: 'php occ config:app:set richdocuments wopi_url --value="$NEXTCLOUD_WOPI_URL"'
+      }
+    # Talk's four settings, the same way and for the same reason, plus one more: two of
+    # them carry a secret, and the secret lives in sops rather than in the admin page. The
+    # values are the app container's own environment -- the two routes' names and the two
+    # env-type secrets it shares with nextcloud-talk -- so a secret is expanded inside the
+    # container and never appears in a command the converge logs; `--quiet` because occ
+    # otherwise echoes the value it set. `--type=array` and `--sensitive` are what Talk's
+    # own config lexicon declares for these keys, and writing them before the app is
+    # installed is harmless: the app reads them when it is. `signaling_servers_secret` is
+    # written beside the array because `talk:signaling:add` writes both and Talk reads the
+    # string first. The shape of each value is what the app's own occ commands write.
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:app:set spreed signaling_servers --type=array --sensitive --quiet --value="{\"servers\":[{\"server\":\"$TALK_SIGNALING_URL\",\"verify\":true}],\"secret\":\"$TALK_SIGNALING_SECRET\"}"'
+      }
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:app:set spreed signaling_servers_secret --sensitive --quiet --value="$TALK_SIGNALING_SECRET"'
+      }
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:app:set spreed turn_servers --type=array --sensitive --quiet --value="[{\"schemes\":\"turn\",\"server\":\"$TALK_TURN_SERVER\",\"secret\":\"$TALK_TURN_SECRET\",\"protocols\":\"udp,tcp\"}]"'
+      }
+    # eturnal answers STUN on the same port, so the default `stun.nextcloud.com:443` --
+    # a third party learning every caller's address -- is replaced by this host.
+    - {
+        container: nextcloud-app,
+        user: www-data,
+        when: always,
+        command: 'php occ config:app:set spreed stun_servers --type=array --sensitive --quiet --value="[\"$TALK_TURN_SERVER\"]"'
       }
 backup:
   # `html` is the installation, `data` the user files, `backups` carries the nightly

@@ -37,6 +37,19 @@ Environment=OVERWRITEHOST={{ routes[0].fqdn }}
    a bare label the host completes or the full hostname, and this has to find Collabora's
    route either way. #}
 Environment=NEXTCLOUD_WOPI_URL=https://{{ (routes | selectattr('domain', 'match', 'collabora([.]|$)') | first).fqdn }}
+{# The same arrangement for Talk: not variables the image knows, but what the Talk hooks in
+   service.yml read to write `signaling_servers`, `turn_servers` and `stun_servers`. The
+   signaling server is the route; TURN and STUN are eturnal in nextcloud-talk, which
+   Traefik forwards on 3478 on every name that resolves to this host -- the signaling
+   route's name is the one Talk hands to browsers. #}
+{% set talk_fqdn = (routes | selectattr('domain', 'match', 'signaling([.]|$)') | first).fqdn %}
+Environment=TALK_SIGNALING_URL=https://{{ talk_fqdn }}
+Environment=TALK_TURN_SERVER={{ talk_fqdn }}:3478
+{# The two values Nextcloud and nextcloud-talk must agree on. Env-type, because the
+   hooks are `sh -c` inside this container and read them as variables, so the value is
+   expanded in here and never appears in a command the converge logs. #}
+Secret=signaling_secret,type=env,target=TALK_SIGNALING_SECRET
+Secret=turn_secret,type=env,target=TALK_TURN_SECRET
 {# Rendered only when a host declares one. `trusted_proxies` is empty by design here --
    through pasta, Traefik's requests arrive from the host's own address, a different
    literal per host, and Nextcloud uses the value only to believe X-Forwarded-For. The

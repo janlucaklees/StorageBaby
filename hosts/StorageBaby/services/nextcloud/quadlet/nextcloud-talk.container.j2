@@ -1,0 +1,51 @@
+[Unit]
+Description=Nextcloud Talk high-performance backend (signaling, Janus, NATS, TURN)
+
+[Container]
+{# Nextcloud's own all-in-one Talk image: the signaling server, the Janus media server,
+   NATS and the eturnal TURN server in one container, supervised by dinit. Pinned to a
+   dated tag and bumped in git rather than riding `latest`: the image's settings are its
+   `/start.sh`, which reads environment variables and writes all four configs from them
+   on every start, and that script changes between releases without a changelog. Read
+   off the pinned image itself, not off the all-in-one repository. #}
+Image=ghcr.io/nextcloud-releases/aio-talk:20261109_101109
+ContainerName=nextcloud-talk
+Pod=nextcloud.pod
+Environment=TZ={{ tz }}
+{# The Nextcloud the signaling server authenticates against and calls back -- the public
+   name, reached through Traefik like every cross-service call, which is what the role's
+   host-gateway drop-in on the pod is for. #}
+Environment=NC_DOMAIN={{ routes[0].fqdn }}
+{# The port eturnal listens on for TURN, UDP and TCP both. Traefik owns 3478 on the host's
+   own address and forwards both protocols to this pod's loopback 3478 -- `tcp_ports` and
+   `udp_ports` in service.yml. #}
+Environment=TALK_PORT=3478
+{# The TURN server *Janus* uses, not the one browsers are told about (that is Talk's
+   `turn_servers` setting, written by a hook in service.yml). The script defaults it to
+   NC_DOMAIN, which from inside this pod resolves to the host gateway, where nothing
+   answers UDP 3478; and Janus refuses to start at all on a TURN name it cannot resolve
+   ("Invalid TURN address", measured). eturnal is in this same container, so loopback is
+   the direct path. #}
+Environment=TURN_DOMAIN=127.0.0.1
+{# All three are read from the environment only -- the script has no `_FILE` form -- so
+   they are env-type podman secrets, the same as Collabora's login: the unit carries the
+   name, podman resolves the value at start. `turn_secret` and `signaling_secret` are also
+   handed to nextcloud-app, which has to know the same two values; `internal_secret` is the
+   signaling server's own and nothing else reads it. #}
+Secret=turn_secret,type=env,target=TURN_SECRET
+Secret=signaling_secret,type=env,target=SIGNALING_SECRET
+Secret=internal_secret,type=env,target=INTERNAL_SECRET
+{# The image's own probe: every part listening (signaling 8081, Janus 8188, NATS 4222,
+   eturnal 3478), `eturnalctl status`, and a real request to the signaling server's stats
+   endpoint. Measured passing against the pinned image. A JSON array, because it is a
+   script with its own shebang and needs no shell around it. #}
+HealthCmd=["CMD", "/healthcheck.sh"]
+HealthOnFailure=kill
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

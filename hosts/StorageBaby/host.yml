@@ -2,7 +2,7 @@ domain: home.klees.io
 acme: true
 acme_email: email@janlucaklees.de
 # The domains this host can obtain a certificate for -- one wildcard request each. All
-# three are in the same Porkbun account, so the one resolver traefik declares covers them;
+# four are in the same Porkbun account, so the one resolver traefik declares covers them;
 # the A records are the operator's. A service takes a name under one of these by writing it
 # out in full in its own `service.yml`.
 #
@@ -11,8 +11,9 @@ acme_email: email@janlucaklees.de
 # and nothing would say so: the route would be served traefik's own default certificate and
 # only the browser would complain. DNS needed nothing for it, which is the trap: Porkbun
 # answers the existing `*.klees.io` record at any depth, so her names resolved to this host
-# before they could be served.
-cert_zones: [home.klees.io, klees.io, mayu.klees.io]
+# before they could be served. `nextcloud.klees.io` is there for the same reason, for
+# Talk's `signaling.nextcloud.klees.io`.
+cert_zones: [home.klees.io, klees.io, mayu.klees.io, nextcloud.klees.io]
 # The registries this host holds a login for (secrets/registries.sops.yaml). A service
 # names the ones it needs; one it names that is not here is refused at converge.
 registries: [ghcr.io]

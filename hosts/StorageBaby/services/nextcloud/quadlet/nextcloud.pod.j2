@@ -2,9 +2,18 @@
 PodName=nextcloud
 {# The loopback port is Cradle's, derived and in no file; `container_port` is this pod's
    own. The static check reads this line out of the raw template and accepts a `publish_port`
-   expression for a route and a literal only for a `tcp_ports` target.
+   expression for a route and a literal only for a `tcp_ports` or `udp_ports` target.
 
-   Two lines, because this is the one service with two hostnames -- nginx answers on 80
-   inside the pod for the `nextcloud` route, collabora on 9980 for its own. #}
+   One line per route, because this service has three hostnames -- nginx answers on 80
+   inside the pod for the `nextcloud` route, collabora on 9980 for its own, and the Talk
+   signaling server on 8081 for `signaling.nextcloud`. #}
 PublishPort=127.0.0.1:{{ routes[0].publish_port }}:{{ routes[0].container_port }}
 PublishPort=127.0.0.1:{{ routes[1].publish_port }}:{{ routes[1].container_port }}
+PublishPort=127.0.0.1:{{ routes[2].publish_port }}:{{ routes[2].container_port }}
+{# TURN, on both protocols. Traefik owns 3478 on the host's own address and forwards each
+   protocol here; the two coexist on one number because a TCP and a UDP socket never
+   collide, and because Traefik's entrypoints bind `tcp_bind_address` rather than the
+   wildcard -- Cradle's `ansible/roles/service/README.md`, "Why the entrypoint binds one
+   address". #}
+PublishPort=127.0.0.1:3478:3478
+PublishPort=127.0.0.1:3478:3478/udp

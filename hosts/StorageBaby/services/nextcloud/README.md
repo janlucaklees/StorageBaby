@@ -2,27 +2,29 @@
 
 The file cloud, reachable at `nextcloud.<host domain>` —
 `nextcloud.home.klees.io` on storagebaby — with its office backend at
-`collabora.<host domain>`. Migrated from the old `nextcloud/docker-compose.yml`:
+`collabora.<host domain>` and Talk's high-performance backend at
+`signaling.nextcloud.klees.io`. Migrated from the old `nextcloud/docker-compose.yml`:
 five containers that used to be a compose project are one Podman **pod** now,
 plus the four things the platform adds by declaration — a second route, a nightly
 database dump, the five-minute cron job that ofelia used to run, and a Kopia
 backup client.
 
-It is the largest service on the platform and the only one with two routes, two
-timers and a real `hooks.after_change`.
+It is the largest service on the platform and the only one with three routes, two
+timers, a real `hooks.after_change`, and ports on both TCP and UDP.
 
 ## The pod
 
-| Part                  | Image                                       | Port | Updates       |
-| --------------------- | ------------------------------------------- | ---- | ------------- |
-| `nextcloud-app`       | `docker.io/library/nextcloud:35-fpm-alpine` | 9000 | pinned in git |
-| `nextcloud-nginx`     | `docker.io/library/nginx:alpine`            | 80   | auto          |
-| `nextcloud-database`  | `docker.io/library/postgres:17-alpine`      | 5432 | auto          |
-| `nextcloud-cache`     | `docker.io/library/redis:alpine`            | 6379 | auto          |
-| `nextcloud-collabora` | `docker.io/collabora/code:latest`           | 9980 | auto          |
-| `nextcloud-backup`    | `docker.io/kopia/kopia:0.23.1`              | —    | generated     |
+| Part                  | Image                                        | Port       | Updates       |
+| --------------------- | -------------------------------------------- | ---------- | ------------- |
+| `nextcloud-app`       | `docker.io/library/nextcloud:35-fpm-alpine`  | 9000       | pinned in git |
+| `nextcloud-nginx`     | `docker.io/library/nginx:alpine`             | 80         | auto          |
+| `nextcloud-database`  | `docker.io/library/postgres:17-alpine`       | 5432       | auto          |
+| `nextcloud-cache`     | `docker.io/library/redis:alpine`             | 6379       | auto          |
+| `nextcloud-collabora` | `docker.io/collabora/code:latest`            | 9980       | auto          |
+| `nextcloud-talk`      | `ghcr.io/nextcloud-releases/aio-talk:<date>` | 8081, 3478 | pinned in git |
+| `nextcloud-backup`    | `docker.io/kopia/kopia:0.23.1`               | —          | generated     |
 
-`nextcloud.pod` owns the network namespace all six share, so `POSTGRES_HOST` and
+`nextcloud.pod` owns the network namespace all seven share, so `POSTGRES_HOST` and
 `REDIS_HOST` are `127.0.0.1` rather than compose service names, and nginx's
 `upstream php-handler` is `127.0.0.1:9000` — the one line changed in
 `config/nginx.conf`.
@@ -41,7 +43,7 @@ the rebuild; a start with the registry unreachable keeps the local image.
 `nextcloud-backup` is **not** in this folder. The role generates it from
 `backup:` in `service.yml` and joins it to this pod.
 
-## Two routes, one pod
+## Three routes, one pod
 
 ```yaml
 routes:
@@ -52,20 +54,25 @@ routes:
       scheme: https,
       insecure_skip_verify: true
     }
+  - {
+      domain: signaling.nextcloud.klees.io,
+      container_port: 8081,
+      probe_path: /api/v1/welcome
+    }
 ```
 
 This is the service the `routes` list exists for. The browser loads Nextcloud
-from one hostname and, when it opens a document, loads the editor from the other
-— they are two origins to it, not one service with a path prefix. So the pod
-publishes two derived loopback ports and the role writes two Traefik files, named
-`<name>-<domain>.yml` — `nextcloud-nextcloud.klees.io.yml` and
-`nextcloud-collabora.klees.io.yml` — each with its own router and service.
+from one hostname, the editor from a second when it opens a document, and talks to
+the signaling server on a third during a call — three origins to it, not one
+service with a path prefix. So the pod publishes three derived loopback ports and
+the role writes one Traefik file, `nextcloud.yml`, with a router and a service per
+route.
 
-Each route names only its `container_port` — 80, what nginx really listens on, and
-9980 for Collabora. The loopback port on the other side of the publish is derived
+Each route names only its `container_port` — 80, what nginx really listens on,
+9980 for Collabora and 8081 for the signaling server. The loopback port on the other side of the publish is derived
 per route from the service name and the domain, so the pod's two lines are
 `PublishPort=127.0.0.1:{{ routes[0].publish_port }}:{{ routes[0].container_port }}`
-and the same for `routes[1]`. Only those lines bridge the two numbers; nothing
+and the same for `routes[1]` and `routes[2]`. Only those lines bridge the two numbers; nothing
 inside the pod knows the host-side one.
 
 The old compose file put `traefik.http.routers.collabora.tls.certresolver` on the
@@ -210,6 +217,62 @@ addresses it. `oc_users` and `oc_share` are one 8K page each and already carry t
 and nine indexes respectively; Postgres scans them sequentially because reading a
 single page beats looking anything up in an index, and no index anybody could add
 would change that.
+
+## Talk
+
+`nextcloud-talk` is Nextcloud's own all-in-one Talk image run as one more part of the
+pod: the signaling server, the Janus media server, NATS between the two, and the
+eturnal TURN server, supervised by dinit inside one container. Its `/start.sh` writes
+all four configs from environment variables on every start, which is the whole of
+its configuration — so the image is pinned to a dated tag and bumped in git, because
+that script is what changes between releases.
+
+How a call flows: the browser reaches the signaling server on
+`signaling.nextcloud.klees.io` through Traefik like any route, and its audio and
+video go through TURN on 3478 to Janus. A rootless pod receives only what it
+publishes, so Janus's own candidates are unreachable from outside and **every
+call's media goes through TURN** — which is why TURN is not optional here and why
+both protocols are declared: a browser tries UDP first and falls back to TCP. The
+relayed media never leaves the pod (both allocations, the browser's and Janus's,
+live on eturnal in the same namespace), so nothing beyond 3478 is published.
+Measured before the first placement: an authenticated `Allocate` through the pod's
+loopback publish succeeds on UDP and TCP and returns a relay address.
+
+`TURN_DOMAIN=127.0.0.1` is not cosmetic. The script defaults Janus's TURN server to
+the Nextcloud name, which from inside the pod resolves to the host gateway, where
+nothing answers UDP; and Janus refuses to start on a TURN name it cannot resolve.
+
+**Nextcloud's side is set by hooks, not by the admin page.** Four `occ
+config:app:set spreed` calls, `when: always`, write `signaling_servers`,
+`signaling_servers_secret`, `turn_servers` and `stun_servers` from the app
+container's environment — the signaling route's name, and `signaling_secret` and
+`turn_secret` as env-type secrets it shares with `nextcloud-talk`. The secrets stay
+in sops and a converge puts the settings back if anyone changes them in the panel.
+STUN is eturnal too, so `stun.nextcloud.com` — a third party seeing every caller's
+address — is not used. The hooks run whether or not the Talk app is installed; the
+app reads the values when it is.STUN is eturnal too, so `stun.nextcloud.com` — a third party seeing every caller's
+address — is not used. The hooks run whether or not the Talk app is installed; the
+app reads the values when it is.
+
+One consequence of TURN sitting behind Traefik: eturnal sees every client arrive from
+Traefik's side of the host, so its STUN answer reports the host's address and not the
+client's. A browser's server-reflexive candidate is therefore wrong — and irrelevant
+here, because Janus is reachable through TURN only and every call's media is relayed
+anyway. Talk's default STUN server would give the right address to a candidate that is
+of no use either.
+
+What the operator does, once:
+
+- **Fill the three secrets** before the commit reaches `stable`, with
+  `mise run sops hosts/StorageBaby/services/nextcloud/secrets.sops.yaml`. All three
+  are a free choice, and must be **hex** (`openssl rand -hex 32`): two of them are
+  spliced into JSON by the hooks, and a `"` or `\` would break it. `signaling_secret`
+  is what Nextcloud and the signaling server sign their requests with,
+  `turn_secret` what TURN credentials are derived from, `internal_secret` the
+  signaling server's own.
+- **Forward 3478, TCP and UDP**, on the router to this host.
+- **Install the Talk app** from the app store. The admin page then shows the
+  signaling server, TURN and STUN already filled in.
 
 ## Health checks
 
@@ -407,6 +470,9 @@ inside the service user's own user namespace and nothing at all on the host —
 | `collabora_password` | `secrets.sops.yaml` in this folder                              |
 | `admin_user`         | `secrets.sops.yaml` in this folder                              |
 | `admin_password`     | `secrets.sops.yaml` in this folder                              |
+| `signaling_secret`   | `secrets.sops.yaml` in this folder — Talk, see below            |
+| `turn_secret`        | `secrets.sops.yaml` in this folder — Talk, see below            |
+| `internal_secret`    | `secrets.sops.yaml` in this folder — Talk, see below            |
 | `kopia_password`     | `hosts/<host>/secrets/kopia-clients.sops.yaml`, key `nextcloud` |
 
 ### The one ordering step that cannot be got wrong
@@ -687,8 +753,9 @@ the container, `podman exec` inherits the unit's `Environment=` lines, and the
 unit renders `NEXTCLOUD_TRUSTED_DOMAINS` and `NEXTCLOUD_WOPI_URL` from the host's
 routes. `NEXTCLOUD_WOPI_URL` is not a variable the image knows; it exists for this
 hook. Index 1 of `trusted_domains` is where the image's installer puts the domain
-it was given, index 0 is the installer's own entry. The nightly cost is two `occ`
-calls that write what is already there.
+it was given, index 0 is the installer's own entry. The four Talk hooks after them
+follow the same rule and are described under "Talk". The cost of a converge is six
+`occ` calls that write what is already there.
 
 ## Backups
 
