@@ -1,0 +1,7 @@
+# Tube Feeder lives in its own repository; this folder only says where. The contract is
+# deploy/storagebaby/ there: a pod with the app and its own Ollama, writing AI-tagged MP3s
+# into /pool/shared/media/Music/Children for Jellyfin. `main` is the only branch, and its
+# CI runs the unit tests before it publishes the image.
+repo: https://github.com/janlucaklees/jellyfin-tube-feeder
+ref: main
+path: deploy/storagebaby
